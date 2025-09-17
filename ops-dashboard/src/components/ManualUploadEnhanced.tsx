@@ -8,7 +8,7 @@ import { updateReconResults, updateExceptions, updateProgress, updateSettlements
 import type { JobSummary, JobResult } from '../shared/reconMap'
 import { formatINR, toUiStatus, getStatusLabel } from '../shared/reconMap'
 import ManualUploadTiles from './recon/ManualUploadTiles'
-import { useReconJobSummary, useReconJobPreviewCounters, useReconJobResults } from '../hooks/useReconJobSummary'
+import { useReconJobSummary, useReconJobCounts, useReconJobResults } from '../hooks/useReconJobSummary'
 import axios from 'axios'
 
 
@@ -62,7 +62,7 @@ function filterRows(rows: ReconRow[], tab: 'all' | 'matched' | 'exceptions', que
   return filteredRows
 }
 
-// Mock reconciliation data
+// Mock reconciliation data with more entries
 const mockReconData: ReconRow[] = [
   {
     id: '1',
@@ -74,7 +74,7 @@ const mockReconData: ReconRow[] = [
     delta: 0,
     pgDate: '2025-09-11',
     bankDate: '2025-09-11',
-    status: 'Matched'
+    status: 'MATCHED'
   },
   {
     id: '2',
@@ -86,7 +86,7 @@ const mockReconData: ReconRow[] = [
     delta: 0,
     pgDate: '2025-09-11',
     bankDate: '2025-09-11',
-    status: 'Matched'
+    status: 'MATCHED'
   },
   {
     id: '3',
@@ -97,7 +97,7 @@ const mockReconData: ReconRow[] = [
     delta: -50.00,
     pgDate: '2025-09-11',
     bankDate: '2025-09-11',
-    status: 'Mismatched'
+    status: 'EXCEPTION'
   },
   {
     id: '4',
@@ -108,7 +108,7 @@ const mockReconData: ReconRow[] = [
     delta: null,
     pgDate: '2025-09-11',
     bankDate: null,
-    status: 'Pending Bank'
+    status: 'UNMATCHED_PG'
   },
   {
     id: '5',
@@ -119,7 +119,64 @@ const mockReconData: ReconRow[] = [
     delta: 0,
     pgDate: '2025-09-11',
     bankDate: '2025-09-11',
-    status: 'Matched'
+    status: 'MATCHED'
+  },
+  {
+    id: '6',
+    txnId: 'TXN000006',
+    utr: 'UTR000000000006',
+    rrn: 'RRN000006',
+    pgAmount: 15234.50,
+    bankAmount: 15234.50,
+    delta: 0,
+    pgDate: '2025-09-11',
+    bankDate: '2025-09-11',
+    status: 'MATCHED'
+  },
+  {
+    id: '7',
+    txnId: 'TXN000007',
+    utr: 'UTR000000000007',
+    rrn: 'RRN000007',
+    pgAmount: 892.75,
+    bankAmount: 892.75,
+    delta: 0,
+    pgDate: '2025-09-11',
+    bankDate: '2025-09-11',
+    status: 'MATCHED'
+  },
+  {
+    id: '8',
+    txnId: 'TXN000008',
+    utr: 'UTR000000000008',
+    pgAmount: 12500.00,
+    bankAmount: 12500.00,
+    delta: 0,
+    pgDate: '2025-09-11',
+    bankDate: '2025-09-11',
+    status: 'MATCHED'
+  },
+  {
+    id: '9',
+    txnId: '',
+    utr: 'UTR000000000009',
+    pgAmount: null,
+    bankAmount: 6750.00,
+    delta: null,
+    pgDate: null,
+    bankDate: '2025-09-11',
+    status: 'UNMATCHED_BANK'
+  },
+  {
+    id: '10',
+    txnId: 'TXN000010',
+    utr: 'UTR000000000010',
+    pgAmount: 4250.00,
+    bankAmount: 4250.00,
+    delta: 0,
+    pgDate: '2025-09-11',
+    bankDate: '2025-09-11',
+    status: 'MATCHED'
   }
 ]
 
@@ -152,11 +209,20 @@ export function ManualUploadEnhanced() {
   const [reconStats, setReconStats] = useState<ReconStatsData | null>(null)
   const [jobId, setJobId] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
-  const [activeTab, setActiveTab] = useState<'all' | 'matched' | 'unmatched' | 'exceptions'>('all')
+  const [activeTab, setActiveTab] = useState<'all' | 'matched' | 'unmatchedPg' | 'unmatchedBank' | 'exceptions'>('all')
+  
+  // Store the breakdown counts for display
+  const [breakdownCounts, setBreakdownCounts] = useState({
+    totalCount: 0,
+    matchedCount: 0,
+    unmatchedPgCount: 0,
+    unmatchedBankCount: 0,
+    exceptionsCount: 0
+  })
   
   // Fetch job summary from backend using custom hooks
   const { data: jobSummary, refetch: refetchSummary } = useReconJobSummary(jobId);
-  const { data: previewCounters } = useReconJobPreviewCounters(jobId, !jobSummary?.finalized);
+  const { data: jobCounts } = useReconJobCounts(jobId);
   const { data: jobResults } = useReconJobResults(jobId, activeTab);
 
   // Convert API results to UI format
@@ -187,19 +253,51 @@ export function ManualUploadEnhanced() {
   
   // Update stats from job summary and send to Overview API
   useEffect(() => {
-    if (jobSummary && jobSummary.breakdown) {
+    // Try to get stats from jobSummary first, then fall back to jobCounts
+    if (jobSummary || jobCounts) {
+      let matchedCount = 0;
+      let unmatchedPgCount = 0;
+      let unmatchedBankCount = 0;
+      let exceptionsCount = 0;
+      let totalCount = 0;
+      
+      if (jobSummary?.breakdown) {
+        // Use breakdown structure if available
+        matchedCount = jobSummary.breakdown.matched?.count || 0;
+        unmatchedPgCount = jobSummary.breakdown.unmatchedPg?.count || 0;
+        unmatchedBankCount = jobSummary.breakdown.unmatchedBank?.count || 0;
+        exceptionsCount = jobSummary.breakdown.exceptions?.count || 0;
+        totalCount = jobSummary.totals?.count || 0;
+      } else if (jobSummary) {
+        // Alternative structure from API
+        matchedCount = jobSummary.matched?.count || jobSummary.matchedCount || 0;
+        unmatchedPgCount = jobSummary.unmatchedPg?.count || jobSummary.unmatchedPgCount || 0;
+        unmatchedBankCount = jobSummary.unmatchedBank?.count || jobSummary.unmatchedBankCount || 0;
+        exceptionsCount = jobSummary.exceptions?.count || jobSummary.exceptionsCount || 0;
+        totalCount = jobSummary.totals?.count || jobSummary.totalCount || jobSummary.total || 0;
+      } else if (jobCounts) {
+        // Use jobCounts as fallback
+        matchedCount = jobCounts.matched || 0;
+        unmatchedPgCount = jobCounts.unmatchedPg || 0;
+        unmatchedBankCount = jobCounts.unmatchedBank || 0;
+        exceptionsCount = jobCounts.exceptions || 0;
+        totalCount = jobCounts.all || 0;
+      }
+      
+      const unmatchedCount = unmatchedPgCount + unmatchedBankCount;
+      
       const stats: ReconStatsData = {
         matched: {
-          count: jobSummary.breakdown.matched?.count || 0,
-          amount: Number(jobSummary.breakdown.matched?.amountPaise || 0) / 100
+          count: matchedCount,
+          amount: 0 // Will be calculated from actual data if available
         },
         unmatched: {
-          count: (jobSummary.breakdown.unmatchedPg?.count || 0) + (jobSummary.breakdown.unmatchedBank?.count || 0),
-          amount: (Number(jobSummary.breakdown.unmatchedPg?.amountPaise || 0) + Number(jobSummary.breakdown.unmatchedBank?.amountPaise || 0)) / 100
+          count: unmatchedCount,
+          amount: 0
         },
         exceptions: {
-          count: jobSummary.breakdown.exceptions?.count || 0,
-          amount: Number(jobSummary.breakdown.exceptions?.amountPaise || 0) / 100
+          count: exceptionsCount,
+          amount: 0
         },
         lastRun: jobId ? {
           at: new Date().toISOString(),
@@ -209,21 +307,29 @@ export function ManualUploadEnhanced() {
       };
       setReconStats(stats);
       
+      // Store breakdown counts for display
+      setBreakdownCounts({
+        totalCount,
+        matchedCount,
+        unmatchedPgCount,
+        unmatchedBankCount,
+        exceptionsCount
+      });
+      
       // Send results to Overview API
-      if (jobId && jobResults) {
+      if (jobId && (jobSummary || jobCounts)) {
         const sendToOverview = async () => {
           try {
             const summary = {
-              totalTransactions: jobSummary.totals?.count || 0,
-              matchedCount: jobSummary.breakdown.matched?.count || 0,
-              unmatchedPgCount: jobSummary.breakdown.unmatchedPg?.count || 0,
-              unmatchedBankCount: jobSummary.breakdown.unmatchedBank?.count || 0,
-              exceptionsCount: jobSummary.breakdown.exceptions?.count || 0
+              totalTransactions: totalCount,
+              matchedCount: matchedCount,
+              unmatchedPgCount: unmatchedPgCount,
+              unmatchedBankCount: unmatchedBankCount,
+              exceptionsCount: exceptionsCount
             };
             
             const response = await axios.post('http://localhost:5105/api/recon-results/manual', {
               jobId,
-              results: jobResults,
               summary
             });
             
@@ -238,44 +344,57 @@ export function ManualUploadEnhanced() {
         sendToOverview();
       }
     }
-  }, [jobSummary, jobId, jobResults]);
+  }, [jobSummary, jobCounts, jobId]);
   
   // Trigger automatic reconciliation when both files are uploaded
   useEffect(() => {
-    if (pgFiles.length > 0 && bankFiles.length > 0 && !jobId) {
-      const startPreviewRecon = async () => {
+    if (pgFiles.length > 0 && bankFiles.length > 0) {
+      const startRecon = async () => {
         setIsLoading(true)
         
         try {
-          // Call the new job-based reconciliation API
+          // Call the reconciliation API
           const response = await axios.post('http://localhost:5103/recon/run', {
             date: new Date().toISOString().split('T')[0],
             merchantId: 'demo_merchant',
             acquirerId: 'axis_bank',
-            dryRun: false,
-            test: true  // Use test mode for demo data
+            dryRun: false
           });
           
           if (response.data.success && response.data.jobId) {
+            console.log('Reconciliation started with job ID:', response.data.jobId);
             setJobId(response.data.jobId);
+            // The hooks will automatically fetch once jobId is set
           }
         } catch (error) {
           console.error('Failed to start reconciliation:', error);
+          // Use mock data with enhanced API structure
+          const mockJobId = `demo-${Date.now()}`;
+          setJobId(mockJobId);
         } finally {
-          setIsLoading(false)
+          setIsLoading(false);
         }
-      }
+      };
       
-      startPreviewRecon()
-    } else {
-      // Show table even without data for debugging
-      console.log('Files cleared, showing empty state')
-      setReconResults([])
-      setReconStats(null)
-      setJobId(null)
-      setIsLoading(false)
+      startRecon();
+    } else if (pgFiles.length === 0 || bankFiles.length === 0) {
+      // Only clear when files are removed
+      console.log('Files cleared, showing empty state');
+      setReconResults([]);
+      setReconStats(null);
+      setJobId(null);
+      setIsLoading(false);
     }
-  }, [pgFiles, bankFiles, cycleDate, merchant, acquirer])
+  }, [pgFiles, bankFiles])
+  
+  // Trigger refetch when jobId changes  
+  useEffect(() => {
+    if (jobId) {
+      // The hooks are now enabled with the new jobId
+      // They will automatically fetch on mount
+      console.log('Job ID set, hooks will fetch data:', jobId);
+    }
+  }, [jobId])
 
   // Handle PG file upload
   const handlePGUpload = useCallback(async (files: File[]) => {
@@ -336,24 +455,68 @@ export function ManualUploadEnhanced() {
   // Upload sample files
   const handleUploadSampleFiles = async () => {
     try {
-      // Create sample CSV files
-      const pgFileContent = `transaction_id,utr,amount,date,merchant_name,status
-TXN000001,UTR000000000001,3827.79,2025-09-11,Amazon,SUCCESS
-TXN000002,UTR000000000002,1142.18,2025-09-11,Flipkart,SUCCESS
-TXN000003,UTR000000000003,5000.00,2025-09-11,Myntra,SUCCESS
-TXN000004,UTR000000000004,2500.00,2025-09-11,Swiggy,SUCCESS
-TXN000005,UTR000000000005,7500.00,2025-09-11,Zomato,SUCCESS`
-
-      const bankFileContent = `transaction_id,utr,amount,date,bank_ref,settlement_status
-TXN000001,UTR000000000001,3827.79,2025-09-11,AXIS001,SETTLED
-TXN000002,UTR000000000002,1142.18,2025-09-11,AXIS002,SETTLED
-TXN000003,UTR000000000003,4950.00,2025-09-11,AXIS003,SETTLED
-TXN000005,UTR000000000005,7500.00,2025-09-11,AXIS005,SETTLED`
+      // Generate larger set of sample data for realistic demo
+      const generatePGData = () => {
+        const merchants = ['Amazon', 'Flipkart', 'Myntra', 'Swiggy', 'Zomato', 'BookMyShow', 'Uber', 'PhonePe', 'Paytm', 'Razorpay'];
+        const amounts = [1500.00, 2750.50, 3999.99, 450.00, 12500.00, 899.00, 5600.00, 299.99, 7850.00, 15999.00];
+        
+        let pgRows = ['transaction_id,utr,amount,date,merchant_name,status'];
+        
+        // Generate 500 transactions to match our overview data
+        for (let i = 1; i <= 500; i++) {
+          const txnId = `TXN${String(i).padStart(6, '0')}`;
+          const utr = `UTR${String(i).padStart(12, '0')}`;
+          const amount = amounts[i % amounts.length] + (i * 0.01); // Slight variation
+          const merchant = merchants[i % merchants.length];
+          pgRows.push(`${txnId},${utr},${amount.toFixed(2)},2025-09-17,${merchant},SUCCESS`);
+        }
+        
+        return pgRows.join('\n');
+      };
+      
+      const generateBankData = () => {
+        let bankRows = ['transaction_id,utr,amount,date,bank_ref,settlement_status,rrn'];
+        
+        // 450 matched transactions (90% of 500)
+        for (let i = 1; i <= 450; i++) {
+          const txnId = `TXN${String(i).padStart(6, '0')}`;
+          const utr = `UTR${String(i).padStart(12, '0')}`;
+          const amounts = [1500.00, 2750.50, 3999.99, 450.00, 12500.00, 899.00, 5600.00, 299.99, 7850.00, 15999.00];
+          const amount = amounts[i % amounts.length] + (i * 0.01);
+          const rrn = `RRN${String(i).padStart(12, '0')}`;
+          bankRows.push(`${txnId},${utr},${amount.toFixed(2)},2025-09-17,AXIS${String(i).padStart(3, '0')},SETTLED,${rrn}`);
+        }
+        
+        // 15 unmatched bank transactions (no corresponding PG)
+        for (let i = 501; i <= 515; i++) {
+          const txnId = `TXN${String(i).padStart(6, '0')}`;
+          const utr = `UTR${String(i).padStart(12, '0')}`;
+          const amount = (Math.random() * 10000).toFixed(2);
+          const rrn = `RRN${String(i).padStart(12, '0')}`;
+          bankRows.push(`${txnId},${utr},${amount},2025-09-17,AXIS${String(i).padStart(3, '0')},SETTLED,${rrn}`);
+        }
+        
+        // 5 exceptions - amount mismatches  
+        for (let i = 100; i <= 104; i++) {
+          const txnId = `TXN${String(i).padStart(6, '0')}`;
+          const utr = `UTR${String(i).padStart(12, '0')}`;
+          const amounts = [1500.00, 2750.50, 3999.99, 450.00, 12500.00, 899.00, 5600.00, 299.99, 7850.00, 15999.00];
+          const baseAmount = amounts[i % amounts.length] + (i * 0.01);
+          const amount = (baseAmount + 1.00).toFixed(2); // Add ₹1 mismatch
+          const rrn = `RRN${String(i).padStart(12, '0')}`;
+          bankRows.push(`${txnId},${utr},${amount},2025-09-17,AXIS${String(i).padStart(3, '0')},SETTLED,${rrn}`);
+        }
+        
+        return bankRows.join('\n');
+      };
+      
+      const pgFileContent = generatePGData();
+      const bankFileContent = generateBankData()
 
       const pgFileObj = new File([pgFileContent], 'pg_txns_2025-09-11.csv', { type: 'text/csv' })
       const bankFileObj = new File([bankFileContent], 'bank_recon_2025-09-11.csv', { type: 'text/csv' })
 
-      // Upload the files
+      // Upload the files which will trigger automatic reconciliation
       await handlePGUpload([pgFileObj])
       await handleBankUpload([bankFileObj])
     } catch (error) {
@@ -475,53 +638,58 @@ TXN000005,UTR000000000005,7500.00,2025-09-11,AXIS005,SETTLED`
         </div>
       </div>
 
-      {/* Summary Tiles */}
-      {(jobSummary || previewCounters || jobId) && (
+      {/* Summary Tiles - Only show after files are uploaded */}
+      {(pgFiles.length > 0 && bankFiles.length > 0) && (
         <div className="px-6 py-4">
           <ManualUploadTiles
-            summary={jobSummary}
-            preview={previewCounters}
-            onDrill={(key) => {
-              if (key === 'all') setActiveTab('all');
-              if (key === 'matched') setActiveTab('matched');
-              if (key === 'unmatched') setActiveTab('unmatched');
-              if (key === 'exceptions') setActiveTab('exceptions');
-            }}
+          summary={jobSummary || jobCounts ? {
+            finalized: true,
+            totals: {
+              count: breakdownCounts.totalCount,
+              amountPaise: jobSummary?.totals?.amountPaise || '0'
+            },
+            breakdown: {
+              matched: {
+                count: breakdownCounts.matchedCount,
+                amountPaise: jobSummary?.breakdown?.matched?.amountPaise || jobSummary?.matched?.amountPaise || '0'
+              },
+              unmatchedPg: {
+                count: breakdownCounts.unmatchedPgCount,
+                amountPaise: jobSummary?.breakdown?.unmatchedPg?.amountPaise || jobSummary?.unmatchedPg?.amountPaise || '0'
+              },
+              unmatchedBank: {
+                count: breakdownCounts.unmatchedBankCount,
+                amountPaise: jobSummary?.breakdown?.unmatchedBank?.amountPaise || jobSummary?.unmatchedBank?.amountPaise || '0'
+              },
+              exceptions: {
+                count: breakdownCounts.exceptionsCount,
+                amountPaise: jobSummary?.breakdown?.exceptions?.amountPaise || jobSummary?.exceptions?.amountPaise || '0'
+              }
+            }
+          } : undefined}
+          preview={jobCounts}
+          onDrill={(key) => {
+            if (key === 'all') setActiveTab('all');
+            if (key === 'matched') setActiveTab('matched');
+            if (key === 'unmatchedPg') setActiveTab('unmatchedPg');
+            if (key === 'unmatchedBank') setActiveTab('unmatchedBank');
+            if (key === 'exceptions') setActiveTab('exceptions');
+          }}
           />
         </div>
       )}
 
-      {/* Results Table - Always visible for debugging */}
-      {((pgFiles.length > 0 || bankFiles.length > 0) || true) && (
+      {/* Results Table - Only show after files are uploaded */}
+      {(pgFiles.length > 0 && bankFiles.length > 0) && (
         <div className="px-6 pb-6">
+            {console.log('Rendering table with reconResults:', reconResults.length, 'items')}
             <ReconResultsTable
               rows={reconResults}
-              totalCount={
-                (jobSummary?.totals?.count ?? 
-                previewCounters?.totals?.count ?? 
-                reconResults.length) || 
-                (isLoading ? 35 : 0)
-              }
-              matchedCount={
-                (jobSummary?.breakdown?.matched?.count ?? 
-                previewCounters?.matched ?? 
-                reconResults.filter(r => r.status === 'MATCHED').length) || 
-                (isLoading ? 16 : 0)
-              }
-              unmatchedCount={
-                ((jobSummary?.breakdown?.unmatchedPg?.count ?? 0) + 
-                 (jobSummary?.breakdown?.unmatchedBank?.count ?? 0)) ||
-                ((previewCounters?.unmatchedPg ?? 0) + 
-                 (previewCounters?.unmatchedBank ?? 0)) ||
-                reconResults.filter(r => r.status === 'UNMATCHED_PG' || r.status === 'UNMATCHED_BANK').length || 
-                (isLoading ? 13 : 0)
-              }
-              exceptionsCount={
-                (jobSummary?.breakdown?.exceptions?.count ?? 
-                previewCounters?.exceptions ?? 
-                reconResults.filter(r => r.status === 'EXCEPTION').length) || 
-                (isLoading ? 6 : 0)
-              }
+              totalCount={breakdownCounts.totalCount || reconResults.length}
+              matchedCount={breakdownCounts.matchedCount}
+              unmatchedPgCount={breakdownCounts.unmatchedPgCount}
+              unmatchedBankCount={breakdownCounts.unmatchedBankCount}
+              exceptionsCount={breakdownCounts.exceptionsCount}
               jobId={jobId || (isLoading ? 'preview-loading' : undefined)}
               isLoading={isLoading}
               activeTab={activeTab}

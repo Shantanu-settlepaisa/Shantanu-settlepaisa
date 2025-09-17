@@ -191,6 +191,78 @@ export function ConnectorsAutomated() {
 
   // Auto-run reconciliation on mount to populate initial values
   useEffect(() => {
+    // In mock mode, set initial demo data
+    const USE_MOCK_API = import.meta.env.VITE_USE_MOCK_API === 'true';
+    
+    if (USE_MOCK_API) {
+      // Set mock initial data - use consistent numbers (800 total)
+      const mockData = {
+        cycleDate: new Date().toISOString().split('T')[0],
+        totalPGTransactions: 800,
+        totalBankRecords: 800,
+        matched: Array(750).fill({}).map((_, i) => ({
+          pgTransaction: {
+            transaction_id: `TXN${String(i + 1).padStart(6, '0')}`,
+            utr: `UTR${String(i + 1).padStart(8, '0')}`,
+            amount: 100000 + Math.floor(Math.random() * 900000)
+          },
+          confidence: 95 + Math.floor(Math.random() * 5)
+        })),
+        unmatchedPG: Array(25).fill({}).map((_, i) => ({
+          transaction_id: `UNTXN${String(i + 1).padStart(6, '0')}`,
+          utr: `UNUTR${String(i + 1).padStart(8, '0')}`,
+          amount: 50000 + Math.floor(Math.random() * 450000),
+          payment_method: ['UPI', 'CARD', 'NETBANKING'][Math.floor(Math.random() * 3)],
+          captured_at: new Date().toISOString(),
+          reason: 'No matching bank record found'
+        })),
+        unmatchedBank: Array(20).fill({}).map((_, i) => ({
+          TRANSACTION_ID: `BNKTXN${String(i + 1).padStart(6, '0')}`,
+          UTR: `BNKUTR${String(i + 1).padStart(8, '0')}`,
+          AMOUNT: 75000 + Math.floor(Math.random() * 425000),
+          DATE: new Date().toISOString().split('T')[0],
+          reason: 'No matching PG transaction found'
+        })),
+        exceptions: Array(5).fill({}).map((_, i) => ({
+          type: ['DUPLICATE_UTR', 'AMOUNT_MISMATCH', 'INVALID_UTR'][Math.floor(Math.random() * 3)],
+          message: 'Exception detected during reconciliation',
+          severity: ['CRITICAL', 'HIGH', 'MEDIUM'][Math.floor(Math.random() * 3)],
+          details: {},
+          resolution: 'Manual review required'
+        }))
+      };
+      
+      setReconResults(mockData);
+      setCycleStats({
+        pgIngested: mockData.totalPGTransactions,
+        bankIngested: mockData.totalBankRecords,
+        matched: mockData.matched.length,
+        unmatched: mockData.unmatchedPG.length + mockData.unmatchedBank.length,
+        exceptions: mockData.exceptions.length
+      });
+      
+      // Send the same data to Overview API
+      fetch('http://localhost:5105/api/recon-results/connectors', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jobId: 'connector-init-' + Date.now(),
+          connector: 'axis-bank',
+          summary: {
+            totalTransactions: mockData.totalPGTransactions,
+            matchedCount: mockData.matched.length,
+            unmatchedPgCount: mockData.unmatchedPG.length,
+            unmatchedBankCount: mockData.unmatchedBank.length,
+            exceptionsCount: mockData.exceptions.length
+          }
+        })
+      }).then(res => res.json())
+        .then(data => console.log('Initial connector data sent to Overview:', data))
+        .catch(err => console.error('Failed to send initial data:', err));
+      return;
+    }
+    
+    // Original code for non-mock mode
     const runInitialRecon = async () => {
       const currentDate = new Date().toISOString().split('T')[0];
       try {
@@ -341,6 +413,89 @@ export function ConnectorsAutomated() {
               onClick={async () => {
                 setIsReconciling(true);
                 setReconciliationError(null);
+                
+                const USE_MOCK_API = import.meta.env.VITE_USE_MOCK_API === 'true';
+                
+                if (USE_MOCK_API) {
+                  // Simulate reconciliation in mock mode
+                  setTimeout(() => {
+                    const mockData = {
+                      cycleDate: today,
+                      totalPGTransactions: 800,
+                      totalBankRecords: 800,
+                      matched: Array(750).fill({}).map((_, i) => ({
+                        pgTransaction: {
+                          transaction_id: `TXN${String(i + 1).padStart(6, '0')}`,
+                          utr: `UTR${String(i + 1).padStart(8, '0')}`,
+                          amount: 100000 + Math.floor(Math.random() * 900000)
+                        },
+                        bankRecord: {
+                          AMOUNT: 100000 + Math.floor(Math.random() * 900000)
+                        },
+                        confidence: 95 + Math.floor(Math.random() * 5)
+                      })),
+                      unmatchedPG: Array(25).fill({}).map((_, i) => ({
+                        transaction_id: `UNTXN${String(i + 1).padStart(6, '0')}`,
+                        utr: `UNUTR${String(i + 1).padStart(8, '0')}`,
+                        amount: 50000 + Math.floor(Math.random() * 450000),
+                        payment_method: ['UPI', 'CARD', 'NETBANKING'][Math.floor(Math.random() * 3)],
+                        captured_at: new Date().toISOString(),
+                        reason: 'No matching bank record found'
+                      })),
+                      unmatchedBank: Array(20).fill({}).map((_, i) => ({
+                        TRANSACTION_ID: `BNKTXN${String(i + 1).padStart(6, '0')}`,
+                        UTR: `BNKUTR${String(i + 1).padStart(8, '0')}`,
+                        AMOUNT: 75000 + Math.floor(Math.random() * 425000),
+                        DATE: today,
+                        reason: 'No matching PG transaction found'
+                      })),
+                      exceptions: Array(5).fill({}).map((_, i) => ({
+                        type: ['DUPLICATE_UTR', 'AMOUNT_MISMATCH', 'INVALID_UTR'][Math.floor(Math.random() * 3)],
+                        message: 'Exception detected during reconciliation',
+                        severity: ['CRITICAL', 'HIGH', 'MEDIUM'][Math.floor(Math.random() * 3)],
+                        details: {},
+                        resolution: 'Manual review required',
+                        pgTransaction: {
+                          transaction_id: `EXCTXN${String(i + 1).padStart(6, '0')}`,
+                          amount: 100000 + Math.floor(Math.random() * 900000)
+                        }
+                      }))
+                    };
+                    
+                    setReconResults(mockData);
+                    setCycleStats({
+                      pgIngested: mockData.totalPGTransactions,
+                      bankIngested: mockData.totalBankRecords,
+                      matched: mockData.matched.length,
+                      unmatched: mockData.unmatchedPG.length + mockData.unmatchedBank.length,
+                      exceptions: mockData.exceptions.length
+                    });
+                    setShowResults(true);
+                    setIsReconciling(false);
+                    
+                    // Send the same data to Overview API
+                    fetch('http://localhost:5105/api/recon-results/connectors', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        jobId: 'connector-recon-' + Date.now(),
+                        connector: 'axis-bank',
+                        summary: {
+                          totalTransactions: mockData.totalPGTransactions,
+                          matchedCount: mockData.matched.length,
+                          unmatchedPgCount: mockData.unmatchedPG.length,
+                          unmatchedBankCount: mockData.unmatchedBank.length,
+                          exceptionsCount: mockData.exceptions.length
+                        }
+                      })
+                    }).then(res => res.json())
+                      .then(data => console.log('Recon results sent to Overview:', data))
+                      .catch(err => console.error('Failed to send results:', err));
+                    
+                    toast.success(`Reconciliation complete: ${mockData.matched.length} matched`);
+                  }, 2000); // Simulate 2 second processing time
+                  return;
+                }
                 
                 try {
                   // Use the new job-based API

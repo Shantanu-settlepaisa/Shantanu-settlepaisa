@@ -2,6 +2,13 @@ const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 const axios = require('axios');
+const {
+  createModeStackedEndpoint,
+  createGmvTrendV2Endpoint,
+  createParetoEndpoint,
+  createKpisV2WithDeltasEndpoint
+} = require('./analytics-endpoints');
+const { registerAnalyticsV3Endpoints } = require('./analytics-v3-endpoints');
 
 const app = express();
 const PORT = process.env.PORT || 5105;
@@ -952,6 +959,786 @@ function getMetricDefinitions() {
     unsettled: 'Transactions not yet in the settlement pipeline'
   };
 }
+
+// Disputes and Chargebacks endpoints
+app.get('/api/disputes/kpis', async (req, res) => {
+  const { from, to, merchantId, acquirerId } = req.query;
+  
+  try {
+    // Generate mock disputes data based on date range
+    const dayCount = Math.max(1, Math.floor((new Date(to) - new Date(from)) / (1000 * 60 * 60 * 24))) + 1;
+    const baseDisputesPerDay = 5;
+    const totalDisputes = Math.floor(baseDisputesPerDay * dayCount);
+    
+    // Distribution of dispute statuses
+    const openCount = Math.floor(totalDisputes * 0.25);
+    const evidenceRequiredCount = Math.floor(totalDisputes * 0.15);
+    const pendingCount = Math.floor(totalDisputes * 0.20);
+    const wonCount = Math.floor(totalDisputes * 0.25);
+    const lostCount = Math.floor(totalDisputes * 0.15);
+    
+    // Financial impact (in paise)
+    const avgDisputeAmountPaise = 150000; // ₹1,500 average
+    const disputedPaise = BigInt(totalDisputes * avgDisputeAmountPaise);
+    const recoveredPaise = BigInt(wonCount * avgDisputeAmountPaise);
+    const writtenOffPaise = BigInt(lostCount * avgDisputeAmountPaise);
+    
+    const response = {
+      openCount,
+      evidenceRequiredCount,
+      pendingCount,
+      wonCount,
+      lostCount,
+      disputedPaise: disputedPaise.toString(),
+      recoveredPaise: recoveredPaise.toString(),
+      writtenOffPaise: writtenOffPaise.toString(),
+      totalCount: totalDisputes,
+      avgResolutionDays: 12,
+      winRatePct: wonCount > 0 ? Math.round((wonCount / (wonCount + lostCount)) * 100) : 0
+    };
+    
+    console.log('[Disputes API] KPIs request:', { from, to, merchantId, acquirerId });
+    res.json(response);
+  } catch (error) {
+    console.error('[Disputes API] Error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/disputes/outcome-summary', async (req, res) => {
+  const { window, merchantId, acquirerId } = req.query;
+  
+  try {
+    // Calculate based on window (7d, 30d, 90d)
+    const days = window === '90d' ? 90 : window === '30d' ? 30 : 7;
+    const multiplier = days / 7;
+    
+    const wonCount = Math.floor(8 * multiplier);
+    const lostCount = Math.floor(3 * multiplier);
+    const totalResolved = wonCount + lostCount;
+    
+    const response = {
+      wonCount,
+      lostCount,
+      totalResolved,
+      winRatePct: totalResolved > 0 ? Math.round((wonCount / totalResolved) * 100) : 0,
+      avgResolutionDays: 12
+    };
+    
+    res.json(response);
+  } catch (error) {
+    console.error('[Disputes API] Outcome error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/disputes/sla-buckets', async (req, res) => {
+  const { from, to, merchantId, acquirerId } = req.query;
+  
+  try {
+    const response = {
+      overdue: {
+        count: 3,
+        amountPaise: '450000'
+      },
+      today: {
+        count: 5,
+        amountPaise: '750000'
+      },
+      twoToThree: {
+        count: 8,
+        amountPaise: '1200000'
+      }
+    };
+    
+    res.json(response);
+  } catch (error) {
+    console.error('[Disputes API] SLA error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/chargebacks', async (req, res) => {
+  const { status, searchQuery, acquirer, slaBucket, limit = 50 } = req.query;
+  
+  try {
+    // Generate mock chargeback data
+    const chargebacks = [];
+    const count = parseInt(limit) || 50;
+    
+    for (let i = 0; i < count; i++) {
+      const statuses = status || ['OPEN', 'EVIDENCE_REQUIRED', 'REPRESENTMENT_SUBMITTED', 'PENDING_BANK', 'WON', 'LOST'];
+      const randomStatus = Array.isArray(statuses) ? statuses[i % statuses.length] : statuses;
+      
+      chargebacks.push({
+        id: `CB${String(i + 1).padStart(6, '0')}`,
+        caseRef: `AXIS-CB-${String(i + 1).padStart(5, '0')}`,
+        merchantId: `MERCHANT_${(i % 3) + 1}`,
+        merchantName: `Test Merchant ${(i % 3) + 1}`,
+        transactionId: `TXN${String(i + 100).padStart(8, '0')}`,
+        rrn: `RRN${String(i + 1000).padStart(10, '0')}`,
+        amountPaise: BigInt(100000 + (i * 10000)).toString(),
+        currency: 'INR',
+        status: randomStatus,
+        reason: ['Fraud', 'Service not received', 'Product not received', 'Duplicate charge'][i % 4],
+        acquirer: acquirer || 'AXIS',
+        evidenceDueDate: new Date(Date.now() + (3 - (i % 5)) * 24 * 60 * 60 * 1000).toISOString(),
+        createdAt: new Date(Date.now() - i * 24 * 60 * 60 * 1000).toISOString(),
+        updatedAt: new Date(Date.now() - i * 12 * 60 * 60 * 1000).toISOString()
+      });
+    }
+    
+    const response = {
+      chargebacks,
+      pagination: {
+        total: chargebacks.length,
+        limit: parseInt(limit),
+        offset: 0
+      }
+    };
+    
+    res.json(response);
+  } catch (error) {
+    console.error('[Chargebacks API] Error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/chargebacks/:id', async (req, res) => {
+  const { id } = req.params;
+  
+  try {
+    const detail = {
+      id,
+      caseRef: `AXIS-CB-${id}`,
+      merchantId: 'MERCHANT_001',
+      merchantName: 'Test Merchant 1',
+      transactionId: 'TXN00012345',
+      rrn: 'RRN1234567890',
+      utr: 'UTR987654321',
+      amountPaise: '150000',
+      currency: 'INR',
+      status: 'EVIDENCE_REQUIRED',
+      reason: 'Fraud - Card not present',
+      reasonCode: 'F29',
+      acquirer: 'AXIS',
+      issuer: 'HDFC Bank',
+      cardMask: '4111********1111',
+      evidenceDueDate: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString(),
+      representmentDueDate: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString(),
+      owner: 'ops@settlepaisa.com',
+      evidence: [
+        {
+          id: 'EV001',
+          type: 'RECEIPT',
+          filename: 'transaction_receipt.pdf',
+          uploadedBy: 'merchant@test.com',
+          uploadedAt: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
+          size: 245678
+        }
+      ],
+      timeline: [
+        {
+          id: 'TL001',
+          action: 'DISPUTE_RAISED',
+          actorEmail: 'system',
+          ts: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
+          payload: { reason: 'Fraud' }
+        },
+        {
+          id: 'TL002',
+          action: 'ASSIGNED_TO_OPS',
+          actorEmail: 'system',
+          ts: new Date(Date.now() - 6 * 24 * 60 * 60 * 1000).toISOString(),
+          payload: { assignee: 'ops@settlepaisa.com' }
+        }
+      ],
+      allocations: [
+        {
+          id: 'ALLOC001',
+          type: 'RESERVE_HOLD',
+          amountPaise: '150000',
+          journalEntryId: 'JE123456',
+          settlementId: null,
+          createdAt: new Date(Date.now() - 6 * 24 * 60 * 60 * 1000).toISOString()
+        }
+      ],
+      createdAt: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
+      updatedAt: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString()
+    };
+    
+    res.json(detail);
+  } catch (error) {
+    console.error('[Chargeback Detail API] Error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Load mock data if available
+const fs = require('fs');
+const path = require('path');
+
+let mockTransactions = [];
+let mockSettlements = [];
+let mockReconciliations = [];
+
+// Load mock data from files
+try {
+  const dataDir = path.join(__dirname, '../../mock-data');
+  if (fs.existsSync(dataDir)) {
+    mockTransactions = JSON.parse(fs.readFileSync(path.join(dataDir, 'transactions.json'), 'utf-8'));
+    mockSettlements = JSON.parse(fs.readFileSync(path.join(dataDir, 'settlements.json'), 'utf-8'));
+    mockReconciliations = JSON.parse(fs.readFileSync(path.join(dataDir, 'reconciliations.json'), 'utf-8'));
+    console.log(`[Overview API] Loaded mock data: ${mockTransactions.length} transactions, ${mockSettlements.length} settlements`);
+  }
+} catch (err) {
+  console.log('[Overview API] Mock data not found, using generated data');
+}
+
+// Helper to filter data by date range and other params
+function filterTransactions(transactions, from, to, merchantId, acquirerId, mode) {
+  return transactions.filter(t => {
+    const txnDate = new Date(t.txn_date);
+    const fromDate = new Date(from);
+    const toDate = new Date(to);
+    
+    return txnDate >= fromDate && 
+           txnDate <= toDate &&
+           (!merchantId || t.merchant_id === merchantId) &&
+           (!acquirerId || t.acquirer_id === acquirerId) &&
+           (!mode || t.payment_mode === mode);
+  });
+}
+
+function filterSettlements(settlements, from, to, merchantId, acquirerId, mode) {
+  return settlements.filter(s => {
+    const settleDate = new Date(s.settlement_date);
+    const fromDate = new Date(from);
+    const toDate = new Date(to);
+    
+    // Find corresponding transaction for filtering
+    const txn = mockTransactions.find(t => t.id === s.txn_id);
+    
+    return settleDate >= fromDate && 
+           settleDate <= toDate &&
+           txn &&
+           (!merchantId || txn.merchant_id === merchantId) &&
+           (!acquirerId || txn.acquirer_id === acquirerId) &&
+           (!mode || txn.payment_mode === mode);
+  });
+}
+
+// ===== Analytics Mode Distribution =====
+app.get('/api/analytics/mode-distribution', async (req, res) => {
+  const { from, to, merchantId, acquirerId } = req.query;
+  
+  try {
+    console.log(`[Analytics Mode Distribution] Request: from=${from}, to=${to}`);
+    
+    // Filter transactions by date range and other params
+    const filtered = filterTransactions(mockTransactions, from, to, merchantId, acquirerId);
+    const filteredSettlements = filterSettlements(mockSettlements, from, to);
+    
+    // Build mode distribution
+    const modeStats = {};
+    filtered.forEach(txn => {
+      const mode = txn.payment_mode;
+      if (!modeStats[mode]) {
+        modeStats[mode] = {
+          mode,
+          capturedCount: 0,
+          capturedAmount: BigInt(0),
+          settledCount: 0,
+          settledAmount: BigInt(0)
+        };
+      }
+      
+      // Captured transaction
+      modeStats[mode].capturedCount++;
+      modeStats[mode].capturedAmount += BigInt(txn.amount_paise);
+      
+      // Check if settled
+      const isSettled = filteredSettlements.some(s => s.txn_id === txn.id);
+      if (isSettled) {
+        modeStats[mode].settledCount++;
+        modeStats[mode].settledAmount += BigInt(txn.amount_paise);
+      }
+    });
+    
+    // Convert to array and calculate percentages
+    const distribution = Object.values(modeStats).map(m => ({
+      mode: m.mode,
+      captured: {
+        count: m.capturedCount,
+        amountPaise: m.capturedAmount.toString(),
+        share: filtered.length ? parseFloat((m.capturedCount / filtered.length * 100).toFixed(1)) : 0
+      },
+      settled: {
+        count: m.settledCount,
+        amountPaise: m.settledAmount.toString(),
+        share: filteredSettlements.length ? parseFloat((m.settledCount / filteredSettlements.length * 100).toFixed(1)) : 0
+      },
+      settlementRate: m.capturedCount ? parseFloat((m.settledCount / m.capturedCount * 100).toFixed(1)) : 0
+    }));
+    
+    res.json({
+      distribution,
+      totalCaptured: filtered.length,
+      totalSettled: filteredSettlements.length
+    });
+  } catch (error) {
+    console.error('[Analytics Mode Distribution] Error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ===== Analytics GMV Trend =====
+app.get('/api/analytics/gmv-trend', async (req, res) => {
+  const { from, to, merchantId, acquirerId, mode } = req.query;
+  
+  try {
+    console.log(`[Analytics GMV Trend] Request: from=${from}, to=${to}, mode=${mode}`);
+    
+    // Filter transactions
+    const filtered = filterTransactions(mockTransactions, from, to, merchantId, acquirerId, mode);
+    const filteredSettlements = filterSettlements(mockSettlements, from, to);
+    
+    // Group by date
+    const dailyStats = {};
+    filtered.forEach(txn => {
+      const date = txn.txn_date;
+      if (!dailyStats[date]) {
+        dailyStats[date] = {
+          date,
+          capturedCount: 0,
+          capturedAmount: BigInt(0),
+          settledCount: 0,
+          settledAmount: BigInt(0)
+        };
+      }
+      
+      dailyStats[date].capturedCount++;
+      dailyStats[date].capturedAmount += BigInt(txn.amount_paise);
+      
+      // Check if settled
+      const isSettled = filteredSettlements.some(s => s.txn_id === txn.id);
+      if (isSettled) {
+        dailyStats[date].settledCount++;
+        dailyStats[date].settledAmount += BigInt(txn.amount_paise);
+      }
+    });
+    
+    // Convert to sorted array
+    const trend = Object.values(dailyStats)
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .map(d => ({
+        date: d.date,
+        captured: {
+          count: d.capturedCount,
+          amountPaise: d.capturedAmount.toString()
+        },
+        settled: {
+          count: d.settledCount,
+          amountPaise: d.settledAmount.toString()
+        },
+        settlementRate: d.capturedCount ? parseFloat((d.settledCount / d.capturedCount * 100).toFixed(1)) : 0
+      }));
+    
+    res.json({ trend });
+  } catch (error) {
+    console.error('[Analytics GMV Trend] Error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ===== Analytics Settlement Funnel =====
+app.get('/api/analytics/settlement-funnel', async (req, res) => {
+  const { from, to, merchantId, acquirerId, mode } = req.query;
+  
+  try {
+    console.log(`[Analytics Settlement Funnel] Request: from=${from}, to=${to}, mode=${mode}`);
+    
+    // Filter data
+    const txns = filterTransactions(mockTransactions, from, to, merchantId, acquirerId, mode);
+    const settlements = filterSettlements(mockSettlements, from, to);
+    const recons = mockReconciliations.filter(r => {
+      if (!r.cycle_date) return false;
+      if (from && r.cycle_date < from) return false;
+      if (to && r.cycle_date > to) return false;
+      return true;
+    });
+    
+    // Build funnel stages
+    const captured = txns.length;
+    const capturedAmount = txns.reduce((sum, t) => sum + BigInt(t.amount_paise), BigInt(0));
+    
+    // Reconciled (has a recon result)
+    const reconciledTxns = txns.filter(t => recons.some(r => r.txn_id === t.id));
+    const reconciled = reconciledTxns.length;
+    const reconciledAmount = reconciledTxns.reduce((sum, t) => sum + BigInt(t.amount_paise), BigInt(0));
+    
+    // Matched (recon status = MATCHED)
+    const matchedTxns = txns.filter(t => recons.some(r => r.txn_id === t.id && r.status === 'MATCHED'));
+    const matched = matchedTxns.length;
+    const matchedAmount = matchedTxns.reduce((sum, t) => sum + BigInt(t.amount_paise), BigInt(0));
+    
+    // Settled
+    const settledTxns = txns.filter(t => settlements.some(s => s.txn_id === t.id));
+    const settled = settledTxns.length;
+    const settledAmount = settledTxns.reduce((sum, t) => sum + BigInt(t.amount_paise), BigInt(0));
+    
+    const funnel = {
+      stages: [
+        {
+          name: 'Captured',
+          count: captured,
+          amountPaise: capturedAmount.toString(),
+          percentage: 100
+        },
+        {
+          name: 'Reconciled',
+          count: reconciled,
+          amountPaise: reconciledAmount.toString(),
+          percentage: captured ? parseFloat((reconciled / captured * 100).toFixed(1)) : 0
+        },
+        {
+          name: 'Matched',
+          count: matched,
+          amountPaise: matchedAmount.toString(),
+          percentage: captured ? parseFloat((matched / captured * 100).toFixed(1)) : 0
+        },
+        {
+          name: 'Settled',
+          count: settled,
+          amountPaise: settledAmount.toString(),
+          percentage: captured ? parseFloat((settled / captured * 100).toFixed(1)) : 0
+        }
+      ],
+      reconStatuses: {
+        MATCHED: recons.filter(r => r.status === 'MATCHED').length,
+        UNMATCHED_PG: recons.filter(r => r.status === 'UNMATCHED_PG').length,
+        UNMATCHED_BANK: recons.filter(r => r.status === 'UNMATCHED_BANK').length,
+        EXCEPTION: recons.filter(r => r.status === 'EXCEPTION').length
+      }
+    };
+    
+    res.json(funnel);
+  } catch (error) {
+    console.error('[Analytics Settlement Funnel] Error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ===== Register new analytics endpoints =====
+createModeStackedEndpoint(app, mockTransactions, mockSettlements, filterTransactions, filterSettlements);
+createGmvTrendV2Endpoint(app, mockTransactions, mockSettlements, filterTransactions, filterSettlements);
+createParetoEndpoint(app, mockTransactions, mockSettlements, mockReconciliations, filterTransactions, filterSettlements);
+createKpisV2WithDeltasEndpoint(app, mockTransactions, mockSettlements, filterTransactions, filterSettlements);
+
+// ===== Register V3 Analytics endpoints =====
+// Create mock data stores for the V3 endpoints
+const pgDB = {
+  data: {
+    transactions: {}
+  }
+};
+
+const bankDB = {
+  data: {
+    settlements: {}
+  }
+};
+
+const funnelDB = {
+  data: {
+    stages: {}
+  }
+};
+
+// Generate mock transactions for V3 endpoints
+function generateMockTransactionsV3() {
+  const transactions = {};
+  const modes = ['UPI', 'CARD', 'NETBANKING', 'WALLET', 'QR'];
+  const acquirers = ['HDFC', 'ICICI', 'AXIS', 'SBI', 'KOTAK'];
+  const now = new Date();
+  
+  for (let i = 0; i < 5000; i++) {
+    const id = `TXN${String(i + 1).padStart(8, '0')}`;
+    const dayOffset = Math.floor(Math.random() * 30);
+    const createdAt = new Date(now);
+    createdAt.setDate(createdAt.getDate() - dayOffset);
+    
+    const status = Math.random() < 0.88 ? 'SETTLED' : 'UNSETTLED';
+    
+    transactions[id] = {
+      id,
+      amount_paise: Math.floor(10000 + Math.random() * 990000),
+      payment_mode: modes[Math.floor(Math.random() * modes.length)],
+      acquirer_id: acquirers[Math.floor(Math.random() * acquirers.length)],
+      status,
+      created_at: createdAt.toISOString(),
+      settled_at: status === 'SETTLED' ? new Date(createdAt.getTime() + 24 * 60 * 60 * 1000).toISOString() : null
+    };
+  }
+  
+  return transactions;
+}
+
+// Initialize mock data
+pgDB.data.transactions = generateMockTransactionsV3();
+
+// Register the V3 analytics endpoints
+registerAnalyticsV3Endpoints(app, { pgDB, bankDB, funnelDB });
+
+// ===== Analytics Failure Reasons =====
+app.get('/api/analytics/failure-reasons', async (req, res) => {
+  const { from, to, merchantId, acquirerId, mode } = req.query;
+  
+  try {
+    console.log(`[Analytics Failure Reasons] Request: from=${from}, to=${to}`);
+    
+    // Filter transactions and get unsettled ones
+    const txns = filterTransactions(mockTransactions, from, to, merchantId, acquirerId, mode);
+    const settlements = filterSettlements(mockSettlements, from, to);
+    const recons = mockReconciliations.filter(r => {
+      if (!r.cycle_date) return false;
+      if (from && r.cycle_date < from) return false;
+      if (to && r.cycle_date > to) return false;
+      return true;
+    });
+    
+    // Get unsettled transactions
+    const unsettledTxns = txns.filter(t => !settlements.some(s => s.txn_id === t.id));
+    const unsettledCount = unsettledTxns.length;
+    
+    // Categorize failure reasons based on reconciliation status
+    const reasons = {
+      'Technical Decline': 0,
+      'Insufficient Balance': 0,
+      'Bank Processing Delay': 0,
+      'Missing UTR': 0,
+      'Amount Mismatch': 0,
+      'File Missing': 0,
+      'Network Timeout': 0,
+      'Other': 0
+    };
+    
+    unsettledTxns.forEach(txn => {
+      const recon = recons.find(r => r.txn_id === txn.id);
+      
+      if (recon) {
+        // Map reconciliation status/reason to failure category
+        if (recon.status === 'UNMATCHED_PG') {
+          reasons['Technical Decline']++;
+        } else if (recon.status === 'UNMATCHED_BANK') {
+          reasons['Bank Processing Delay']++;
+        } else if (recon.status === 'EXCEPTION') {
+          // Map specific exception reasons
+          if (recon.reason_code === 'MISSING_UTR') {
+            reasons['Missing UTR']++;
+          } else if (recon.reason_code === 'AMOUNT_MISMATCH') {
+            reasons['Amount Mismatch']++;
+          } else if (recon.reason_code === 'BANK_DELAY') {
+            reasons['Bank Processing Delay']++;
+          } else if (recon.reason_code === 'FILE_MISSING') {
+            reasons['File Missing']++;
+          } else {
+            reasons['Other']++;
+          }
+        } else {
+          reasons['Other']++;
+        }
+      } else {
+        // No reconciliation record - likely technical issue
+        if (Math.random() < 0.4) {
+          reasons['Technical Decline']++;
+        } else if (Math.random() < 0.7) {
+          reasons['Insufficient Balance']++;
+        } else if (Math.random() < 0.9) {
+          reasons['Network Timeout']++;
+        } else {
+          reasons['Other']++;
+        }
+      }
+    });
+    
+    // Convert to array format with percentages
+    const reasonsArray = Object.entries(reasons)
+      .filter(([_, count]) => count > 0)
+      .map(([reason, count]) => ({
+        reason,
+        count,
+        percentage: unsettledCount > 0 ? parseFloat((count / unsettledCount * 100).toFixed(1)) : 0,
+        impactPaise: Math.round(count * 15000 * 100).toString() // Estimated avg impact
+      }))
+      .sort((a, b) => b.count - a.count);
+    
+    res.json({
+      reasons: reasonsArray,
+      totalUnsettled: unsettledCount,
+      totalImpactPaise: reasonsArray.reduce((sum, r) => sum + BigInt(r.impactPaise), BigInt(0)).toString()
+    });
+  } catch (error) {
+    console.error('[Analytics Failure Reasons] Error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ===== Analytics KPIs V2 =====
+app.get('/api/analytics/kpis-v2', async (req, res) => {
+  const { from, to, merchantId, acquirerId, mode } = req.query;
+  
+  try {
+    console.log(`[Analytics KPIs V2] Request: from=${from}, to=${to}, merchantId=${merchantId}, acquirerId=${acquirerId}, mode=${mode}`);
+    
+    // Use mock data if available
+    if (mockTransactions.length > 0) {
+      const capturedTxns = filterTransactions(mockTransactions, from, to, merchantId, acquirerId, mode);
+      const settledTxns = filterSettlements(mockSettlements, from, to, merchantId, acquirerId, mode);
+      
+      const capturedCount = capturedTxns.length;
+      const settledCount = settledTxns.length;
+      const unsettledCount = Math.max(0, capturedCount - settledCount);
+      
+      const capturedAmount = capturedTxns.reduce((sum, t) => sum + BigInt(t.amount_paise), 0n);
+      const settledAmount = settledTxns.reduce((sum, s) => sum + BigInt(s.amount_paise), 0n);
+      const unsettledAmount = capturedAmount - settledAmount;
+      
+      const settlementSrPct = capturedCount > 0 
+        ? parseFloat(((settledCount / capturedCount) * 100).toFixed(1))
+        : 0;
+      
+      return res.json({
+        settled: {
+          count: settledCount,
+          amountPaise: settledAmount.toString()
+        },
+        unsettled: {
+          count: unsettledCount,
+          amountPaise: unsettledAmount.toString()
+        },
+        settlementSrPct,
+        captured: {
+          count: capturedCount,
+          amountPaise: capturedAmount.toString()
+        }
+      });
+    }
+    
+    // Fallback to generated data
+    const dayCount = Math.max(1, Math.floor((new Date(to) - new Date(from)) / (1000 * 60 * 60 * 24))) + 1;
+    const baseTransactionsPerDay = 200;
+    const totalCaptured = Math.floor(baseTransactionsPerDay * dayCount);
+    
+    const settlementRate = 0.88 + (Math.random() * 0.07);
+    const settledCount = Math.floor(totalCaptured * settlementRate);
+    const unsettledCount = totalCaptured - settledCount;
+    
+    const avgAmountPaise = 35000;
+    const capturedAmountPaise = BigInt(totalCaptured * avgAmountPaise);
+    const settledAmountPaise = BigInt(settledCount * avgAmountPaise);
+    const unsettledAmountPaise = capturedAmountPaise - settledAmountPaise;
+    
+    const settlementSrPct = totalCaptured > 0 ? parseFloat(((settledCount / totalCaptured) * 100).toFixed(1)) : 0;
+    
+    res.json({
+      settled: {
+        count: settledCount,
+        amountPaise: settledAmountPaise.toString()
+      },
+      unsettled: {
+        count: unsettledCount,
+        amountPaise: unsettledAmountPaise.toString()
+      },
+      settlementSrPct,
+      captured: {
+        count: totalCaptured,
+        amountPaise: capturedAmountPaise.toString()
+      }
+    });
+  } catch (error) {
+    console.error('[Analytics KPIs V2] Error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ===== Reconciliation Results Endpoints =====
+// Endpoint to receive reconciliation results from Manual Upload
+app.post('/api/recon-results/manual', async (req, res) => {
+  const { jobId, results, summary, timestamp } = req.body;
+  
+  try {
+    console.log(`[Manual Upload] Received recon results for job ${jobId}`);
+    
+    // Update the reconResultsStore with the summary data
+    if (summary) {
+      reconResultsStore.manual = {
+        lastUpdated: new Date().toISOString(),
+        jobId,
+        totalTransactions: summary.totalTransactions || 0,
+        matchedCount: summary.matchedCount || 0,
+        unmatchedPgCount: summary.unmatchedPgCount || 0,
+        unmatchedBankCount: summary.unmatchedBankCount || 0,
+        exceptionsCount: summary.exceptionsCount || 0,
+        hasData: true
+      };
+      
+      console.log(`[Manual Upload] Updated store:`, reconResultsStore.manual);
+    }
+    
+    res.json({
+      success: true,
+      message: 'Manual upload reconciliation results received',
+      jobId,
+      stored: reconResultsStore.manual
+    });
+  } catch (error) {
+    console.error('[Manual Upload] Error processing results:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+// Endpoint to receive reconciliation results from Connectors
+app.post('/api/recon-results/connectors', async (req, res) => {
+  const { jobId, results, summary, connector, timestamp } = req.body;
+  
+  try {
+    console.log(`[Connectors] Received recon results for job ${jobId} from connector ${connector}`);
+    
+    // Update the reconResultsStore with the summary data
+    if (summary) {
+      reconResultsStore.connectors = {
+        lastUpdated: new Date().toISOString(),
+        jobId,
+        totalTransactions: summary.totalTransactions || 0,
+        matchedCount: summary.matchedCount || 0,
+        unmatchedPgCount: summary.unmatchedPgCount || 0,
+        unmatchedBankCount: summary.unmatchedBankCount || 0,
+        exceptionsCount: summary.exceptionsCount || 0,
+        hasData: true
+      };
+      
+      console.log(`[Connectors] Updated store:`, reconResultsStore.connectors);
+    }
+    
+    res.json({
+      success: true,
+      message: 'Connector reconciliation results received',
+      jobId,
+      connector,
+      stored: reconResultsStore.connectors
+    });
+  } catch (error) {
+    console.error('[Connectors] Error processing results:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
 
 // Health check
 app.get('/health', (req, res) => {
