@@ -71,15 +71,9 @@ export function ReconResultsTable({
   const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set())
   const [exportMenuOpen, setExportMenuOpen] = useState(false)
 
-  // Filter rows based on active tab
+  // Don't filter by status - the API already filters the data
+  // Only filter by search query
   const filteredRows = rows.filter(row => {
-    if (activeTab === 'matched') return row.status === 'MATCHED'
-    if (activeTab === 'unmatched') return row.status === 'UNMATCHED_PG' || row.status === 'UNMATCHED_BANK'
-    if (activeTab === 'unmatchedPg') return row.status === 'UNMATCHED_PG'
-    if (activeTab === 'unmatchedBank') return row.status === 'UNMATCHED_BANK'
-    if (activeTab === 'exceptions') return row.status === 'EXCEPTION'
-    return true
-  }).filter(row => {
     if (!searchQuery) return true
     const query = searchQuery.toLowerCase()
     return (
@@ -111,29 +105,35 @@ export function ReconResultsTable({
 
   // Get status color and icon
   const getStatusStyle = (status: ReconRow['status']) => {
-    switch (status) {
-      case 'MATCHED':
+    // Handle both uppercase and lowercase status values
+    const normalizedStatus = status?.toLowerCase()
+    
+    switch (normalizedStatus) {
+      case 'matched':
         return {
           bg: 'bg-green-100',
           text: 'text-green-800',
           icon: <CheckCircle className="h-3 w-3" />,
           label: 'Matched'
         }
-      case 'UNMATCHED_PG':
+      case 'unmatchedpg':
+      case 'unmatched_pg':
         return {
           bg: 'bg-amber-100',
           text: 'text-amber-800',
           icon: <AlertCircle className="h-3 w-3" />,
           label: 'Unmatched PG'
         }
-      case 'UNMATCHED_BANK':
+      case 'unmatchedbank':
+      case 'unmatched_bank':
         return {
           bg: 'bg-blue-100',
           text: 'text-blue-800',
           icon: <AlertCircle className="h-3 w-3" />,
           label: 'Unmatched Bank'
         }
-      case 'EXCEPTION':
+      case 'exception':
+      case 'exceptions':
         return {
           bg: 'bg-red-100',
           text: 'text-red-800',
@@ -145,7 +145,7 @@ export function ReconResultsTable({
           bg: 'bg-gray-100',
           text: 'text-gray-700',
           icon: <AlertCircle className="h-3 w-3" />,
-          label: 'Unknown'
+          label: status || 'Unknown'
         }
     }
   }
