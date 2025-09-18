@@ -4,6 +4,25 @@ All notable changes to the Ops Dashboard will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+## [2.1.1] - 2025-09-18
+
+### Added
+- Recon Rule Settings feature with feature flag
+- Backend API endpoints for recon rules at /api/recon-rules
+- UI components for rule management in Settings page
+- Version management system with rollback capability
+
+### Fixed
+- Manual Upload page data display issues (Bank Amount and Status columns)
+- Exceptions tab filtering to show only exception items
+- Tab counts matching actual displayed results
+- Status normalization between API and frontend
+
+### Changed
+- Removed client-side filtering in ReconResultsTable (API handles filtering)
+- Updated status conversion to properly handle API response values
+
+
 
 ## [2.1.0] - 2025-09-18
 
