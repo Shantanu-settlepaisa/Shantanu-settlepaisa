@@ -1,0 +1,19 @@
+{
+  "version": "2.1.0",
+  "name": "Settlement Pipeline Fix",
+  "timestamp": "20250918_084808",
+  "description": "Fixed settlement pipeline data display, BigInt conversion error, and added info icon",
+  "changes": [
+    "Fixed pipeline numbers to add up correctly (2250 = 237+575+1338+100)",
+    "Fixed BigInt conversion error in /api/pipeline/summary",
+    "Added info icon with settlement lifecycle tooltip",
+    "Fixed tab badge counts in Manual Upload and Connectors"
+  ],
+  "services": {
+    "frontend": "5174",
+    "overview-api": "5105",
+    "pg-api": "5101",
+    "bank-api": "5102",
+    "recon-api": "5103"
+  }
+}

@@ -71,9 +71,23 @@ export function ReconResultsTable({
   const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set())
   const [exportMenuOpen, setExportMenuOpen] = useState(false)
 
-  // Don't filter by status - the API already filters the data
-  // Only filter by search query
+  // Filter rows based on active tab and search query
   const filteredRows = rows.filter(row => {
+    // First filter by status based on active tab
+    const normalizedStatus = row.status?.toUpperCase();
+    
+    if (activeTab === 'matched') {
+      if (normalizedStatus !== 'MATCHED') return false;
+    } else if (activeTab === 'unmatchedPg') {
+      if (normalizedStatus !== 'UNMATCHED_PG') return false;
+    } else if (activeTab === 'unmatchedBank') {
+      if (normalizedStatus !== 'UNMATCHED_BANK') return false;
+    } else if (activeTab === 'exceptions') {
+      if (normalizedStatus !== 'EXCEPTION') return false;
+    }
+    // 'all' tab shows everything, no filter needed
+    
+    // Then filter by search query
     if (!searchQuery) return true
     const query = searchQuery.toLowerCase()
     return (

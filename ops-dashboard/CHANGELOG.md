@@ -84,4 +84,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Initial release of Ops Dashboard
 - Basic reconciliation functionality
 - Simple overview page
-- Manual file upload capability
+- Manual file upload capabilityv2.1.1: Tab switching and amount display fixes
+
+- Fixed duplicate transaction IDs across different status tabs
+- Corrected row count limits (6 exceptions, 4 unmatched bank, etc.)
+- Fixed missing amounts in KPI tiles by extracting from API
+- Added support for demo job IDs with proper fallback
+- Enhanced state management to prevent stale data on tab switches
+- Implemented unique ID generation with status prefixes (E-, UB-, UP-, M-)
+
+Technical Changes:
+- Updated recon API mock data generation with unique prefixes
+- Fixed frontend amount conversion from paise to rupees
+- Added React Query cache invalidation on tab changes
+- Enhanced API job routing for demo and recon job IDs
+- Limited API results based on expected counts per status

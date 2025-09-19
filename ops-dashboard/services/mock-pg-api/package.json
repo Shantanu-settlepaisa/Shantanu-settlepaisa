@@ -1,0 +1,19 @@
+{
+  "name": "mock-pg-api",
+  "version": "1.0.0",
+  "description": "Mock Payment Gateway API for SettlePaisa demo",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "body-parser": "^1.20.2",
+    "seedrandom": "^3.0.5"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  }
+}

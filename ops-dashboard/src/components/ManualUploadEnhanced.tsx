@@ -9,6 +9,7 @@ import type { JobSummary, JobResult } from '../shared/reconMap'
 import { formatINR, toUiStatus, getStatusLabel } from '../shared/reconMap'
 import ManualUploadTiles from './recon/ManualUploadTiles'
 import { useReconJobSummary, useReconJobCounts, useReconJobResults } from '../hooks/useReconJobSummary'
+import { useQueryClient } from '@tanstack/react-query'
 import axios from 'axios'
 
 
@@ -199,6 +200,7 @@ const mockStats: ReconStatsData = {
 }
 
 export function ManualUploadEnhanced() {
+  const queryClient = useQueryClient()
   const [cycleDate, setCycleDate] = useState('11/09/2025')
   const [merchant, setMerchant] = useState('All Merchants')
   const [acquirer, setAcquirer] = useState('All Banks')
@@ -210,6 +212,7 @@ export function ManualUploadEnhanced() {
   const [jobId, setJobId] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [activeTab, setActiveTab] = useState<'all' | 'matched' | 'unmatchedPg' | 'unmatchedBank' | 'exceptions'>('all')
+  const [isTabChanging, setIsTabChanging] = useState(false)
   
   // Store the breakdown counts for display
   const [breakdownCounts, setBreakdownCounts] = useState({
@@ -229,6 +232,7 @@ export function ManualUploadEnhanced() {
   const convertToReconRows = (results: any[]): ReconRow[] => {
     return results.map(r => {
       // Normalize status to uppercase format expected by UI
+      // API returns lowercase status like 'exception', 'unmatchedBank'
       let normalizedStatus: ReconRow['status'] = 'Unknown';
       const apiStatus = (r.status || '').toLowerCase();
       
@@ -260,16 +264,60 @@ export function ManualUploadEnhanced() {
     });
   };
   
+  // Clear results immediately when tab changes to prevent showing stale data
+  useEffect(() => {
+    console.log(`[Tab Change] Switching to tab: ${activeTab}`);
+    // Mark that we're changing tabs
+    setIsTabChanging(true);
+    // Clear results immediately when switching tabs to avoid showing wrong data
+    setReconResults([]);
+    
+    // Force React Query to refetch by invalidating the query
+    if (jobId) {
+      // Invalidate all result queries to force fresh fetch
+      queryClient.invalidateQueries({ queryKey: ['recon-job-results'] });
+      console.log(`[Tab Change] Cleared results and invalidated queries, waiting for new data for tab: ${activeTab}`);
+    }
+    
+    // Reset the flag after a brief delay to allow new data to load
+    const timer = setTimeout(() => {
+      setIsTabChanging(false);
+    }, 100);
+    
+    return () => clearTimeout(timer);
+  }, [activeTab, jobId, queryClient]);
+  
   // Update local state when job results change
   useEffect(() => {
-    console.log('Job results updated:', jobResults?.length || 0, 'items');
-    if (jobResults && jobResults.length > 0) {
-      setReconResults(convertToReconRows(jobResults));
-    } else if (jobResults === undefined && jobId) {
-      // If no results from hook but we have a jobId, use the data we already fetched
-      console.log('No results from hook, keeping existing reconResults');
+    // Don't update if we're in the middle of changing tabs
+    if (isTabChanging) {
+      console.log(`[ManualUploadEnhanced] Tab is changing, skipping update`);
+      return;
     }
-  }, [jobResults, jobId]);
+    
+    console.log(`[ManualUploadEnhanced] jobResults update for tab: ${activeTab}, results:`, jobResults?.length);
+    
+    // Only update if we have valid results that match the current tab
+    if (jobResults !== undefined) {
+      if (Array.isArray(jobResults)) {
+        const convertedRows = convertToReconRows(jobResults);
+        console.log(`[ManualUploadEnhanced] Setting ${convertedRows.length} rows for tab: ${activeTab}`);
+        
+        // Double-check that results match the expected tab filter
+        if (activeTab !== 'all' && convertedRows.length > 0) {
+          const firstRowStatus = convertedRows[0].status?.toLowerCase();
+          console.log(`[ManualUploadEnhanced] First row status: ${firstRowStatus}, expected tab: ${activeTab}`);
+        }
+        
+        setReconResults(convertedRows);
+      } else {
+        // Clear results if no data
+        console.log(`[ManualUploadEnhanced] No results for tab: ${activeTab}, clearing`);
+        setReconResults([]);
+      }
+    }
+    // If undefined, keep existing results (might be loading)
+  }, [jobResults, activeTab, isTabChanging]);
   
   // Update stats from job summary and send to Overview API
   useEffect(() => {
@@ -280,6 +328,9 @@ export function ManualUploadEnhanced() {
       let unmatchedBankCount = 0;
       let exceptionsCount = 0;
       let totalCount = 0;
+      let matchedAmount = 0;
+      let unmatchedAmount = 0;
+      let exceptionsAmount = 0;
       
       if (jobSummary?.breakdown) {
         // Use breakdown structure if available
@@ -288,6 +339,13 @@ export function ManualUploadEnhanced() {
         unmatchedBankCount = jobSummary.breakdown.unmatchedBank?.count || 0;
         exceptionsCount = jobSummary.breakdown.exceptions?.count || 0;
         totalCount = jobSummary.totals?.count || 0;
+        
+        // Extract amounts from API (in paise) and convert to rupees
+        matchedAmount = jobSummary.breakdown.matched?.amountPaise ? parseInt(jobSummary.breakdown.matched.amountPaise) / 100 : 0;
+        const unmatchedPgAmount = jobSummary.breakdown.unmatchedPg?.amountPaise ? parseInt(jobSummary.breakdown.unmatchedPg.amountPaise) / 100 : 0;
+        const unmatchedBankAmount = jobSummary.breakdown.unmatchedBank?.amountPaise ? parseInt(jobSummary.breakdown.unmatchedBank.amountPaise) / 100 : 0;
+        unmatchedAmount = unmatchedPgAmount + unmatchedBankAmount;
+        exceptionsAmount = jobSummary.breakdown.exceptions?.amountPaise ? parseInt(jobSummary.breakdown.exceptions.amountPaise) / 100 : 0;
       } else if (jobSummary) {
         // Alternative structure from API
         matchedCount = jobSummary.matched?.count || jobSummary.matchedCount || 0;
@@ -309,15 +367,15 @@ export function ManualUploadEnhanced() {
       const stats: ReconStatsData = {
         matched: {
           count: matchedCount,
-          amount: 0 // Will be calculated from actual data if available
+          amount: matchedAmount
         },
         unmatched: {
           count: unmatchedCount,
-          amount: 0
+          amount: unmatchedAmount
         },
         exceptions: {
           count: exceptionsCount,
-          amount: 0
+          amount: exceptionsAmount
         },
         lastRun: jobId ? {
           at: new Date().toISOString(),
@@ -723,16 +781,15 @@ export function ManualUploadEnhanced() {
       {/* Results Table - Only show after files are uploaded */}
       {(pgFiles.length > 0 && bankFiles.length > 0) && (
         <div className="px-6 pb-6">
-            {console.log('Rendering table with reconResults:', reconResults.length, 'items', 'activeTab:', activeTab)}
             <ReconResultsTable
-              rows={reconResults}
+              rows={isTabChanging ? [] : reconResults}
               totalCount={breakdownCounts.totalCount || reconResults.length}
               matchedCount={breakdownCounts.matchedCount}
               unmatchedPgCount={breakdownCounts.unmatchedPgCount}
               unmatchedBankCount={breakdownCounts.unmatchedBankCount}
               exceptionsCount={breakdownCounts.exceptionsCount}
               jobId={jobId || (isLoading ? 'preview-loading' : undefined)}
-              isLoading={isLoading}
+              isLoading={isLoading || isTabChanging}
               activeTab={activeTab}
               onTabChange={(tab) => setActiveTab(tab as any)}
               onRefresh={() => {

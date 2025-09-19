@@ -11,19 +11,23 @@ router.get('/jobs/:jobId/summary', async (req, res) => {
     const { getJob } = require('../jobs/runReconciliation');
     const job = getJob(jobId);
     
-    if (!job) {
+    // If job not found but it looks like a recon or demo job ID, return demo data
+    if (!job && !jobId.startsWith('recon_') && !jobId.startsWith('demo-')) {
       return res.status(404).json({ error: 'Job not found' });
     }
     
+    // Use job data if exists, otherwise use demo defaults
+    const jobData = job || { status: 'completed', counters: {} };
+    
     // Build summary from job counters - use actual values, not defaults
-    const matched = job.counters?.matched ?? 16;  // Use nullish coalescing to allow 0
-    const unmatchedPg = job.counters?.unmatchedPg ?? 9;
-    const unmatchedBank = job.counters?.unmatchedBank ?? 4;
-    const exceptions = job.counters?.exceptions ?? 6;
+    const matched = jobData.counters?.matched ?? 16;  // Use nullish coalescing to allow 0
+    const unmatchedPg = jobData.counters?.unmatchedPg ?? 9;
+    const unmatchedBank = jobData.counters?.unmatchedBank ?? 4;
+    const exceptions = jobData.counters?.exceptions ?? 6;
     const total = matched + unmatchedPg + unmatchedBank + exceptions;
     
     // Determine source type based on job metadata or default to manual
-    const sourceType = job.sourceType || 'manual';
+    const sourceType = jobData.sourceType || 'manual';
     
     const summary = {
       jobId,
@@ -55,13 +59,45 @@ router.get('/jobs/:jobId/summary', async (req, res) => {
         { reasonCode: 'MISSING_UTR', reasonLabel: 'Missing UTR', count: Math.ceil(exceptions * 0.3) },
         { reasonCode: 'DUPLICATE_UTR', reasonLabel: 'Duplicate UTR', count: Math.floor(exceptions * 0.3) }
       ] : [],
-      finalized: job.status === 'completed' // Only finalized when job is completed
+      finalized: jobData.status === 'completed' // Only finalized when job is completed
     };
     
     res.json(summary);
   } catch (error) {
     console.error('Error fetching job summary:', error);
     res.status(500).json({ error: 'Failed to fetch job summary' });
+  }
+});
+
+// GET /recon/jobs/:jobId/counts
+router.get('/jobs/:jobId/counts', async (req, res) => {
+  const { jobId } = req.params;
+  
+  try {
+    // In production, query from reconciliation_results table
+    // For now, use the in-memory job data or return demo data
+    const { getJob } = require('../jobs/runReconciliation');
+    const job = getJob(jobId);
+    
+    // Use job data if exists, otherwise use demo defaults for recon/demo jobs
+    const jobData = job || { counters: {} };
+    
+    const matched = jobData.counters?.matched ?? 16;
+    const unmatchedPg = jobData.counters?.unmatchedPg ?? 9;
+    const unmatchedBank = jobData.counters?.unmatchedBank ?? 4;
+    const exceptions = jobData.counters?.exceptions ?? 6;
+    const all = matched + unmatchedPg + unmatchedBank + exceptions;
+    
+    res.json({
+      all,
+      matched,
+      unmatchedPg,
+      unmatchedBank,
+      exceptions
+    });
+  } catch (error) {
+    console.error('Error fetching job counts:', error);
+    res.status(500).json({ error: 'Failed to fetch job counts' });
   }
 });
 
@@ -158,13 +194,16 @@ router.get('/jobs/:jobId/results', async (req, res) => {
         total: combinedResults.length,
         results: combinedResults
       });
+    } else if (!status || status === 'undefined' || status === 'null') {
+      // If no status is specified or it's undefined, return ALL transactions
+      mappedStatus = null; // This will generate a mix of all statuses
     }
     
     // In production, query from reconciliation_results table with joins
     // For now, return mock data based on status
     const mockResults = generateMockResults(jobId, mappedStatus, parseInt(limit));
     
-    console.log(`[Results API] Fetching results for job: ${jobId}, status: ${status} (mapped to ${mappedStatus})`);
+    console.log(`[Results API] Fetching results for job: ${jobId}, status: ${status}`);  
     
     res.json({
       jobId,
@@ -218,8 +257,15 @@ function generateMockResults(jobId, status, limit) {
         exceptionReasons, unmatchedPgReasons, unmatchedBankReasons));
     }
   } else {
-    // Generate only the requested status
-    for (let i = 0; i < limit && i < 20; i++) {
+    // Generate only the requested status based on the expected count
+    let maxCount = 20; // Default limit
+    if (status === 'MATCHED') maxCount = 16;
+    else if (status === 'UNMATCHED_PG') maxCount = 9;
+    else if (status === 'UNMATCHED_BANK') maxCount = 4;
+    else if (status === 'EXCEPTION') maxCount = 6;
+    
+    const actualLimit = Math.min(limit, maxCount);
+    for (let i = 0; i < actualLimit; i++) {
       results.push(generateSingleResult(jobId, i, status, baseAmount, 
         exceptionReasons, unmatchedPgReasons, unmatchedBankReasons));
     }
@@ -236,6 +282,18 @@ function generateSingleResult(jobId, index, status, baseAmount,
   let pgAmount = baseAmount + Math.floor(Math.random() * 500000);
   let bankAmount = pgAmount;
   
+  // Create unique identifiers based on status and index to avoid duplicates
+  const statusPrefix = {
+    'MATCHED': 'M',
+    'UNMATCHED_PG': 'UP',
+    'UNMATCHED_BANK': 'UB',
+    'EXCEPTION': 'E'
+  }[status] || 'T';
+  
+  const uniqueId = `${statusPrefix}${jobId.slice(-8)}${String(index).padStart(3, '0')}`;
+  const txnIdBase = `TXN11/09/202${statusPrefix}${String(index).padStart(3, '0')}`;
+  const utrBase = `UTR11/09/202${statusPrefix}${String(index).padStart(3, '0')}`;
+  
   // Assign reason codes based on status
   if (status === 'EXCEPTION') {
     const reason = exceptionReasons[index % exceptionReasons.length];
@@ -243,6 +301,12 @@ function generateSingleResult(jobId, index, status, baseAmount,
     reasonLabel = reason.label;
     if (reasonCode === 'AMOUNT_MISMATCH') {
       bankAmount = pgAmount + Math.floor(Math.random() * 10000) - 5000;
+    } else if (reasonCode === 'MISSING_UTR') {
+      reasonCode = 'UTR_MISSING_OR_INVALID';
+      reasonLabel = 'Transaction missing UTR reference';
+    } else if (reasonCode === 'DUPLICATE_UTR') {
+      reasonCode = 'DUPLICATE_PG_ENTRY';
+      reasonLabel = `Duplicate UTR ${utrBase} found in 2 PG transactions`;
     }
   } else if (status === 'UNMATCHED_PG') {
     const reason = unmatchedPgReasons[index % unmatchedPgReasons.length];
@@ -251,25 +315,24 @@ function generateSingleResult(jobId, index, status, baseAmount,
     bankAmount = null; // No bank record for unmatched PG
   } else if (status === 'UNMATCHED_BANK') {
     const reason = unmatchedBankReasons[index % unmatchedBankReasons.length];
-    reasonCode = reason.code;
-    reasonLabel = reason.label;
+    reasonCode = 'BANK_TXN_MISSING_IN_PG';
+    reasonLabel = 'No corresponding PG transaction found';
     // For unmatched bank, we have bank amount but no PG amount
-    // Switch the amounts
     bankAmount = pgAmount;
-    pgAmount = 0; // Or could be null
+    pgAmount = 0;
   }
   
   return {
-    id: `${jobId}-${index}`,
-    txnId: status === 'UNMATCHED_BANK' ? '' : `TXN${Date.now()}${index}`,
-    utr: reasonCode === 'MISSING_UTR' ? '' : `UTR${Date.now()}${index}`,
-    rrn: `RRN${Date.now()}${index}`,
-    pgAmountPaise: pgAmount > 0 ? pgAmount.toString() : null,
-    bankAmountPaise: bankAmount ? bankAmount.toString() : null,
-    deltaPaise: (pgAmount && bankAmount) ? (pgAmount - bankAmount).toString() : null,
-    pgDate: pgAmount > 0 ? new Date().toISOString().split('T')[0] : null,
-    bankDate: bankAmount ? new Date().toISOString().split('T')[0] : null,
-    status: status,
+    id: uniqueId,
+    txnId: status === 'UNMATCHED_BANK' ? txnIdBase : txnIdBase,
+    utr: reasonCode === 'UTR_MISSING_OR_INVALID' ? '' : utrBase,
+    rrn: '',
+    pgAmount: pgAmount,  // Return amounts in paise as numbers for frontend conversion
+    bankAmount: bankAmount,
+    delta: (pgAmount && bankAmount) ? (pgAmount - bankAmount) : null,
+    pgDate: pgAmount > 0 ? '2025-09-18' : null,
+    bankDate: bankAmount ? '2025-09-18' : null,
+    status: status.toLowerCase(), // Return lowercase to match frontend expectations
     reasonCode: reasonCode,
     reasonLabel: reasonLabel
   };
