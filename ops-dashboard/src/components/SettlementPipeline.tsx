@@ -152,7 +152,7 @@ export function SettlementPipeline({
           </div>
           <div className="flex items-center gap-2">
             <span className="text-sm text-slate-500">
-              Captured: <span className="font-medium text-slate-900">{captured.toLocaleString('en-IN')}</span>
+              Captured: <span className="font-medium text-slate-900">{(captured || 0).toLocaleString('en-IN')}</span>
             </span>
             {warnings && warnings.length > 0 && (
               <Tooltip>
@@ -200,7 +200,7 @@ export function SettlementPipeline({
                     >
                       {showLabel && (
                         <span className="text-white text-sm font-medium px-2 truncate">
-                          {segment.count.toLocaleString('en-IN')}
+                          {(segment.count || 0).toLocaleString('en-IN')}
                         </span>
                       )}
                     </motion.div>
@@ -209,7 +209,7 @@ export function SettlementPipeline({
                     <div className="space-y-1">
                       <p className="font-medium">{segment.label}</p>
                       <p className="text-xs">
-                        Count: {segment.count.toLocaleString('en-IN')} ({segment.percentage}%)
+                        Count: {(segment.count || 0).toLocaleString('en-IN')} ({segment.percentage}%)
                       </p>
                       {segment.value && (
                         <p className="text-xs">
@@ -250,7 +250,7 @@ export function SettlementPipeline({
                 {segment.label}
               </span>
               <span className="text-xs text-slate-500">
-                {segment.count.toLocaleString('en-IN')}
+                {(segment.count || 0).toLocaleString('en-IN')}
               </span>
             </Badge>
           ))}
@@ -269,7 +269,7 @@ export function SettlementPipeline({
                 <span className="text-sm font-medium">{segment.label}</span>
               </div>
               <div className="text-right">
-                <div className="text-sm font-medium">{segment.count.toLocaleString('en-IN')}</div>
+                <div className="text-sm font-medium">{(segment.count || 0).toLocaleString('en-IN')}</div>
                 <div className="text-xs text-slate-500">{segment.percentage}%</div>
               </div>
             </div>

@@ -11,6 +11,7 @@ import { lazy } from 'react'
 
 // Ops Pages
 const Overview = lazy(() => import('./pages/Overview'))
+const OverviewSimple = lazy(() => import('./pages/ops/OverviewSimple'))
 const ReconOverview = lazy(() => import('./pages/ops/ReconOverviewConsistent'))
 const ReconWorkspace = lazy(() => import('./pages/ops/ReconWorkspaceSimplified'))
 const ReconConfig = lazy(() => import('./pages/ops/ReconConfigCentral'))

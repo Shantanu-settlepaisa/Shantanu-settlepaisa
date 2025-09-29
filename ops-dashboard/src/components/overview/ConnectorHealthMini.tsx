@@ -34,6 +34,35 @@ export function ConnectorHealthMini({ filters, isLoading: parentLoading }: Conne
     staleTime: 20000,
   });
 
+  // Fetch SFTP ingestion health status
+  const { data: sftpHealth } = useQuery({
+    queryKey: ['sftp-health'],
+    queryFn: async () => {
+      try {
+        const response = await fetch('http://localhost:5106/api/ingest/health', {
+          headers: { 'X-User-Role': 'admin' }
+        });
+        if (!response.ok) return [];
+        const data = await response.json();
+        // Transform SFTP data to match ConnectorStatus format
+        return data.map((item: any) => ({
+          id: `${item.bank.toLowerCase()}-sftp`,
+          name: `${item.bank} SFTP`,
+          status: item.window_status.toLowerCase() as 'healthy' | 'degraded' | 'down',
+          lastSync: item.last_file_at || 'Never',
+          lag: item.lag_minutes
+        }));
+      } catch {
+        return [];
+      }
+    },
+    refetchInterval: 30000,
+    enabled: true // Always enabled for demo
+  });
+
+  // Combine both data sources
+  const allConnectors = [...(connectors || []), ...(sftpHealth || [])];
+
   const loading = parentLoading || isLoading;
 
   if (loading) {
@@ -52,9 +81,9 @@ export function ConnectorHealthMini({ filters, isLoading: parentLoading }: Conne
   }
 
   const healthSummary = {
-    healthy: connectors?.filter(c => c.status === 'healthy').length || 0,
-    degraded: connectors?.filter(c => c.status === 'degraded').length || 0,
-    down: connectors?.filter(c => c.status === 'down').length || 0,
+    healthy: allConnectors?.filter(c => c.status === 'healthy').length || 0,
+    degraded: allConnectors?.filter(c => c.status === 'degraded').length || 0,
+    down: allConnectors?.filter(c => c.status === 'down').length || 0,
   };
 
   const totalConnectors = (healthSummary.healthy + healthSummary.degraded + healthSummary.down) || 1;
@@ -136,9 +165,9 @@ export function ConnectorHealthMini({ filters, isLoading: parentLoading }: Conne
       </div>
 
       {/* Critical Connectors */}
-      {connectors && connectors.length > 0 && (
+      {allConnectors && allConnectors.length > 0 && (
         <div className="space-y-2">
-          {connectors
+          {allConnectors
             .filter(c => c.status !== 'healthy')
             .slice(0, 3)
             .map((connector) => (

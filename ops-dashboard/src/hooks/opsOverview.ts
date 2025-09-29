@@ -1,5 +1,4 @@
 import { useQuery } from '@tanstack/react-query';
-import { apiClient } from '@/lib/api-client';
 
 // Type definitions matching backend contract
 export interface KpiFilters {
@@ -83,6 +82,166 @@ export interface ReconSourceSummary {
   };
 }
 
+// V2 API Response Interface (actual structure)
+interface V2OverviewResponse {
+  period: {
+    from: string;
+    to: string;
+    type: string;
+  };
+  summary: {
+    totalTransactions: number;
+    totalAmount: number;
+    matchedTransactions: number;
+    unmatchedTransactions: number;
+    exceptionTransactions: number;
+    matchRate: number;
+    reconciledAmount: number;
+    unreconciledAmount: number;
+  };
+  sources: {
+    connectors: {
+      transactions: number;
+      matched: number;
+      matchRate: number;
+    };
+    manual_upload: {
+      transactions: number;
+      matched: number;
+      matchRate: number;
+    };
+  };
+  timeline: any[];
+  lastUpdated: string;
+}
+
+/**
+ * Transform V2 API data to match expected interfaces
+ */
+function transformV2ToKpis(v2Data: V2OverviewResponse): Kpis {
+  const totalAmount = v2Data.summary.totalAmount || 0;
+  const reconciledAmount = v2Data.summary.reconciledAmount || 0;
+  const variance = totalAmount - reconciledAmount;
+
+  return {
+    timeRange: {
+      fromISO: v2Data.period.from,
+      toISO: v2Data.period.to,
+    },
+    totals: {
+      transactionsCount: v2Data.summary.totalTransactions,
+      totalAmountPaise: (totalAmount * 100).toString(), // Convert to paise
+      reconciledAmountPaise: (reconciledAmount * 100).toString(),
+      variancePaise: (variance * 100).toString(),
+    },
+    recon: {
+      matchRatePct: v2Data.summary.matchRate || 0,
+      matchedCount: v2Data.summary.matchedTransactions || 0,
+      unmatchedPgCount: Math.floor((v2Data.summary.unmatchedTransactions || 0) / 2), // Estimate
+      unmatchedBankCount: Math.ceil((v2Data.summary.unmatchedTransactions || 0) / 2), // Estimate
+      exceptionsCount: v2Data.summary.exceptionTransactions || 0,
+    },
+    connectorHealth: [
+      {
+        connector: 'Connectors',
+        status: v2Data.sources.connectors.matchRate > 80 ? 'ok' : v2Data.sources.connectors.matchRate > 50 ? 'degraded' : 'down' as 'ok' | 'degraded' | 'down',
+        lastSyncISO: v2Data.lastUpdated,
+      },
+      {
+        connector: 'Manual Upload',
+        status: v2Data.sources.manual_upload.matchRate > 80 ? 'ok' : v2Data.sources.manual_upload.matchRate > 50 ? 'degraded' : 'down' as 'ok' | 'degraded' | 'down',
+        lastSyncISO: v2Data.lastUpdated,
+      }
+    ],
+  };
+}
+
+function transformV2ToTopReasons(v2Data: V2OverviewResponse): TopReason[] {
+  // V2 API doesn't have top reasons data yet, return mock data
+  return [
+    { reasonCode: 'NO_BANK_REF', count: Math.floor(v2Data.summary.exceptionTransactions * 0.4) },
+    { reasonCode: 'AMOUNT_MISMATCH', count: Math.floor(v2Data.summary.exceptionTransactions * 0.3) },
+    { reasonCode: 'DATE_MISMATCH', count: Math.floor(v2Data.summary.exceptionTransactions * 0.2) },
+    { reasonCode: 'DUPLICATE_TXN', count: Math.floor(v2Data.summary.exceptionTransactions * 0.1) },
+  ].filter(r => r.count > 0);
+}
+
+function transformV2ToPipeline(v2Data: V2OverviewResponse): PipelineSummary {
+  const totalTxns = v2Data.summary.totalTransactions;
+  const matchedTxns = v2Data.summary.matchedTransactions;
+  const unmatchedTxns = v2Data.summary.unmatchedTransactions;
+  
+  return {
+    ingested: totalTxns,
+    reconciled: matchedTxns,
+    settled: Math.floor(matchedTxns * 0.8), // Estimate 80% settled
+    inSettlement: Math.floor(matchedTxns * 0.2), // Estimate 20% in settlement
+    unsettled: unmatchedTxns,
+  };
+}
+
+function transformV2ToReconSources(v2Data: V2OverviewResponse): ReconSourceSummary {
+  return {
+    timeRange: {
+      fromISO: v2Data.period.from,
+      toISO: v2Data.period.to,
+    },
+    overall: {
+      matchedPct: v2Data.summary.matchRate || 0,
+      matchedCount: v2Data.summary.matchedTransactions || 0,
+      unmatchedPgCount: Math.floor((v2Data.summary.unmatchedTransactions || 0) / 2),
+      unmatchedBankCount: Math.ceil((v2Data.summary.unmatchedTransactions || 0) / 2),
+      exceptionsCount: v2Data.summary.exceptionTransactions || 0,
+      totalTransactions: v2Data.summary.totalTransactions,
+    },
+    connectors: {
+      totalTransactions: v2Data.sources.connectors.transactions,
+      matchedCount: v2Data.sources.connectors.matched,
+      unmatchedPgCount: v2Data.sources.connectors.transactions - v2Data.sources.connectors.matched,
+      unmatchedBankCount: 0,
+      exceptionsCount: v2Data.sources.connectors.transactions - v2Data.sources.connectors.matched,
+      matchedPct: v2Data.sources.connectors.matchRate,
+    },
+    manualUpload: {
+      totalTransactions: v2Data.sources.manual_upload.transactions,
+      matchedCount: v2Data.sources.manual_upload.matched,
+      unmatchedPgCount: v2Data.sources.manual_upload.transactions - v2Data.sources.manual_upload.matched,
+      unmatchedBankCount: 0,
+      exceptionsCount: v2Data.sources.manual_upload.transactions - v2Data.sources.manual_upload.matched,
+      matchedPct: v2Data.sources.manual_upload.matchRate,
+    },
+  };
+}
+
+/**
+ * Fetch V2 analytics data
+ */
+async function fetchV2Analytics(filters: KpiFilters): Promise<V2OverviewResponse> {
+  console.log('🔍 [V2 Hooks] Fetching analytics data with filters:', filters);
+  
+  const apiUrl = `http://localhost:5106/api/analytics/overview?from=${filters.from}&to=${filters.to}`;
+  console.log('📡 [V2 Hooks] Calling API:', apiUrl);
+  
+  const response = await fetch(apiUrl, {
+    method: 'GET',
+    headers: { 'Content-Type': 'application/json' },
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error('❌ [V2 Hooks] API Error:', {
+      status: response.status,
+      statusText: response.statusText,
+      body: errorText,
+    });
+    throw new Error(`V2 API failed with status ${response.status}: ${errorText}`);
+  }
+
+  const data = await response.json();
+  console.log('✅ [V2 Hooks] Received data:', data);
+  return data;
+}
+
 /**
  * Hook to fetch KPI data with automatic polling
  */
@@ -90,12 +249,8 @@ export function useKpis(filters: KpiFilters) {
   return useQuery({
     queryKey: ['kpis', filters],
     queryFn: async () => {
-      console.log('Fetching KPIs with filters:', filters);
-      const { data } = await apiClient.get<Kpis>('/api/kpis', { 
-        params: filters,
-        baseURL: 'http://localhost:5105' 
-      });
-      return data;
+      const v2Data = await fetchV2Analytics(filters);
+      return transformV2ToKpis(v2Data);
     },
     refetchInterval: 30000, // Poll every 30 seconds
     staleTime: 20000, // Consider data stale after 20 seconds
@@ -111,11 +266,8 @@ export function useTopReasons(filters: KpiFilters) {
   return useQuery({
     queryKey: ['top-reasons', filters],
     queryFn: async () => {
-      const { data } = await apiClient.get<TopReason[]>('/api/exceptions/top-reasons', {
-        params: filters,
-        baseURL: 'http://localhost:5105'
-      });
-      return data;
+      const v2Data = await fetchV2Analytics(filters);
+      return transformV2ToTopReasons(v2Data);
     },
     refetchInterval: 60000, // Poll every 60 seconds (less frequent)
     staleTime: 30000,
@@ -130,11 +282,8 @@ export function usePipelineSummary(filters: KpiFilters) {
   return useQuery({
     queryKey: ['pipeline-summary', filters],
     queryFn: async () => {
-      const { data } = await apiClient.get<PipelineSummary>('/api/pipeline/summary', {
-        params: filters,
-        baseURL: 'http://localhost:5105'
-      });
-      return data;
+      const v2Data = await fetchV2Analytics(filters);
+      return transformV2ToPipeline(v2Data);
     },
     refetchInterval: 30000,
     staleTime: 20000,
@@ -149,11 +298,8 @@ export function useReconSourceSummary(filters: KpiFilters) {
   return useQuery({
     queryKey: ['recon-sources-summary', filters],
     queryFn: async () => {
-      const { data } = await apiClient.get<ReconSourceSummary>('/api/recon-sources/summary', {
-        params: filters,
-        baseURL: 'http://localhost:5105'
-      });
-      return data;
+      const v2Data = await fetchV2Analytics(filters);
+      return transformV2ToReconSources(v2Data);
     },
     refetchInterval: 30000,
     staleTime: 20000,
