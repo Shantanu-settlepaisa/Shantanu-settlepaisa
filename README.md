@@ -1,7 +1,11 @@
-# My First App FirstName
-Attempting to create my first app
+# Shantanu's Repository
 
-## Development Environment
-- IDE: Cursor with AI assistance
-- Version Control: Git + GitHub
-- Language: Python 3.8+
+This is a test repository for Shantanu-settlepaisa.
+
+## Projects
+- Payment Gateway Systems
+- FinTech Solutions  
+- Operations Dashboard
+
+---
+*Generated for testing GitHub connection*
