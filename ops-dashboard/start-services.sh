@@ -21,6 +21,7 @@ pkill -f "node.*mock-bank-api" 2>/dev/null
 pkill -f "node.*recon-api" 2>/dev/null
 pkill -f "node.*overview-api" 2>/dev/null
 pkill -f "node.*ingest.*server" 2>/dev/null
+pkill -f "node.*settlement-analytics-api" 2>/dev/null
 sleep 2
 
 # Start PG API (port 5101)
@@ -94,16 +95,30 @@ if [ "${FEATURE_BANK_SFTP_INGESTION}" = "true" ]; then
     fi
 fi
 
+# Start Settlement Analytics API (port 5107)
+echo -n "Starting Settlement Analytics API on port 5107..."
+cd /Users/shantanusingh/ops-dashboard/services/settlement-analytics-api
+node index.js > /tmp/analytics-api.log 2>&1 &
+ANALYTICS_PID=$!
+sleep 2
+if check_port 5107; then
+    echo -e "${GREEN} ✓${NC}"
+else
+    echo -e "${RED} ✗${NC}"
+    echo "Check /tmp/analytics-api.log for errors"
+fi
+
 echo ""
 echo "Service Status:"
 echo "---------------"
-check_port 5101 && echo -e "PG API:       ${GREEN}Running${NC} on port 5101" || echo -e "PG API:       ${RED}Not running${NC}"
-check_port 5102 && echo -e "Bank API:     ${GREEN}Running${NC} on port 5102" || echo -e "Bank API:     ${RED}Not running${NC}"
-check_port 5103 && echo -e "Recon API:    ${GREEN}Running${NC} on port 5103" || echo -e "Recon API:    ${RED}Not running${NC}"
-check_port 5105 && echo -e "Overview API: ${GREEN}Running${NC} on port 5105" || echo -e "Overview API: ${RED}Not running${NC}"
+check_port 5101 && echo -e "PG API:                ${GREEN}Running${NC} on port 5101" || echo -e "PG API:                ${RED}Not running${NC}"
+check_port 5102 && echo -e "Bank API:              ${GREEN}Running${NC} on port 5102" || echo -e "Bank API:              ${RED}Not running${NC}"
+check_port 5103 && echo -e "Recon API:             ${GREEN}Running${NC} on port 5103" || echo -e "Recon API:             ${RED}Not running${NC}"
+check_port 5105 && echo -e "Overview API:          ${GREEN}Running${NC} on port 5105" || echo -e "Overview API:          ${RED}Not running${NC}"
 if [ "${FEATURE_BANK_SFTP_INGESTION}" = "true" ]; then
-    check_port 5106 && echo -e "Ingest API:   ${GREEN}Running${NC} on port 5106" || echo -e "Ingest API:   ${RED}Not running${NC}"
+    check_port 5106 && echo -e "Ingest API:            ${GREEN}Running${NC} on port 5106" || echo -e "Ingest API:            ${RED}Not running${NC}"
 fi
+check_port 5107 && echo -e "Analytics API:         ${GREEN}Running${NC} on port 5107" || echo -e "Analytics API:         ${RED}Not running${NC}"
 
 echo ""
 echo "All services started. Logs available at:"
@@ -114,5 +129,6 @@ echo "  - /tmp/overview-api.log"
 if [ "${FEATURE_BANK_SFTP_INGESTION}" = "true" ]; then
     echo "  - /tmp/ingest-api.log"
 fi
+echo "  - /tmp/analytics-api.log"
 echo ""
 echo "To stop all services, run: pkill -f 'node.*api'"

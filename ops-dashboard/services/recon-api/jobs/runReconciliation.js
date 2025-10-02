@@ -764,7 +764,7 @@ async function persistResults(results, jobId = 'UNKNOWN', job = {}, params = {})
       if (results.exceptions && results.exceptions.length > 0) {
         for (const exception of results.exceptions) {
           const exceptionPg = exception.pg;
-          console.log(`[Persistence] Saving exception: ${exceptionPg.transaction_id}, UTR: ${exceptionPg.utr}`);
+          console.log(`[Persistence] Saving exception: ${exceptionPg.transaction_id}, UTR: ${exceptionPg.utr}, Reason: ${exception.reasonCode}`);
           await client.query(`
             INSERT INTO sp_v2_transactions (
               transaction_id,
@@ -777,10 +777,12 @@ async function persistResults(results, jobId = 'UNKNOWN', job = {}, params = {})
               source_name,
               payment_method,
               utr,
-              status
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+              status,
+              exception_reason
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
             ON CONFLICT (transaction_id) DO UPDATE SET
               status = 'EXCEPTION',
+              exception_reason = EXCLUDED.exception_reason,
               updated_at = NOW()
           `, [
             exceptionPg.transaction_id || exceptionPg.pgw_ref,
@@ -793,7 +795,8 @@ async function persistResults(results, jobId = 'UNKNOWN', job = {}, params = {})
             job.sourceType === 'MANUAL_UPLOAD' ? 'MANUAL_UPLOAD' : 'PG_API',
             exceptionPg.payment_method || exceptionPg.payment_mode || 'UNKNOWN',
             exceptionPg.utr,
-            'EXCEPTION'
+            'EXCEPTION',
+            exception.reasonCode || 'AMOUNT_MISMATCH'
           ]);
         }
         console.log(`[Persistence] Saved ${results.exceptions.length} exception transactions`);

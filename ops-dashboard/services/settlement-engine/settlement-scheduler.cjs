@@ -1,6 +1,6 @@
 const { Pool } = require('pg');
 const cron = require('node-cron');
-const { SettlementCalculatorV2 } = require('./settlement-calculator-v2.cjs');
+const { SettlementCalculatorV3 } = require('./settlement-calculator-v3.cjs');
 
 const v2Pool = new Pool({
   user: 'postgres',
@@ -12,7 +12,7 @@ const v2Pool = new Pool({
 
 class SettlementScheduler {
   constructor() {
-    this.calculator = new SettlementCalculatorV2();
+    this.calculator = new SettlementCalculatorV3();
     this.cronJob = null;
   }
 
@@ -244,8 +244,15 @@ class SettlementScheduler {
 
   async queueBankTransfer(batchId, merchantConfig, settlementBatch) {
     try {
+      const netAmount = settlementBatch.netAmount || settlementBatch.net_settlement_amount || 0;
+      
+      if (!netAmount || isNaN(netAmount)) {
+        console.warn(`[Settlement Scheduler] Skipping bank transfer - invalid amount: ${netAmount}`);
+        return;
+      }
+      
       const transferMode = this.determineTransferMode(
-        settlementBatch.net_settlement_amount,
+        netAmount,
         merchantConfig.preferred_transfer_mode
       );
       
@@ -257,7 +264,7 @@ class SettlementScheduler {
         [
           batchId,
           transferMode,
-          settlementBatch.net_settlement_amount,
+          netAmount,
           merchantConfig.account_holder_name || merchantConfig.merchant_name,
           merchantConfig.account_number,
           merchantConfig.ifsc_code,
@@ -265,7 +272,7 @@ class SettlementScheduler {
         ]
       );
       
-      console.log(`[Settlement Scheduler] Queued ${transferMode} transfer for batch ${batchId}: ₹${(settlementBatch.net_settlement_amount / 100).toFixed(2)}`);
+      console.log(`[Settlement Scheduler] Queued ${transferMode} transfer for batch ${batchId}: ₹${(netAmount / 100).toFixed(2)}`);
       
     } catch (error) {
       console.error('[Settlement Scheduler] Error queueing bank transfer:', error.message);
@@ -319,6 +326,9 @@ class SettlementScheduler {
   }
 
   async completeScheduleRun(runId, data) {
+    const totalAmount = data.total_amount_settled_paise || 0;
+    const validAmount = (isNaN(totalAmount) || !isFinite(totalAmount)) ? 0 : totalAmount;
+    
     await v2Pool.query(
       `UPDATE sp_v2_settlement_schedule_runs 
        SET status = $1,
@@ -334,7 +344,7 @@ class SettlementScheduler {
         data.status,
         data.merchants_processed,
         data.batches_created,
-        data.total_amount_settled_paise,
+        validAmount,
         data.errors_count,
         data.error_details ? JSON.stringify(data.error_details) : null,
         data.duration_seconds,

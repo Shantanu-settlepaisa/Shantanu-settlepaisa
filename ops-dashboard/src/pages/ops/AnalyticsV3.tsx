@@ -241,10 +241,15 @@ export default function AnalyticsV3() {
 
   // Settlement funnel chart options
   const funnelChartOptions = useMemo(() => {
-    if (!funnelData) return {};
+    if (!funnelData?.funnel) return {};
     
     const stages = ['Captured', 'Reconciled', 'Settled', 'Paid Out'];
-    const values = [100, 80, 76, 74];
+    const values = [
+      parseFloat(funnelData.funnel.captured.percentage),
+      parseFloat(funnelData.funnel.reconciled.percentage),
+      parseFloat(funnelData.funnel.settled.percentage),
+      parseFloat(funnelData.funnel.paid_out.percentage)
+    ];
     
     return {
       tooltip: {
@@ -513,11 +518,12 @@ export default function AnalyticsV3() {
           
           <KpiCard
             title="Avg Settlement Time"
-            value="1.2 days"
+            value={kpisLoading ? '...' : `${((kpis?.avgSettlementHrs ?? 0) / 24).toFixed(1)} days`}
             subValue="From capture to credit"
-            delta={-0.3}
+            delta={kpis?.deltas?.avgSettlementHrs}
             deltaType="count"
             goodDirection="down"
+            loading={kpisLoading}
             icon="⏱️"
           />
         </div>

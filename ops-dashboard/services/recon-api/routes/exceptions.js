@@ -35,6 +35,7 @@ router.get('/', async (req, res) => {
         t.rrn,
         t.payment_method,
         t.status,
+        t.exception_reason,
         t.created_at,
         t.updated_at
       FROM sp_v2_transactions t
