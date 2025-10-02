@@ -237,7 +237,7 @@ async function runReconciliation(params) {
     logStructured(jobId, 'info', 'Sample normalized PG', { sample: normalizedPg[0] });
     logStructured(jobId, 'info', 'Sample normalized Bank', { sample: normalizedBank[0] });
     
-    const matchResult = matchRecords(normalizedPg, normalizedBank);
+    const matchResult = matchRecords(normalizedPg, normalizedBank, params.date);
     job.counters.matched = matchResult.matched.length;
     job.counters.unmatchedPg = matchResult.unmatchedPg.length;
     job.counters.unmatchedBank = matchResult.unmatchedBank.length;
@@ -493,12 +493,21 @@ function normalizeTransactions(transactions) {
     const amountInRupees = Number(t.Amount || t.AMOUNT || t.amount || 0);
     const amountInPaise = Math.round(amountInRupees * 100); // Convert rupees to paise
     
+    // Parse fee columns (V2.10.0 enhancement)
+    const bankFeeInRupees = Number(t['Bank Fee'] || t.bank_fee || t.BANK_FEE || 0);
+    const bankFeeInPaise = Math.round(bankFeeInRupees * 100);
+    
+    const settlementAmountInRupees = Number(t['Settlement Amount'] || t.settlement_amount || t.SETTLEMENT_AMOUNT || 0);
+    const settlementAmountInPaise = Math.round(settlementAmountInRupees * 100);
+    
     return {
       ...t,
       normalized: true,
       transaction_id: t['Transaction ID'] || t.transaction_id || t.TXN_ID || '',
       merchant_id: t['Merchant ID'] || t.merchant_id || t.CLIENT_CODE || '',
       amount: amountInPaise, // Store in paise
+      bank_fee: bankFeeInPaise, // Bank fee in paise (V2.10.0)
+      settlement_amount: settlementAmountInPaise, // Settlement amount in paise (V2.10.0)
       currency: t.Currency || t.currency || 'INR',
       transaction_date: t['Transaction Date'] || t.transaction_date || t.TXN_DATE || '',
       transaction_time: t['Transaction Time'] || t.transaction_time || '',
@@ -531,112 +540,337 @@ function normalizeBankRecords(records) {
   });
 }
 
-function matchRecords(pgRecords, bankRecords) {
+// V1-Style Reconciliation Engine with 11 Exception Types
+function matchRecords(pgRecords, bankRecords, cycleDate = null) {
   const matched = [];
   const unmatchedPg = [...pgRecords];
   const unmatchedBank = [...bankRecords];
   const exceptions = [];
   
-  const AMOUNT_TOLERANCE = 0.01;
+  // V1 Tolerances
+  const AMOUNT_TOLERANCE_PAISE = 100;        // ₹1.00
+  const AMOUNT_TOLERANCE_PERCENT = 0.001;    // 0.1%
+  const DATE_WINDOW_DAYS = 2;                // T+2 window
+  const FEE_MISMATCH_MIN = 200;              // ₹2.00 (200 paise)
+  const FEE_MISMATCH_MAX = 500;              // ₹5.00 (500 paise)
+  const ROUNDING_ERROR_EXACT = 1;            // ₹0.01 (1 paisa)
   
-  const fs = require('fs');
-  fs.appendFileSync('/tmp/matching-debug.log', `\n=== MATCHING DEBUG ===\n`);
-  fs.appendFileSync('/tmp/matching-debug.log', `PG Records: ${pgRecords.length}\n`);
-  fs.appendFileSync('/tmp/matching-debug.log', `Bank Records: ${bankRecords.length}\n`);
-  fs.appendFileSync('/tmp/matching-debug.log', `Sample PG: ${JSON.stringify(pgRecords[0], null, 2)}\n`);
-  fs.appendFileSync('/tmp/matching-debug.log', `Sample Bank: ${JSON.stringify(bankRecords[0], null, 2)}\n`);
+  console.log(`[V1 Recon] Starting reconciliation...`);
+  console.log(`[V1 Recon] PG Records: ${pgRecords.length}, Bank Records: ${bankRecords.length}`);
   
-  // Step 1: Check for MISSING_UTR exceptions (PG transactions without UTR)
+  // ========================================================================
+  // STEP 1: BANK_FILE_MISSING Check
+  // ========================================================================
+  if (!bankRecords || bankRecords.length === 0) {
+    console.log(`[V1 Recon] BANK_FILE_MISSING detected - no bank records`);
+    pgRecords.forEach(pg => {
+      exceptions.push({
+        pg,
+        bank: null,
+        reasonCode: 'BANK_FILE_MISSING',
+        reason: 'No bank file uploaded for this reconciliation cycle',
+        delta: 0
+      });
+    });
+    return { matched, unmatchedPg: [], unmatchedBank: [], exceptions };
+  }
+  
+  // ========================================================================
+  // STEP 2: UTR_MISSING_OR_INVALID (MISSING_UTR)
+  // ========================================================================
   const pgWithoutUtr = [];
-  pgRecords.forEach((pg, idx) => {
+  pgRecords.forEach(pg => {
     const utr = pg.utr?.trim();
-    if (!utr || utr === '' || utr === 'null' || utr === 'NULL') {
+    if (!utr || utr === '' || utr === 'null' || utr === 'NULL' || utr === 'undefined') {
       pgWithoutUtr.push(pg);
       exceptions.push({
         pg,
         bank: null,
-        reasonCode: 'MISSING_UTR',
-        reason: `PG transaction missing UTR (Transaction ID: ${pg.transaction_id || pg.pgw_ref})`,
+        reasonCode: 'UTR_MISSING_OR_INVALID',
+        reason: `PG transaction missing UTR (Transaction ID: ${pg.transaction_id || pg.pgw_ref || 'UNKNOWN'})`,
         delta: 0
       });
     }
   });
   
-  // Remove PG records without UTR from unmatchedPg
+  // Remove from unmatched pool
   pgWithoutUtr.forEach(pg => {
     const index = unmatchedPg.indexOf(pg);
     if (index > -1) unmatchedPg.splice(index, 1);
   });
   
-  // Step 2: Check for DUPLICATE_UTR (same UTR in multiple PG transactions)
-  const utrCounts = {};
+  console.log(`[V1 Recon] MISSING_UTR: ${pgWithoutUtr.length}`);
+  
+  // ========================================================================
+  // STEP 3: DUPLICATE_PG_ENTRY (DUPLICATE_UTR in PG)
+  // ========================================================================
+  const pgUtrCounts = {};
   pgRecords.forEach(pg => {
     const utr = pg.utr?.trim();
-    if (utr) {
-      utrCounts[utr] = (utrCounts[utr] || 0) + 1;
+    if (utr && utr !== 'null' && utr !== 'NULL') {
+      pgUtrCounts[utr] = (pgUtrCounts[utr] || 0) + 1;
     }
   });
   
-  const duplicateUtrs = Object.keys(utrCounts).filter(utr => utrCounts[utr] > 1);
+  const duplicatePgUtrs = Object.keys(pgUtrCounts).filter(utr => pgUtrCounts[utr] > 1);
   const pgWithDuplicateUtr = [];
   
-  if (duplicateUtrs.length > 0) {
+  if (duplicatePgUtrs.length > 0) {
     pgRecords.forEach(pg => {
       const utr = pg.utr?.trim();
-      if (duplicateUtrs.includes(utr)) {
+      if (duplicatePgUtrs.includes(utr)) {
         pgWithDuplicateUtr.push(pg);
         exceptions.push({
           pg,
           bank: null,
-          reasonCode: 'DUPLICATE_UTR',
-          reason: `Duplicate UTR: ${utr} appears in ${utrCounts[utr]} PG transactions`,
+          reasonCode: 'DUPLICATE_PG_ENTRY',
+          reason: `Duplicate UTR in PG: ${utr} appears ${pgUtrCounts[utr]} times`,
           delta: 0
         });
       }
     });
     
-    // Remove duplicate UTR records from unmatchedPg
     pgWithDuplicateUtr.forEach(pg => {
       const index = unmatchedPg.indexOf(pg);
       if (index > -1) unmatchedPg.splice(index, 1);
     });
   }
   
-  // Step 3: Match by UTR
-  unmatchedPg.forEach((pg, idx) => {
-    const utrToMatch = pg.utr?.trim();
-    if (idx < 3) console.log(`[Matching] PG #${idx} UTR: "${utrToMatch}"`);
-    if (!utrToMatch) return;
-    
-    const bankMatch = unmatchedBank.find(b => {
-      const bankUtr = b.utr?.trim();
-      if (idx < 3 && bankUtr) console.log(`[Matching]   Comparing with Bank UTR: "${bankUtr}"`);
-      return bankUtr === utrToMatch;
-    });
-    
-    if (bankMatch) {
-      console.log(`[Matching] MATCH FOUND: PG UTR ${utrToMatch}`);
-      const pgAmount = Number(pg.amount) || 0;
-      const bankAmount = Number(bankMatch.amount) || 0;
-      const amountDiff = Math.abs(pgAmount - bankAmount);
-      
-      if (amountDiff <= AMOUNT_TOLERANCE) {
-        // Perfect match
-        matched.push({ pg, bank: bankMatch });
-      } else {
-        // Amount mismatch exception
-        exceptions.push({
-          pg,
-          bank: bankMatch,
-          reasonCode: 'AMOUNT_MISMATCH',
-          reason: `Amount mismatch: PG ₹${(pgAmount / 100).toFixed(2)} vs Bank ₹${(bankAmount / 100).toFixed(2)} (Δ ₹${(amountDiff / 100).toFixed(2)})`,
-          delta: amountDiff
-        });
-      }
+  console.log(`[V1 Recon] DUPLICATE_PG_ENTRY: ${pgWithDuplicateUtr.length}`);
+  
+  // ========================================================================
+  // STEP 4: DUPLICATE_BANK_ENTRY (DUPLICATE_UTR in Bank)
+  // ========================================================================
+  const bankUtrCounts = {};
+  bankRecords.forEach(bank => {
+    const utr = bank.utr?.trim();
+    if (utr && utr !== 'null' && utr !== 'NULL') {
+      bankUtrCounts[utr] = (bankUtrCounts[utr] || 0) + 1;
     }
   });
   
-  // Remove matched and exception records from unmatched lists
+  const duplicateBankUtrs = Object.keys(bankUtrCounts).filter(utr => bankUtrCounts[utr] > 1);
+  const bankWithDuplicateUtr = [];
+  
+  if (duplicateBankUtrs.length > 0) {
+    bankRecords.forEach(bank => {
+      const utr = bank.utr?.trim();
+      if (duplicateBankUtrs.includes(utr)) {
+        bankWithDuplicateUtr.push(bank);
+        exceptions.push({
+          pg: null,
+          bank,
+          reasonCode: 'DUPLICATE_BANK_ENTRY',
+          reason: `Duplicate UTR in Bank: ${utr} appears ${bankUtrCounts[utr]} times`,
+          delta: 0
+        });
+      }
+    });
+    
+    bankWithDuplicateUtr.forEach(bank => {
+      const index = unmatchedBank.indexOf(bank);
+      if (index > -1) unmatchedBank.splice(index, 1);
+    });
+  }
+  
+  console.log(`[V1 Recon] DUPLICATE_BANK_ENTRY: ${bankWithDuplicateUtr.length}`);
+  
+  // ========================================================================
+  // STEP 5: UTR Matching with Enhanced Exception Detection
+  // ========================================================================
+  const usedBankRecords = new Set();
+  
+  unmatchedPg.forEach(pg => {
+    const pgUtr = pg.utr?.trim();
+    if (!pgUtr) return; // Already handled in MISSING_UTR
+    
+    // Find bank record with matching UTR
+    const bankMatch = unmatchedBank.find(b => {
+      if (usedBankRecords.has(b)) return false;
+      const bankUtr = b.utr?.trim();
+      return bankUtr === pgUtr;
+    });
+    
+    if (!bankMatch) {
+      // Check for UTR_MISMATCH (RRN vs UTR format)
+      const pgRrn = pg.rrn?.trim();
+      if (pgRrn && pgRrn !== pgUtr) {
+        const bankMatchByRrn = unmatchedBank.find(b => {
+          if (usedBankRecords.has(b)) return false;
+          const bankUtr = b.utr?.trim();
+          return bankUtr === pgRrn;
+        });
+        
+        if (bankMatchByRrn) {
+          exceptions.push({
+            pg,
+            bank: bankMatchByRrn,
+            reasonCode: 'UTR_MISMATCH',
+            reason: `UTR format mismatch: PG UTR=${pgUtr}, PG RRN=${pgRrn} matches Bank UTR`,
+            delta: 0
+          });
+          usedBankRecords.add(bankMatchByRrn);
+          return;
+        }
+      }
+      // No match found - will be handled as UNMATCHED_IN_BANK later
+      return;
+    }
+    
+    // Found UTR match - now validate date and amount
+    const pgAmount = Number(pg.amount) || 0;
+    const bankAmount = Number(bankMatch.amount) || 0;
+    const amountDiff = Math.abs(pgAmount - bankAmount);
+    
+    // ========================================================================
+    // STEP 5a: DATE_OUT_OF_WINDOW Check
+    // ========================================================================
+    const pgDate = pg.transaction_date || pg.captured_at || cycleDate;
+    const bankDate = bankMatch.transaction_date || bankMatch.value_date || cycleDate;
+    
+    if (pgDate && bankDate) {
+      try {
+        const pgTime = new Date(pgDate).getTime();
+        const bankTime = new Date(bankDate).getTime();
+        
+        if (!isNaN(pgTime) && !isNaN(bankTime)) {
+          const daysDiff = Math.abs(pgTime - bankTime) / (1000 * 60 * 60 * 24);
+          
+          if (daysDiff > DATE_WINDOW_DAYS) {
+            exceptions.push({
+              pg,
+              bank: bankMatch,
+              reasonCode: 'DATE_OUT_OF_WINDOW',
+              reason: `Date exceeds T+${DATE_WINDOW_DAYS} window: PG ${pgDate} vs Bank ${bankDate} (${Math.round(daysDiff)} days apart)`,
+              delta: amountDiff
+            });
+            usedBankRecords.add(bankMatch);
+            return;
+          }
+        }
+      } catch (e) {
+        console.warn(`[V1 Recon] Date parsing error for UTR ${pgUtr}:`, e.message);
+      }
+    }
+    
+    // ========================================================================
+    // STEP 5b: FEES_VARIANCE Detection (V2.10.0)
+    // ========================================================================
+    // Check if PG transaction has explicit bank fee and settlement amount
+    const pgBankFee = pg.bank_fee || 0;
+    const pgSettlementAmount = pg.settlement_amount || 0;
+    
+    if (pgBankFee > 0 || pgSettlementAmount > 0) {
+      // We have explicit fee data - perform FEES_VARIANCE checks
+      const FEE_VARIANCE_TOLERANCE = 100; // ₹1.00 (100 paise)
+      
+      // Check 1: Internal consistency (PG amount - bank fee = settlement amount)
+      if (pgSettlementAmount > 0) {
+        const expectedSettlement = pgAmount - pgBankFee;
+        const settlementVariance = Math.abs(expectedSettlement - pgSettlementAmount);
+        
+        if (settlementVariance > FEE_VARIANCE_TOLERANCE) {
+          exceptions.push({
+            pg,
+            bank: bankMatch,
+            reasonCode: 'FEES_VARIANCE',
+            reason: `PG fee calculation mismatch: Amount ₹${(pgAmount / 100).toFixed(2)} - Fee ₹${(pgBankFee / 100).toFixed(2)} ≠ Settlement ₹${(pgSettlementAmount / 100).toFixed(2)} (Δ ₹${(settlementVariance / 100).toFixed(2)})`,
+            delta: settlementVariance
+          });
+          usedBankRecords.add(bankMatch);
+          return;
+        }
+      }
+      
+      // Check 2: Bank credit validation (settlement amount matches what bank credited)
+      const expectedBankCredit = pgSettlementAmount || (pgAmount - pgBankFee);
+      const bankCreditVariance = Math.abs(expectedBankCredit - bankAmount);
+      
+      if (bankCreditVariance > FEE_VARIANCE_TOLERANCE) {
+        exceptions.push({
+          pg,
+          bank: bankMatch,
+          reasonCode: 'FEES_VARIANCE',
+          reason: `Bank credit mismatch: Expected ₹${(expectedBankCredit / 100).toFixed(2)} vs Actual ₹${(bankAmount / 100).toFixed(2)} (Δ ₹${(bankCreditVariance / 100).toFixed(2)})`,
+          delta: bankCreditVariance
+        });
+        usedBankRecords.add(bankMatch);
+        return;
+      }
+      
+      // Check 3: Fee calculation validation (calculated fee vs recorded fee)
+      if (pgBankFee > 0) {
+        const calculatedBankFee = pgAmount - bankAmount;
+        const feeVariance = Math.abs(calculatedBankFee - pgBankFee);
+        
+        if (feeVariance > FEE_VARIANCE_TOLERANCE) {
+          exceptions.push({
+            pg,
+            bank: bankMatch,
+            reasonCode: 'FEES_VARIANCE',
+            reason: `Bank fee mismatch: Recorded ₹${(pgBankFee / 100).toFixed(2)} vs Calculated ₹${(calculatedBankFee / 100).toFixed(2)} (Δ ₹${(feeVariance / 100).toFixed(2)})`,
+            delta: feeVariance
+          });
+          usedBankRecords.add(bankMatch);
+          return;
+        }
+      }
+      
+      // If all fee checks pass, this is a perfect match
+      matched.push({ pg, bank: bankMatch });
+      usedBankRecords.add(bankMatch);
+      return;
+    }
+    
+    // ========================================================================
+    // STEP 5c: Amount Matching with Enhanced Classification (No explicit fees)
+    // ========================================================================
+    const tolerance = Math.max(AMOUNT_TOLERANCE_PAISE, pgAmount * AMOUNT_TOLERANCE_PERCENT);
+    
+    if (amountDiff === 0) {
+      // Perfect match
+      matched.push({ pg, bank: bankMatch });
+      usedBankRecords.add(bankMatch);
+    } else if (amountDiff === ROUNDING_ERROR_EXACT) {
+      // ROUNDING_ERROR (₹0.01)
+      exceptions.push({
+        pg,
+        bank: bankMatch,
+        reasonCode: 'ROUNDING_ERROR',
+        reason: `Rounding difference: PG ₹${(pgAmount / 100).toFixed(2)} vs Bank ₹${(bankAmount / 100).toFixed(2)} (Δ ₹0.01)`,
+        delta: amountDiff
+      });
+      usedBankRecords.add(bankMatch);
+    } else if (amountDiff >= FEE_MISMATCH_MIN && amountDiff <= FEE_MISMATCH_MAX) {
+      // FEE_MISMATCH (₹2-₹5 bank fee)
+      exceptions.push({
+        pg,
+        bank: bankMatch,
+        reasonCode: 'FEE_MISMATCH',
+        reason: `Likely bank fee: PG ₹${(pgAmount / 100).toFixed(2)} vs Bank ₹${(bankAmount / 100).toFixed(2)} (Δ ₹${(amountDiff / 100).toFixed(2)})`,
+        delta: amountDiff
+      });
+      usedBankRecords.add(bankMatch);
+    } else if (amountDiff <= tolerance) {
+      // Within tolerance - match
+      matched.push({ pg, bank: bankMatch });
+      usedBankRecords.add(bankMatch);
+    } else {
+      // AMOUNT_MISMATCH (beyond tolerance)
+      exceptions.push({
+        pg,
+        bank: bankMatch,
+        reasonCode: 'AMOUNT_MISMATCH',
+        reason: `Amount mismatch: PG ₹${(pgAmount / 100).toFixed(2)} vs Bank ₹${(bankAmount / 100).toFixed(2)} (Δ ₹${(amountDiff / 100).toFixed(2)})`,
+        delta: amountDiff
+      });
+      usedBankRecords.add(bankMatch);
+    }
+  });
+  
+  // ========================================================================
+  // STEP 6: Clean up matched/exception records from unmatched pools
+  // ========================================================================
   matched.forEach(m => {
     const pgIndex = unmatchedPg.indexOf(m.pg);
     if (pgIndex > -1) unmatchedPg.splice(pgIndex, 1);
@@ -656,10 +890,24 @@ function matchRecords(pgRecords, bankRecords) {
     }
   });
   
-  // Step 4: Remaining unmatchedPg are UNMATCHED_IN_BANK
-  // (These will be handled in persistence layer)
+  // ========================================================================
+  // STEP 7: Remaining records are unmatched (handled in persistence)
+  // - unmatchedPg → PG_TXN_MISSING_IN_BANK (UNMATCHED_IN_BANK)
+  // - unmatchedBank → BANK_TXN_MISSING_IN_PG (UNMATCHED_IN_PG)
+  // ========================================================================
   
-  console.log(`[Matching] Results: ${matched.length} matched, ${exceptions.length} exceptions, ${unmatchedPg.length} unmatched PG, ${unmatchedBank.length} unmatched bank`);
+  console.log(`[V1 Recon] ========== RESULTS ==========`);
+  console.log(`[V1 Recon] Matched: ${matched.length}`);
+  console.log(`[V1 Recon] Exceptions: ${exceptions.length}`);
+  console.log(`[V1 Recon] Unmatched PG: ${unmatchedPg.length}`);
+  console.log(`[V1 Recon] Unmatched Bank: ${unmatchedBank.length}`);
+  
+  // Count exception types
+  const exceptionCounts = {};
+  exceptions.forEach(ex => {
+    exceptionCounts[ex.reasonCode] = (exceptionCounts[ex.reasonCode] || 0) + 1;
+  });
+  console.log(`[V1 Recon] Exception breakdown:`, exceptionCounts);
   
   return { matched, unmatchedPg, unmatchedBank, exceptions };
 }
@@ -800,7 +1048,122 @@ async function persistResults(results, jobId = 'UNKNOWN', job = {}, params = {})
         }
       }
       
-      // Insert unmatched PG transactions
+      // Insert exception transactions FIRST (all exception types with specific reasons)
+      console.log(`[Persistence] Processing ${results.exceptions?.length || 0} exceptions with specific reasons`);
+      console.log(`[Persistence] Exceptions array:`, JSON.stringify(results.exceptions?.slice(0, 3), null, 2));
+      if (results.exceptions && results.exceptions.length > 0) {
+        for (const exception of results.exceptions) {
+          console.log(`[Persistence] Exception ${exception.pg?.transaction_id}: reasonCode=${exception.reasonCode}, hasPg=${!!exception.pg}, hasBank=${!!exception.bank}`);
+          // Handle PG-based exceptions
+          if (exception.pg) {
+            const exceptionPg = exception.pg;
+            console.log(`[Persistence] Saving PG exception: ${exceptionPg.transaction_id}, UTR: ${exceptionPg.utr}, Reason: ${exception.reasonCode}`);
+            // Calculate fee variance if applicable (V2.10.0)
+            const bankFeePaise = exceptionPg.bank_fee || 0;
+            const settlementAmountPaise = exceptionPg.settlement_amount || 0;
+            let feeVariancePaise = 0;
+            let feeVariancePercentage = null;
+            
+            if (exception.reasonCode === 'FEES_VARIANCE') {
+              feeVariancePaise = exception.delta || 0;
+              const pgAmount = exceptionPg.amount || 0;
+              if (pgAmount > 0) {
+                feeVariancePercentage = (feeVariancePaise / pgAmount) * 100;
+              }
+            }
+            
+            await client.query(`
+              INSERT INTO sp_v2_transactions (
+                transaction_id,
+                merchant_id,
+                amount_paise,
+                bank_fee_paise,
+                settlement_amount_paise,
+                fee_variance_paise,
+                fee_variance_percentage,
+                currency,
+                transaction_date,
+                transaction_timestamp,
+                source_type,
+                source_name,
+                payment_method,
+                utr,
+                status,
+                exception_reason
+              ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+              ON CONFLICT (transaction_id) DO UPDATE SET
+                status = 'EXCEPTION',
+                exception_reason = EXCLUDED.exception_reason,
+                bank_fee_paise = EXCLUDED.bank_fee_paise,
+                settlement_amount_paise = EXCLUDED.settlement_amount_paise,
+                fee_variance_paise = EXCLUDED.fee_variance_paise,
+                fee_variance_percentage = EXCLUDED.fee_variance_percentage,
+                updated_at = NOW()
+            `, [
+              exceptionPg.transaction_id || exceptionPg.pgw_ref || `PG_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+              exceptionPg.merchant_id || 'UNKNOWN',
+              exceptionPg.amount || 0,
+              bankFeePaise,
+              settlementAmountPaise,
+              feeVariancePaise,
+              feeVariancePercentage,
+              'INR',
+              exceptionPg.transaction_date || new Date().toISOString().split('T')[0],
+              exceptionPg.transaction_timestamp || exceptionPg.created_at || new Date().toISOString(),
+              job.sourceType,
+              job.sourceType === 'MANUAL_UPLOAD' ? 'MANUAL_UPLOAD' : 'PG_API',
+              exceptionPg.payment_method || exceptionPg.payment_mode || 'UNKNOWN',
+              exceptionPg.utr,
+              'EXCEPTION',
+              exception.reasonCode || 'AMOUNT_MISMATCH'
+            ]);
+          }
+          
+          // Handle Bank-only exceptions (DUPLICATE_BANK_ENTRY)
+          if (exception.bank && !exception.pg) {
+            const exceptionBank = exception.bank;
+            console.log(`[Persistence] Saving Bank-only exception: Bank Ref ${exceptionBank.bank_ref || exceptionBank.TRANSACTION_ID}, UTR: ${exceptionBank.utr || exceptionBank.UTR}, Reason: ${exception.reasonCode}`);
+            await client.query(`
+              INSERT INTO sp_v2_bank_statements (
+                bank_ref,
+                bank_name,
+                amount_paise,
+                transaction_date,
+                value_date,
+                utr,
+                remarks,
+                debit_credit,
+                source_type,
+                source_file,
+                processed
+              ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+              ON CONFLICT (bank_ref) DO UPDATE SET
+                processed = false,
+                remarks = CONCAT(COALESCE(sp_v2_bank_statements.remarks, ''), ' [', $12::text, ']')
+            `, [
+              exceptionBank.bank_ref || exceptionBank.TRANSACTION_ID || exceptionBank.UTR || `BANK_${Date.now()}`,
+              exceptionBank.bank_name || exceptionBank.BANK || 'UNKNOWN',
+              Math.round(parseFloat(exceptionBank.amount || exceptionBank.AMOUNT || exceptionBank.CREDIT_AMT || 0) * 100),
+              exceptionBank.transaction_date || exceptionBank.DATE || exceptionBank.VALUE_DATE || new Date().toISOString().split('T')[0],
+              exceptionBank.value_date || exceptionBank.VALUE_DATE || exceptionBank.DATE || new Date().toISOString().split('T')[0],
+              exceptionBank.utr || exceptionBank.UTR,
+              exceptionBank.remarks || exceptionBank.REMARKS || '',
+              'CREDIT',
+              job.sourceType === 'MANUAL' ? 'MANUAL_UPLOAD' : 'SFTP_CONNECTOR',
+              job.sourceType === 'MANUAL' ? 'MANUAL_UPLOAD' : 'BANK_API',
+              false,  // Not processed (it's an exception)
+              exception.reasonCode  // Add reason to remarks via parameter $12
+            ]);
+          }
+        }
+        console.log(`[Persistence] Saved ${results.exceptions.length} exception transactions`);
+      } else {
+        console.log('[Persistence] No exceptions to persist');
+      }
+      
+      // Insert unmatched PG transactions (only those NOT in exceptions)
+      // These are truly unmatched - no bank record found, no specific exception reason
+      console.log(`[Persistence] Processing ${results.unmatchedPg?.length || 0} unmatched PG transactions`);
       for (const unmatchedPg of results.unmatchedPg) {
         await client.query(`
           INSERT INTO sp_v2_transactions (
@@ -818,12 +1181,18 @@ async function persistResults(results, jobId = 'UNKNOWN', job = {}, params = {})
             exception_reason
           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
           ON CONFLICT (transaction_id) DO UPDATE SET
-            status = CASE WHEN sp_v2_transactions.status = 'RECONCILED' 
-                          THEN sp_v2_transactions.status 
-                          ELSE EXCLUDED.status END,
-            exception_reason = CASE WHEN sp_v2_transactions.status = 'RECONCILED'
-                                    THEN sp_v2_transactions.exception_reason
-                                    ELSE EXCLUDED.exception_reason END,
+            status = CASE 
+              WHEN sp_v2_transactions.status = 'RECONCILED' THEN sp_v2_transactions.status
+              WHEN sp_v2_transactions.status = 'EXCEPTION' AND sp_v2_transactions.exception_reason IS NOT NULL 
+                THEN sp_v2_transactions.status
+              ELSE EXCLUDED.status 
+            END,
+            exception_reason = CASE 
+              WHEN sp_v2_transactions.status = 'RECONCILED' THEN sp_v2_transactions.exception_reason
+              WHEN sp_v2_transactions.status = 'EXCEPTION' AND sp_v2_transactions.exception_reason IS NOT NULL 
+                THEN sp_v2_transactions.exception_reason
+              ELSE EXCLUDED.exception_reason 
+            END,
             updated_at = NOW()
         `, [
           unmatchedPg.transaction_id || unmatchedPg.pgw_ref,
@@ -840,55 +1209,7 @@ async function persistResults(results, jobId = 'UNKNOWN', job = {}, params = {})
           'UNMATCHED_IN_BANK'
         ]);
       }
-      
-      console.log('[Persistence] ===== FINISHED UNMATCHED PG LOOP =====');
-      console.log('[Persistence] Results object keys:', Object.keys(results));
-      console.log('[Persistence] Exceptions array:', results.exceptions);
-      
-      // Insert exception transactions (amount mismatches)
-      console.log(`[Persistence] Processing ${results.exceptions?.length || 0} exceptions`);
-      if (results.exceptions && results.exceptions.length > 0) {
-        for (const exception of results.exceptions) {
-          const exceptionPg = exception.pg;
-          console.log(`[Persistence] Saving exception: ${exceptionPg.transaction_id}, UTR: ${exceptionPg.utr}, Reason: ${exception.reasonCode}`);
-          await client.query(`
-            INSERT INTO sp_v2_transactions (
-              transaction_id,
-              merchant_id,
-              amount_paise,
-              currency,
-              transaction_date,
-              transaction_timestamp,
-              source_type,
-              source_name,
-              payment_method,
-              utr,
-              status,
-              exception_reason
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-            ON CONFLICT (transaction_id) DO UPDATE SET
-              status = 'EXCEPTION',
-              exception_reason = EXCLUDED.exception_reason,
-              updated_at = NOW()
-          `, [
-            exceptionPg.transaction_id || exceptionPg.pgw_ref,
-            exceptionPg.merchant_id || 'UNKNOWN',
-            exceptionPg.amount || 0,
-            'INR',
-            exceptionPg.transaction_date || new Date().toISOString().split('T')[0],
-            exceptionPg.transaction_timestamp || exceptionPg.created_at || new Date().toISOString(),
-            job.sourceType,
-            job.sourceType === 'MANUAL_UPLOAD' ? 'MANUAL_UPLOAD' : 'PG_API',
-            exceptionPg.payment_method || exceptionPg.payment_mode || 'UNKNOWN',
-            exceptionPg.utr,
-            'EXCEPTION',
-            exception.reasonCode || 'AMOUNT_MISMATCH'
-          ]);
-        }
-        console.log(`[Persistence] Saved ${results.exceptions.length} exception transactions`);
-      } else {
-        console.log('[Persistence] No exceptions to persist');
-      }
+      console.log(`[Persistence] Saved ${results.unmatchedPg?.length || 0} unmatched PG transactions as UNMATCHED_IN_BANK`);
       
       // Insert unmatched bank records
       for (const unmatchedBank of results.unmatchedBank) {
