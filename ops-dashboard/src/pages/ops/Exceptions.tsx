@@ -52,13 +52,32 @@ export default function Exceptions() {
   const [exportModalOpen, setExportModalOpen] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
   const [cursor, setCursor] = useState<string | undefined>()
+  const [allExceptions, setAllExceptions] = useState<Exception[]>([])
 
   // Fetch exceptions
   const { data: exceptionsData, isLoading, refetch } = useQuery({
     queryKey: ['exceptions', query, cursor],
     queryFn: () => opsApiExtended.getExceptions({ ...query, q: searchTerm, cursor, limit: 50 }),
-    refetchInterval: 30000 // Refresh every 30 seconds
+    refetchInterval: 30000, // Refresh every 30 seconds
+    keepPreviousData: true
   })
+
+  // Accumulate exceptions as we paginate
+  useEffect(() => {
+    if (exceptionsData?.items) {
+      if (!cursor) {
+        // First page - replace all
+        setAllExceptions(exceptionsData.items)
+      } else {
+        // Subsequent pages - append
+        setAllExceptions(prev => {
+          const existingIds = new Set(prev.map(e => e.id))
+          const newItems = exceptionsData.items.filter(e => !existingIds.has(e.id))
+          return [...prev, ...newItems]
+        })
+      }
+    }
+  }, [exceptionsData, cursor])
 
   // Fetch saved views
   const { data: savedViews } = useQuery({
@@ -103,12 +122,14 @@ export default function Exceptions() {
     setQuery(newQuery)
     setCursor(undefined)
     setSelectedView(null)
+    setAllExceptions([]) // Reset accumulated data
   }
 
   // Handle search
   const handleSearch = (term: string) => {
     setSearchTerm(term)
     setCursor(undefined)
+    setAllExceptions([]) // Reset accumulated data
   }
 
   // Handle exception click
@@ -225,7 +246,7 @@ export default function Exceptions() {
       </div>
 
       {/* Table */}
-      <div className="flex-1 overflow-hidden">
+      <div className="flex-1 min-h-0">
         {isLoading ? (
           <div className="flex items-center justify-center h-full">
             <div className="text-center">
@@ -235,7 +256,7 @@ export default function Exceptions() {
           </div>
         ) : (
           <ExceptionTable
-            exceptions={exceptionsData?.items || []}
+            exceptions={allExceptions}
             selectedIds={selectedExceptions}
             onSelectionChange={setSelectedExceptions}
             onExceptionClick={handleExceptionClick}

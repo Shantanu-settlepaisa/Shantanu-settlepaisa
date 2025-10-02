@@ -28,7 +28,16 @@ export function ExceptionTable({
   onLoadMore
 }: ExceptionTableProps) {
   const tableRef = useRef<HTMLDivElement>(null)
+  const selectAllRef = useRef<HTMLInputElement>(null)
   const [isLoadingMore, setIsLoadingMore] = useState(false)
+
+  // Set indeterminate state for select all checkbox
+  useEffect(() => {
+    if (selectAllRef.current) {
+      const isIndeterminate = selectedIds.length > 0 && selectedIds.length < exceptions.length
+      selectAllRef.current.indeterminate = isIndeterminate
+    }
+  }, [selectedIds, exceptions])
 
   // Handle scroll for pagination
   useEffect(() => {
@@ -131,15 +140,15 @@ export function ExceptionTable({
   }
 
   return (
-    <div ref={tableRef} className="h-full overflow-auto">
-      <table className="min-w-full divide-y divide-gray-200">
-        <thead className="bg-gray-50 sticky top-0 z-10">
+    <div ref={tableRef} className="h-full overflow-auto relative">
+      <table className="min-w-full divide-y divide-gray-200 table-fixed">
+        <thead className="bg-gray-50 sticky top-0 z-10 shadow-sm">
           <tr>
             <th scope="col" className="px-6 py-3 text-left">
               <input
+                ref={selectAllRef}
                 type="checkbox"
                 checked={selectedIds.length === exceptions.length && exceptions.length > 0}
-                indeterminate={selectedIds.length > 0 && selectedIds.length < exceptions.length}
                 onChange={(e) => handleSelectAll(e.target.checked)}
                 className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
               />
@@ -219,11 +228,13 @@ export function ExceptionTable({
                   </span>
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="text-sm text-gray-900">{exception.merchantName}</div>
-                  <div className="text-xs text-gray-500">{exception.acquirerCode}</div>
+                  <div className="text-sm text-gray-900">{exception.merchantName || exception.merchantId || '-'}</div>
+                  {exception.acquirerCode && (
+                    <div className="text-xs text-gray-500">{exception.acquirerCode}</div>
+                  )}
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                  {exception.cycleDate}
+                  {exception.cycleDate ? new Date(exception.cycleDate).toLocaleDateString() : '-'}
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                   {formatRelativeTime(exception.createdAt)}
