@@ -546,16 +546,74 @@ function matchRecords(pgRecords, bankRecords) {
   fs.appendFileSync('/tmp/matching-debug.log', `Sample PG: ${JSON.stringify(pgRecords[0], null, 2)}\n`);
   fs.appendFileSync('/tmp/matching-debug.log', `Sample Bank: ${JSON.stringify(bankRecords[0], null, 2)}\n`);
   
+  // Step 1: Check for MISSING_UTR exceptions (PG transactions without UTR)
+  const pgWithoutUtr = [];
   pgRecords.forEach((pg, idx) => {
+    const utr = pg.utr?.trim();
+    if (!utr || utr === '' || utr === 'null' || utr === 'NULL') {
+      pgWithoutUtr.push(pg);
+      exceptions.push({
+        pg,
+        bank: null,
+        reasonCode: 'MISSING_UTR',
+        reason: `PG transaction missing UTR (Transaction ID: ${pg.transaction_id || pg.pgw_ref})`,
+        delta: 0
+      });
+    }
+  });
+  
+  // Remove PG records without UTR from unmatchedPg
+  pgWithoutUtr.forEach(pg => {
+    const index = unmatchedPg.indexOf(pg);
+    if (index > -1) unmatchedPg.splice(index, 1);
+  });
+  
+  // Step 2: Check for DUPLICATE_UTR (same UTR in multiple PG transactions)
+  const utrCounts = {};
+  pgRecords.forEach(pg => {
+    const utr = pg.utr?.trim();
+    if (utr) {
+      utrCounts[utr] = (utrCounts[utr] || 0) + 1;
+    }
+  });
+  
+  const duplicateUtrs = Object.keys(utrCounts).filter(utr => utrCounts[utr] > 1);
+  const pgWithDuplicateUtr = [];
+  
+  if (duplicateUtrs.length > 0) {
+    pgRecords.forEach(pg => {
+      const utr = pg.utr?.trim();
+      if (duplicateUtrs.includes(utr)) {
+        pgWithDuplicateUtr.push(pg);
+        exceptions.push({
+          pg,
+          bank: null,
+          reasonCode: 'DUPLICATE_UTR',
+          reason: `Duplicate UTR: ${utr} appears in ${utrCounts[utr]} PG transactions`,
+          delta: 0
+        });
+      }
+    });
+    
+    // Remove duplicate UTR records from unmatchedPg
+    pgWithDuplicateUtr.forEach(pg => {
+      const index = unmatchedPg.indexOf(pg);
+      if (index > -1) unmatchedPg.splice(index, 1);
+    });
+  }
+  
+  // Step 3: Match by UTR
+  unmatchedPg.forEach((pg, idx) => {
     const utrToMatch = pg.utr?.trim();
     if (idx < 3) console.log(`[Matching] PG #${idx} UTR: "${utrToMatch}"`);
     if (!utrToMatch) return;
     
-    const bankMatch = bankRecords.find(b => {
+    const bankMatch = unmatchedBank.find(b => {
       const bankUtr = b.utr?.trim();
       if (idx < 3 && bankUtr) console.log(`[Matching]   Comparing with Bank UTR: "${bankUtr}"`);
       return bankUtr === utrToMatch;
     });
+    
     if (bankMatch) {
       console.log(`[Matching] MATCH FOUND: PG UTR ${utrToMatch}`);
       const pgAmount = Number(pg.amount) || 0;
@@ -563,22 +621,45 @@ function matchRecords(pgRecords, bankRecords) {
       const amountDiff = Math.abs(pgAmount - bankAmount);
       
       if (amountDiff <= AMOUNT_TOLERANCE) {
+        // Perfect match
         matched.push({ pg, bank: bankMatch });
-        unmatchedPg.splice(unmatchedPg.indexOf(pg), 1);
-        unmatchedBank.splice(unmatchedBank.indexOf(bankMatch), 1);
       } else {
+        // Amount mismatch exception
         exceptions.push({
           pg,
           bank: bankMatch,
           reasonCode: 'AMOUNT_MISMATCH',
-          reason: `Amount mismatch: PG ₹${pgAmount.toFixed(2)} vs Bank ₹${bankAmount.toFixed(2)} (Δ ₹${amountDiff.toFixed(2)})`,
+          reason: `Amount mismatch: PG ₹${(pgAmount / 100).toFixed(2)} vs Bank ₹${(bankAmount / 100).toFixed(2)} (Δ ₹${(amountDiff / 100).toFixed(2)})`,
           delta: amountDiff
         });
-        unmatchedPg.splice(unmatchedPg.indexOf(pg), 1);
-        unmatchedBank.splice(unmatchedBank.indexOf(bankMatch), 1);
       }
     }
   });
+  
+  // Remove matched and exception records from unmatched lists
+  matched.forEach(m => {
+    const pgIndex = unmatchedPg.indexOf(m.pg);
+    if (pgIndex > -1) unmatchedPg.splice(pgIndex, 1);
+    
+    const bankIndex = unmatchedBank.indexOf(m.bank);
+    if (bankIndex > -1) unmatchedBank.splice(bankIndex, 1);
+  });
+  
+  exceptions.forEach(ex => {
+    if (ex.pg) {
+      const pgIndex = unmatchedPg.indexOf(ex.pg);
+      if (pgIndex > -1) unmatchedPg.splice(pgIndex, 1);
+    }
+    if (ex.bank) {
+      const bankIndex = unmatchedBank.indexOf(ex.bank);
+      if (bankIndex > -1) unmatchedBank.splice(bankIndex, 1);
+    }
+  });
+  
+  // Step 4: Remaining unmatchedPg are UNMATCHED_IN_BANK
+  // (These will be handled in persistence layer)
+  
+  console.log(`[Matching] Results: ${matched.length} matched, ${exceptions.length} exceptions, ${unmatchedPg.length} unmatched PG, ${unmatchedBank.length} unmatched bank`);
   
   return { matched, unmatchedPg, unmatchedBank, exceptions };
 }

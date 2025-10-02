@@ -1,9 +1,173 @@
 # SettlePaisa Ops Dashboard - Version History
 
-## Current Version: 2.7.1
+## Current Version: 2.8.0
 **Release Date**: October 2, 2025  
-**Status**: Production Ready  
+**Status**: Beta (MISSING_UTR/DUPLICATE_UTR detection needs fixing)  
 **Environment**: Development
+
+---
+
+## Version 2.8.0 - Comprehensive Exception Type System
+**Date**: October 2, 2025  
+**Implementation Time**: 3 hours
+
+### 🎯 Major Features
+
+#### 1. Multi-Type Exception Detection System
+Previously, all exceptions were labeled as either NULL or "AMOUNT_MISMATCH". Now supporting 5 distinct exception types:
+
+```
+Exception Types:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+✅ AMOUNT_MISMATCH (Working)
+   - UTR found in both PG & Bank
+   - Amounts differ beyond ₹0.01 tolerance
+   - Example: PG ₹2000, Bank ₹2100 (Δ ₹100)
+
+✅ UNMATCHED_IN_BANK (Working)
+   - PG transaction exists
+   - No matching bank record with same UTR
+   - Example: PG UTR123456, Bank has no UTR123456
+
+⚠️  MISSING_UTR (Needs Fix)
+   - PG transaction has no UTR (empty/null)
+   - Cannot match to bank records
+   - Currently falls through as NULL exception
+
+⚠️  DUPLICATE_UTR (Needs Fix)
+   - Same UTR appears in multiple PG transactions
+   - Indicates data quality issue
+   - Currently falls through as NULL exception
+
+✅ UNMATCHED_IN_PG (Working)
+   - Bank record exists
+   - No matching PG transaction with same UTR
+   - Stored in sp_v2_bank_statements (processed=false)
+```
+
+#### 2. Enhanced Reconciliation Match Logic
+
+**Updated `matchRecords()` function** (runReconciliation.js:534-665):
+- Step 1: Detect MISSING_UTR (PG without UTR)
+- Step 2: Detect DUPLICATE_UTR (same UTR in multiple PG)
+- Step 3: Match by UTR (perfect match vs amount mismatch)
+- Step 4: Remaining = UNMATCHED_IN_BANK
+
+#### 3. Database Schema Enhancements
+
+**Migration 012**: `db/migrations/012_comprehensive_exception_types.sql`
+
+**New SLA Configurations:**
+```sql
+MISSING_UTR      + CRITICAL  → 4 hours
+DUPLICATE_UTR    + CRITICAL  → 2 hours
+AMOUNT_MISMATCH  + HIGH      → 4 hours
+UNMATCHED_IN_BANK + HIGH     → 8 hours
+UNMATCHED_IN_BANK + MEDIUM   → 12 hours
+```
+
+**New Views:**
+- `vw_unmatched_in_pg` - Bank records without PG match
+- `vw_all_exceptions` - Unified view of PG + Bank exceptions
+- `vw_exception_stats` - Exception statistics by reason/severity
+
+**New Exception Rules:**
+- Auto-assign DUPLICATE_UTR to Senior Ops
+- Auto-assign MISSING_UTR to Tech Team
+- Auto-tag high AMOUNT_MISMATCH for review
+
+### 📊 Test Results
+
+**Test Date**: October 2, 2025  
+**Test File**: `test-all-exception-types.cjs`
+
+```
+Input:
+  6 PG Transactions
+  3 Bank Records
+
+Expected Output:
+  ✅ RECONCILED:       1 (perfect match)
+  ❌ AMOUNT_MISMATCH:  1 (UTR match, amount differs)
+  ❌ UNMATCHED_IN_BANK: 1 (PG exists, no bank)
+  ❌ MISSING_UTR:      1 (PG without UTR)
+  ❌ DUPLICATE_UTR:    2 (same UTR twice)
+  ⚠️  UNMATCHED_IN_PG: 1 (bank exists, no PG)
+
+Actual Output:
+  ✅ RECONCILED:       1 ← Correct!
+  ✅ AMOUNT_MISMATCH:  1 ← Correct!
+  ❌ UNMATCHED_IN_BANK: 1 ← Correct reason
+  ❌ NULL reason:      3 ← Should be MISSING_UTR (1) + DUPLICATE_UTR (2)
+  ✅ UNMATCHED_IN_PG:  1 ← Correct! (in bank_statements)
+```
+
+### 🐛 Known Issues
+
+**Issue #1: MISSING_UTR Detection Not Working**
+- **Problem**: PG transactions with empty UTR are saved with NULL exception_reason
+- **Expected**: Should be marked as 'MISSING_UTR'
+- **Root Cause**: Logic creates exception but record still processed as regular unmatched PG
+- **Impact**: 1 transaction in test (TXN_NO_UTR_001)
+
+**Issue #2: DUPLICATE_UTR Detection Not Working**
+- **Problem**: Multiple PG with same UTR are saved with NULL exception_reason
+- **Expected**: Should be marked as 'DUPLICATE_UTR'  
+- **Root Cause**: Exceptions created but records not properly removed from processing pipeline
+- **Impact**: 2 transactions in test (TXN_DUP_001, TXN_DUP_002)
+
+### 📝 Files Changed
+
+**Core Logic:**
+- `services/recon-api/jobs/runReconciliation.js` - Enhanced matchRecords() function
+
+**Database:**
+- `db/migrations/012_comprehensive_exception_types.sql` - SLA configs, views, rules
+
+**Testing:**
+- `test-all-exception-types.cjs` - Comprehensive test covering all 5 exception types
+
+### ✅ What's Working
+
+1. **AMOUNT_MISMATCH** detection (UTR match, amount differs) ✅
+2. **UNMATCHED_IN_BANK** detection (PG exists, no bank record) ✅
+3. **UNMATCHED_IN_PG** tracking (Bank exists, no PG match) ✅
+4. SLA configuration for all exception types ✅
+5. Exception workflow triggers ✅
+6. Database views for unified exception reporting ✅
+
+### ⚠️  What Needs Fixing
+
+1. MISSING_UTR detection logic (line 549-569 in runReconciliation.js)
+2. DUPLICATE_UTR detection logic (line 571-603 in runReconciliation.js)
+3. Proper exception cleanup to prevent double-processing
+
+### 🚀 Next Steps
+
+1. **Fix MISSING_UTR/DUPLICATE_UTR detection**:
+   - Ensure exceptions are properly saved with correct reasonCode
+   - Prevent records from being reprocessed as regular unmatched PG
+   
+2. **Add comprehensive logging**:
+   - Log when MISSING_UTR detected
+   - Log when DUPLICATE_UTR detected
+   - Track exception flow through persistence
+
+3. **Update frontend filters**:
+   - Add filter for each exception type
+   - Show exception type distribution chart
+
+### 📚 Documentation
+
+**Exception Reason Definitions**:
+```
+AMOUNT_MISMATCH    - Both PG & Bank exist, amounts differ
+UNMATCHED_IN_BANK  - PG exists, no bank record found
+MISSING_UTR        - PG transaction has no UTR
+DUPLICATE_UTR      - Same UTR in multiple PG transactions  
+UNMATCHED_IN_PG    - Bank record exists, no PG transaction
+```
 
 ---
 
