@@ -1,0 +1,17 @@
+{
+  "sftp_ingestion": {
+    "enabled": true
+true,
+    "api_port": 5106,
+    "poll_interval": 60000,
+    "staging_dir": "/tmp/sftp-staging"
+  },
+  "configured_banks": ["AXIS", "HDFC", "ICICI"],
+  "database_tables": [
+    "ingested_files",
+    "file_expectations", 
+    "connector_health",
+    "bank_ingest_configs",
+    "ingest_alerts"
+  ]
+}

@@ -1,0 +1,46 @@
+
+RECONCILIATION TEST FILES SUMMARY
+==================================
+Date: 2025-10-02
+Generated: 2025-10-01T13:02:25.311Z
+
+FILES CREATED:
+1. pg_transactions_2025-10-02.csv (30 transactions)
+2. bank_statement_2025-10-02.csv (23 statements)
+
+EXPECTED RECONCILIATION RESULTS:
+---------------------------------
+✅ Perfect Matches: 15
+   - Same UTR, same amount
+
+⚠️  Amount Mismatches: 5
+   - Same UTR, different amount (~₹100 variance)
+
+❌ Missing in Bank: 8
+   - PG transaction exists, no bank statement
+
+❌ Missing in PG: 3
+   - Bank statement exists, no PG transaction
+
+⚠️  Duplicate UTR: 2
+   - Same UTR used in multiple PG transactions
+
+TOTALS:
+-------
+PG Transactions: 30
+Bank Statements: 23
+Expected Reconciled: 15
+Expected Exceptions: 18
+
+Match Rate: 50.0%
+
+TEST INSTRUCTIONS:
+------------------
+1. Upload pg_transactions_2025-10-02.csv as PG transactions
+2. Upload bank_statement_2025-10-02.csv as Bank statement
+3. Verify reconciliation results match expected counts
+4. Check exception reasons:
+   - AMOUNT_MISMATCH: 5
+   - MISSING_UTR (bank): 8
+   - MISSING_UTR (pg): 3
+   - DUPLICATE_UTR: 2

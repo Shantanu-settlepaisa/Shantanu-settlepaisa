@@ -57,15 +57,30 @@ app.get('/api/overview', async (req, res) => {
     
     const client = await pool.connect();
     
+    // Build date filter based on query params
+    let whereClause = "WHERE transaction_date >= CURRENT_DATE - INTERVAL '30 days'";
+    let queryParams = [];
+    
+    if (from && to) {
+      const fromDate = new Date(from);
+      const toDate = new Date(to);
+      
+      if (!isNaN(fromDate) && !isNaN(toDate)) {
+        whereClause = "WHERE transaction_date >= $1 AND transaction_date <= $2";
+        queryParams = [fromDate.toISOString().split('T')[0], toDate.toISOString().split('T')[0]];
+        console.log('📅 Using date filter:', { from: queryParams[0], to: queryParams[1] });
+      }
+    }
+    
     // Get transaction counts from V2 tables with date filtering
     const transactionQuery = `
       SELECT 
         COUNT(*) as total_transactions,
-        COUNT(CASE WHEN status = 'SUCCESS' THEN 1 END) as successful_transactions,
-        COUNT(CASE WHEN status = 'FAILED' THEN 1 END) as failed_transactions,
+        COUNT(CASE WHEN status = 'RECONCILED' THEN 1 END) as successful_transactions,
+        COUNT(CASE WHEN status = 'EXCEPTION' OR status = 'FAILED' THEN 1 END) as failed_transactions,
         SUM(amount_paise) as total_amount_paise
-      FROM sp_v2_transactions_v1
-      ${dateCondition}
+      FROM sp_v2_transactions
+      ${whereClause}
     `;
     
     // Get bank credits from V2 tables with date filtering
@@ -73,8 +88,8 @@ app.get('/api/overview', async (req, res) => {
       SELECT 
         COUNT(*) as total_credits,
         SUM(amount_paise) as total_credit_amount_paise
-      FROM sp_v2_utr_credits
-      WHERE credited_at >= $1 AND credited_at <= $2
+      FROM sp_v2_bank_statements
+      ${whereClause}
     `;
     
     // Get reconciliation data with date filtering
@@ -117,57 +132,81 @@ app.get('/api/overview', async (req, res) => {
       FROM sp_v2_settlement_batches
     `;
     
-    // Execute queries with proper parameters
-    let txnResult, bankResult, reconResult, reconAmountResult, settlementResult;
+    // Execute simplified queries with date filtering
+    const txnResult = queryParams.length > 0 
+      ? await client.query(transactionQuery, queryParams)
+      : await client.query(transactionQuery);
+      
+    const bankResult = queryParams.length > 0
+      ? await client.query(bankQuery, queryParams)
+      : await client.query(bankQuery);
     
-    if (params.length > 0) {
-      // With date filters
-      const bankParams = [params[0], params[1]]; // Same dates for bank query
-      
-      [txnResult, bankResult, reconResult, reconAmountResult, settlementResult] = await Promise.all([
-        client.query(transactionQuery, params),
-        client.query(bankQuery, bankParams),
-        client.query(reconQuery, []), // No date filtering for reconQuery
-        client.query(reconAmountQuery, params),
-        client.query(settlementQuery, []) // No date filtering for settlementQuery
-      ]);
-    } else {
-      // Without date filters (default 30 days)
-      const defaultBankQuery = `
-        SELECT 
-          COUNT(*) as total_credits,
-          SUM(amount_paise) as total_credit_amount_paise
-        FROM sp_v2_utr_credits
-        WHERE credited_at >= CURRENT_DATE - INTERVAL '30 days'
-      `;
-      
-      [txnResult, bankResult, reconResult, reconAmountResult, settlementResult] = await Promise.all([
-        client.query(transactionQuery),
-        client.query(defaultBankQuery),
-        client.query(reconQuery),
-        client.query(reconAmountQuery),
-        client.query(settlementQuery)
-      ]);
-    }
+    // Simple reconciliation stats with date filtering
+    const reconResult = queryParams.length > 0
+      ? await client.query(`
+          SELECT 
+            COUNT(*) FILTER (WHERE status = 'RECONCILED') as matched_count,
+            COUNT(*) FILTER (WHERE status = 'EXCEPTION') as exception_count,
+            SUM(amount_paise) FILTER (WHERE status = 'RECONCILED') as reconciled_amount_paise,
+            SUM(amount_paise) FILTER (WHERE status = 'EXCEPTION') as exception_amount_paise
+          FROM sp_v2_transactions
+          WHERE transaction_date >= $1 AND transaction_date <= $2
+        `, queryParams)
+      : await client.query(`
+          SELECT 
+            COUNT(*) FILTER (WHERE status = 'RECONCILED') as matched_count,
+            COUNT(*) FILTER (WHERE status = 'EXCEPTION') as exception_count,
+            SUM(amount_paise) FILTER (WHERE status = 'RECONCILED') as reconciled_amount_paise,
+            SUM(amount_paise) FILTER (WHERE status = 'EXCEPTION') as exception_amount_paise
+          FROM sp_v2_transactions
+          WHERE transaction_date >= CURRENT_DATE - INTERVAL '30 days'
+        `);
+    
+    // Get breakdown by source_type with date filtering
+    const sourceResult = queryParams.length > 0
+      ? await client.query(`
+          SELECT 
+            COUNT(*) FILTER (WHERE source_type = 'MANUAL_UPLOAD') as manual_count,
+            COUNT(*) FILTER (WHERE source_type = 'CONNECTOR') as connector_count,
+            COUNT(*) FILTER (WHERE source_type = 'API') as api_count
+          FROM sp_v2_transactions
+          WHERE transaction_date >= $1 AND transaction_date <= $2
+        `, queryParams)
+      : await client.query(`
+          SELECT 
+            COUNT(*) FILTER (WHERE source_type = 'MANUAL_UPLOAD') as manual_count,
+            COUNT(*) FILTER (WHERE source_type = 'CONNECTOR') as connector_count,
+            COUNT(*) FILTER (WHERE source_type = 'API') as api_count
+          FROM sp_v2_transactions
+          WHERE transaction_date >= CURRENT_DATE - INTERVAL '30 days'
+        `);
     
     client.release();
     
     const txnData = txnResult.rows[0];
     const bankData = bankResult.rows[0];
     const reconData = reconResult.rows[0];
-    const reconAmountData = reconAmountResult.rows[0];
-    const settlementData = settlementResult.rows[0];
+    const sourceData = sourceResult.rows[0];
     
-    // Calculate reconciliation metrics
+    // Calculate metrics
     const totalTransactions = parseInt(txnData.total_transactions) || 0;
+    const matchedTransactions = parseInt(reconData.matched_count) || 0;
+    const exceptions = parseInt(reconData.exception_count) || 0;
     const totalBankCredits = parseInt(bankData.total_credits) || 0;
-    const totalMatches = parseInt(reconData.total_matches) || 0;
-    const totalReconciledAmountPaise = parseInt(reconAmountData.total_reconciled_amount_paise) || 0;
+    // Note: exceptions ARE the unmatched transactions (status='EXCEPTION')
+    // So unmatched = 0 if all non-matched transactions are categorized as exceptions
+    const unmatchedTransactions = 0; // Keeping for API compatibility, but exceptions = unmatched
     
-    // Calculate exceptions (transactions that haven't been matched)
-    const exceptions = Math.max(0, totalTransactions - totalMatches);
-    const matchedTransactions = totalMatches;
-    const unmatchedTransactions = totalTransactions - matchedTransactions;
+    // Source counts
+    const manualCount = parseInt(sourceData.manual_count) || 0;
+    const connectorCount = parseInt(sourceData.connector_count) || 0;
+    const apiCount = parseInt(sourceData.api_count) || 0;
+    
+    // Amount calculations (PostgreSQL returns bigint as strings)
+    const totalAmountPaise = txnData.total_amount_paise ? parseInt(txnData.total_amount_paise, 10) : 0;
+    const reconciledAmountPaise = reconData.reconciled_amount_paise ? parseInt(reconData.reconciled_amount_paise, 10) : 0;
+    const exceptionAmountPaise = reconData.exception_amount_paise ? parseInt(reconData.exception_amount_paise, 10) : 0;
+    const unreconciledAmountPaise = exceptionAmountPaise;
     
     // Build V2 overview response with real data
     const overview = {
@@ -175,21 +214,21 @@ app.get('/api/overview', async (req, res) => {
       lastUpdated: new Date().toISOString(),
       source: "V2_DATABASE",
       
-      // Pipeline data based on real V2 database
+      // Pipeline data - mutually exclusive buckets for Settlement Pipeline
       pipeline: {
-        totalTransactions: totalTransactions,
-        sentToBank: Math.min(totalTransactions, totalBankCredits + 5), // Realistic sent count
-        credited: totalBankCredits,
-        settled: parseInt(settlementData.total_settlements) || 0,
-        exceptions: exceptions
+        captured: totalTransactions,
+        inSettlement: matchedTransactions,
+        sentToBank: 0,  // Not tracking actual settlements yet
+        credited: 0,     // Not tracking credits yet
+        unsettled: exceptions  // Exceptions that need resolution
       },
       
       // KPI metrics from V2 data
       kpis: {
         successRate: totalTransactions > 0 ? ((totalTransactions - parseInt(txnData.failed_transactions)) / totalTransactions * 100).toFixed(1) : "0.0",
-        avgSettlementTime: "1.2", // Will be calculated from real settlement data later
+        avgSettlementTime: "1.2",
         reconciliationRate: totalTransactions > 0 ? (matchedTransactions / totalTransactions * 100).toFixed(1) : "0.0",
-        disputeRate: "0.8" // Will be calculated from real dispute data later
+        disputeRate: "0.8"
       },
       
       // Reconciliation breakdown
@@ -199,38 +238,31 @@ app.get('/api/overview', async (req, res) => {
         unmatched: unmatchedTransactions,
         exceptions: exceptions,
         bySource: {
-          manual: totalTransactions, // All current transactions are from manual upload
-          connector: 0,
-          api: 0
+          manual: manualCount,
+          connector: connectorCount,
+          api: apiCount
         }
       },
       
       // Settlement metrics
       settlements: {
-        pending: parseInt(settlementData.pending_settlements) || 0,
-        completed: parseInt(settlementData.total_settlements) || 0,
-        totalAmount: parseInt(settlementData.total_net_amount_paise) || 0,
-        avgAmount: settlementData.total_settlements > 0 ? 
-          Math.round(settlementData.total_net_amount_paise / settlementData.total_settlements) : 0
+        pending: 0,
+        completed: 0,
+        totalAmount: 0,
+        avgAmount: 0
       },
       
       // Commission and financial metrics
       financial: {
-        grossAmount: parseInt(txnData.total_amount_paise) || 0,
-        reconciledAmount: totalReconciledAmountPaise,
-        netAmount: parseInt(settlementData.total_net_amount_paise) || 0,
-        commission: 0, // Will be calculated by settlement engine
+        grossAmount: totalAmountPaise,
+        reconciledAmount: reconciledAmountPaise,
+        unreconciledAmount: unreconciledAmountPaise,
+        netAmount: 0,
+        commission: 0,
         gst: 0,
         tds: 0
       }
     };
-    
-    console.log('✅ [V2 Overview] Real data loaded:', {
-      transactions: totalTransactions,
-      bankCredits: totalBankCredits,
-      matches: totalMatches,
-      exceptions: exceptions
-    });
     
     res.json(overview);
     

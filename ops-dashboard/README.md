@@ -166,5 +166,16 @@ Private - SettlePaisa Internal Use Only
 
 ---
 
+### Generate complete data/schema context
+```bash
+make data-context
+# Outputs (in docs/context/):
+# - DATASET_DICTIONARY.md           (tables, columns, PK/FK)
+# - VIEWS_AND_LINEAGE.md            (views, materialized views, Mermaid lineage)
+# - OPS_TILE_MAP.md                 (Tile → API → SQL/View → Tables)
+# - SCHEMA_CONTEXT.md               (counts & pointers)
+# - context_index.json              (machine-readable index)
+```
+
 **Version**: 1.0.0  
 **Last Updated**: 2025-09-09

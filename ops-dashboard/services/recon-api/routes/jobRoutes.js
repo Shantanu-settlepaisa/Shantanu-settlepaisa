@@ -171,46 +171,55 @@ router.get('/jobs/:jobId/results', async (req, res) => {
   const { status, reason_code, page = 1, limit = 50 } = req.query;
   
   try {
-    // Map frontend status values to backend status values
-    let mappedStatus = status;
-    if (status === 'exceptions') {
-      mappedStatus = 'EXCEPTION';
-    } else if (status === 'matched') {
-      mappedStatus = 'MATCHED';
-    } else if (status === 'unmatchedPg') {
-      mappedStatus = 'UNMATCHED_PG';
-    } else if (status === 'unmatchedBank') {
-      mappedStatus = 'UNMATCHED_BANK';
-    } else if (status === 'unmatched') {
-      // Return both unmatched PG and Bank
-      const pgResults = generateMockResults(jobId, 'UNMATCHED_PG', Math.floor(parseInt(limit) / 2));
-      const bankResults = generateMockResults(jobId, 'UNMATCHED_BANK', Math.floor(parseInt(limit) / 2));
-      const combinedResults = [...pgResults, ...bankResults];
-      
+    const { getJob } = require('../jobs/runReconciliation');
+    const job = getJob(jobId);
+    
+    // If no job found or no results, return empty
+    if (!job || !job.results) {
+      console.log(`[Results API] No results found for job: ${jobId}`);
       return res.json({
         jobId,
         page: parseInt(page),
         limit: parseInt(limit),
-        total: combinedResults.length,
-        results: combinedResults
+        total: 0,
+        results: []
       });
-    } else if (!status || status === 'undefined' || status === 'null') {
-      // If no status is specified or it's undefined, return ALL transactions
-      mappedStatus = null; // This will generate a mix of all statuses
     }
     
-    // In production, query from reconciliation_results table with joins
-    // For now, return mock data based on status
-    const mockResults = generateMockResults(jobId, mappedStatus, parseInt(limit));
+    console.log(`[Results API] Fetching results for job: ${jobId}, status: ${status}`);
     
-    console.log(`[Results API] Fetching results for job: ${jobId}, status: ${status}`);  
+    // Get actual results from job
+    let results = [];
+    
+    if (status === 'matched') {
+      results = (job.results.matched || []).map(m => formatMatchedResult(m, jobId));
+    } else if (status === 'unmatchedPg') {
+      results = (job.results.unmatchedPg || []).map(u => formatUnmatchedPgResult(u, jobId));
+    } else if (status === 'unmatchedBank') {
+      results = (job.results.unmatchedBank || []).map(u => formatUnmatchedBankResult(u, jobId));
+    } else if (status === 'exceptions') {
+      results = (job.results.exceptions || []).map(e => formatExceptionResult(e, jobId));
+    } else if (status === 'unmatched') {
+      const pgResults = (job.results.unmatchedPg || []).map(u => formatUnmatchedPgResult(u, jobId));
+      const bankResults = (job.results.unmatchedBank || []).map(u => formatUnmatchedBankResult(u, jobId));
+      results = [...pgResults, ...bankResults];
+    } else {
+      // Return all results
+      const matched = (job.results.matched || []).map(m => formatMatchedResult(m, jobId));
+      const unmatchedPg = (job.results.unmatchedPg || []).map(u => formatUnmatchedPgResult(u, jobId));
+      const unmatchedBank = (job.results.unmatchedBank || []).map(u => formatUnmatchedBankResult(u, jobId));
+      const exceptions = (job.results.exceptions || []).map(e => formatExceptionResult(e, jobId));
+      results = [...matched, ...unmatchedPg, ...unmatchedBank, ...exceptions];
+    }
+    
+    console.log(`[Results API] Returning ${results.length} results for status: ${status}`);
     
     res.json({
       jobId,
       page: parseInt(page),
       limit: parseInt(limit),
-      total: mockResults.length,
-      results: mockResults
+      total: results.length,
+      results: results.slice(0, parseInt(limit))
     });
   } catch (error) {
     console.error('Error fetching job results:', error);
@@ -335,6 +344,85 @@ function generateSingleResult(jobId, index, status, baseAmount,
     status: status.toLowerCase(), // Return lowercase to match frontend expectations
     reasonCode: reasonCode,
     reasonLabel: reasonLabel
+  };
+}
+
+// Formatter functions to convert reconciliation results to API format
+function formatMatchedResult(match, jobId) {
+  const pg = match.pg || match.pgTransaction || {};
+  const bank = match.bank || match.bankRecord || {};
+  
+  return {
+    id: `M-${jobId.slice(-8)}-${pg.transaction_id || pg.pgw_ref || Math.random().toString(36).substr(2, 9)}`,
+    txnId: pg.transaction_id || pg.pgw_ref || pg.order_id || '',
+    utr: pg.utr || bank.utr || '',
+    rrn: pg.rrn || '',
+    pgAmount: pg.amount || 0,
+    bankAmount: bank.amount || bank.AMOUNT || 0,
+    delta: 0,
+    pgDate: pg.transaction_date || pg.txn_date || '',
+    bankDate: bank.transaction_date || bank.TXN_DATE || '',
+    status: 'matched',
+    reasonCode: null,
+    reasonLabel: null
+  };
+}
+
+function formatUnmatchedPgResult(unmatchedPg, jobId) {
+  const pg = unmatchedPg.pg || unmatchedPg;
+  
+  return {
+    id: `UP-${jobId.slice(-8)}-${pg.transaction_id || pg.pgw_ref || Math.random().toString(36).substr(2, 9)}`,
+    txnId: pg.transaction_id || pg.pgw_ref || pg.order_id || '',
+    utr: pg.utr || '',
+    rrn: pg.rrn || '',
+    pgAmount: pg.amount || 0,
+    bankAmount: null,
+    delta: null,
+    pgDate: pg.transaction_date || pg.txn_date || '',
+    bankDate: null,
+    status: 'unmatched_pg',
+    reasonCode: unmatchedPg.reasonCode || 'NO_BANK_RECORD',
+    reasonLabel: unmatchedPg.reason || 'No corresponding bank record found'
+  };
+}
+
+function formatUnmatchedBankResult(unmatchedBank, jobId) {
+  const bank = unmatchedBank.bank || unmatchedBank;
+  
+  return {
+    id: `UB-${jobId.slice(-8)}-${bank.utr || bank.bank_reference || Math.random().toString(36).substr(2, 9)}`,
+    txnId: bank.bank_reference || bank['Bank Reference'] || bank.TRANSACTION_ID || '',
+    utr: bank.utr || bank.UTR || '',
+    rrn: '',
+    pgAmount: null,
+    bankAmount: bank.amount || bank.Amount || bank.AMOUNT || 0,
+    delta: null,
+    pgDate: null,
+    bankDate: bank.transaction_date || bank['Transaction Date'] || bank.DATE || bank.TXN_DATE || '',
+    status: 'unmatched_bank',
+    reasonCode: unmatchedBank.reasonCode || 'NO_PG_RECORD',
+    reasonLabel: unmatchedBank.reason || 'No corresponding PG transaction found'
+  };
+}
+
+function formatExceptionResult(exception, jobId) {
+  const pg = exception.pgTransaction || exception.pg || {};
+  const bank = exception.bankRecord || exception.bank || {};
+  
+  return {
+    id: `E-${jobId.slice(-8)}-${pg.transaction_id || pg.pgw_ref || Math.random().toString(36).substr(2, 9)}`,
+    txnId: pg.transaction_id || pg.pgw_ref || pg.order_id || '',
+    utr: pg.utr || bank.utr || bank.UTR || '',
+    rrn: pg.rrn || '',
+    pgAmount: pg.amount || 0,
+    bankAmount: bank.amount || bank.AMOUNT || 0,
+    delta: (pg.amount || 0) - (bank.amount || bank.AMOUNT || 0),
+    pgDate: pg.transaction_date || pg.txn_date || '',
+    bankDate: bank.transaction_date || bank.TXN_DATE || '',
+    status: 'exception',
+    reasonCode: exception.type || exception.reasonCode || 'UNKNOWN',
+    reasonLabel: exception.message || exception.reason || 'Exception detected'
   };
 }
 

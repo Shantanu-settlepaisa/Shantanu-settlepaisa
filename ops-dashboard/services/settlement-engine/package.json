@@ -1,0 +1,15 @@
+{
+  "name": "settlepaisa-settlement-engine",
+  "version": "1.0.0",
+  "description": "V1-compatible settlement calculation engine for SettlePaisa V2",
+  "main": "settlement-api.cjs",
+  "scripts": {
+    "start": "node settlement-api.cjs",
+    "test": "node test-settlement.cjs"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "pg": "^8.11.3"
+  }
+}

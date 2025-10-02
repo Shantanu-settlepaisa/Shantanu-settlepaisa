@@ -1,0 +1,68 @@
+import { Activity, CheckCircle, AlertCircle, XCircle, ChevronRight } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
+import { apiClient } from '@/lib/api-client';
+import { KpiFilters } from '@/hooks/opsOverview';
+
+interface ConnectorStatus {
+  id: string;
+  name: string;
+  status: 'healthy' | 'degraded' | 'down';
+  lastSync: string;
+  lag?: number;
+}
+
+interface ConnectorHealthMiniProps {
+  filters: KpiFilters;
+  isLoading?: boolean;
+}
+
+export function ConnectorHealthMini({ filters, isLoading: parentLoading }: ConnectorHealthMiniProps) {
+  const navigate = useNavigate();
+
+  const { data: connectors, isLoading } = useQuery({
+    queryKey: ['connector-health-mini', filters],
+    queryFn: async () => {
+      const { data } = await apiClient.get<ConnectorStatus[]>('/api/connectors/health-summary', {
+        params: filters,
+        baseURL: 'http://localhost:5105'
+      });
+      return data;
+    },
+    refetchInterval: 30000,
+    staleTime: 20000,
+  });
+
+  const loading = parentLoading || isLoading;
+
+  if (loading) {
+    return (
+      <div className="bg-white rounded-xl ring-1 ring-slate-200 shadow-sm p-6">
+        <div className="animate-pulse">
+          <div className="h-5 bg-slate-200 rounded w-32 mb-4"></div>
+          <div className="grid grid-cols-3 gap-2">
+            {[...Array(3)].map((_, i) => (
+              <div key={i} className="h-16 bg-slate-200 rounded"></div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const healthSummary = {
+    healthy: connectors?.filter(c => c.status === 'healthy').length || 0,
+    degraded: connectors?.filter(c => c.status === 'degraded').length || 0,
+    down: connectors?.filter(c => c.status === 'down').length || 0,
+  };
+
+  const totalConnectors = (healthSummary.healthy + healthSummary.degraded + healthSummary.down) || 1;
+  const healthPercentage = Math.round((healthSummary.healthy / totalConnectors) * 100);
+
+  // Rest of the original component...
+  return (
+    <div className="bg-white rounded-xl ring-1 ring-slate-200 shadow-sm p-6">
+      <!-- Original component content without SFTP integration -->
+    </div>
+  );
+}

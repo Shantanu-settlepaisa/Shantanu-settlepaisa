@@ -5,7 +5,7 @@ import type {
   ReportMetadata,
   ExportResponse
 } from '@/types/reports'
-import { reportGeneratorV2 } from './report-generator-v2'
+import { reportGeneratorV2DB } from './report-generator-v2-db'
 
 export class ReportExportService {
   private readonly S3_BUCKET = 'settlepaisa-reports'
@@ -102,20 +102,20 @@ export class ReportExportService {
     filters: ReportFilters,
     format: ReportFormat
   ): Promise<ExportResponse> {
-    // Generate report data
-    const data = await reportGeneratorV2.generateReport(type, filters)
+    // Generate report data from V2 database
+    const data = await reportGeneratorV2DB.generateReport(type, filters)
     
     // Convert to requested format
     let content: string
     let contentType: string
     
     if (format === 'CSV') {
-      // Use generator's CSV method for proper formatting
-      content = await reportGeneratorV2.generateCSV(type, filters)
+      // Use V2 DB generator's CSV method for proper formatting
+      content = await reportGeneratorV2DB.generateCSV(type, filters)
       contentType = 'text/csv'
     } else {
       // For XLSX, convert data to CSV for now (can enhance later)
-      content = await reportGeneratorV2.generateCSV(type, filters)
+      content = await reportGeneratorV2DB.generateCSV(type, filters)
       contentType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     }
     
@@ -160,8 +160,8 @@ export class ReportExportService {
     if (typeof window === 'undefined') return
     
     try {
-      // Generate content directly
-      const content = await reportGeneratorV2.generateCSV(type, filters)
+      // Generate content directly from V2 database
+      const content = await reportGeneratorV2DB.generateCSV(type, filters)
       
       if (!content) {
         console.error('No data available for export')

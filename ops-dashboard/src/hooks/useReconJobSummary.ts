@@ -1,6 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
 import axios from 'axios';
 
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5106';
+
 // Hook for KPI tiles - NEVER filtered, always job-level totals
 export function useReconJobSummary(jobId?: string | null) {
   return useQuery({
@@ -9,8 +11,8 @@ export function useReconJobSummary(jobId?: string | null) {
     queryFn: async () => {
       if (!jobId) throw new Error('No job ID');
       try {
-        // Use API on port 5103 - NEVER pass filters to summary
-        const response = await axios.get(`http://localhost:5103/recon/jobs/${jobId}/summary`);
+        // Use V2 API - NEVER pass filters to summary
+        const response = await axios.get(`${API_BASE_URL}/api/recon/jobs/${jobId}/summary`);
         
         // Validate invariant on frontend
         const data = response.data;
@@ -42,7 +44,7 @@ export function useReconJobCounts(jobId?: string | null) {
     queryFn: async () => {
       if (!jobId) throw new Error('No job ID');
       try {
-        const response = await axios.get(`http://localhost:5103/recon/jobs/${jobId}/counts`);
+        const response = await axios.get(`${API_BASE_URL}/api/recon/jobs/${jobId}/summary`);
         return response.data; // { all, matched, unmatched, exceptions }
       } catch (error) {
         console.error('Failed to fetch job counts:', error);
@@ -94,7 +96,7 @@ export function useReconJobResults(jobId?: string | null, activeTab?: string, se
       console.log(`[useReconJobResults] API params:`, params);
       
       try {
-        const response = await axios.get(`http://localhost:5103/recon/jobs/${jobId}/results`, { params });
+        const response = await axios.get(`${API_BASE_URL}/api/recon/jobs/${jobId}/results`, { params });
         const results = response.data.results || [];
         
         console.log(`[useReconJobResults] API returned ${results.length} results for tab: ${activeTab}`);

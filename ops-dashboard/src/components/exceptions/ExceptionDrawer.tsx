@@ -58,12 +58,41 @@ export function ExceptionDrawer({ exception, isOpen, onClose, onUpdate }: Except
     }
   })
 
-  const handleAction = (action: string, params?: any) => {
-    updateMutation.mutate({
-      action,
-      params,
-      note: actionNote
-    })
+  const handleAction = async (action: string, params?: any) => {
+    if (action === 'resolve') {
+      // Call our real API
+      try {
+        const response = await fetch(`http://localhost:5103/exceptions/${exception.id}/resolve`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            resolvedBy: 'current_user',
+            resolution: 'Manually verified',
+            notes: actionNote
+          })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+          // Invalidate queries to refresh data
+          queryClient.invalidateQueries({ queryKey: ['exceptions'] });
+          queryClient.invalidateQueries({ queryKey: ['exception', exception.id] });
+          queryClient.invalidateQueries({ queryKey: ['overview'] });
+          onUpdate();
+          onClose();
+        }
+      } catch (error) {
+        console.error('Failed to resolve exception:', error);
+      }
+    } else {
+      // Use existing mutation for other actions
+      updateMutation.mutate({
+        action,
+        params,
+        note: actionNote
+      });
+    }
   }
 
   if (!isOpen) return null

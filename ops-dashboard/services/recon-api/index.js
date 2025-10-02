@@ -4,13 +4,15 @@ const { v4: uuidv4 } = require('uuid')
 const axios = require('axios')
 const { runReconciliation, getJob, getJobLogs } = require('./jobs/runReconciliation')
 const jobRoutes = require('./routes/jobRoutes')
+const exceptionsRoutes = require('./routes/exceptions')
 
 const app = express()
 app.use(cors())
 app.use(express.json())
 
-// Mount job routes
+// Mount routes
 app.use('/recon', jobRoutes)
+app.use('/exceptions', exceptionsRoutes)
 
 // Store reconciliation results in memory
 const reconResults = new Map()
@@ -21,8 +23,15 @@ const HEALTH_CHECK_CACHE_MS = 5000
 
 // New reconciliation endpoint using job runner
 app.post('/recon/run', async (req, res) => {
-  const { date, merchantId, acquirerId, dryRun, limit, test } = req.body
+  const { date, merchantId, acquirerId, dryRun, limit, test, pgTransactions, bankRecords } = req.body
   console.log('[Recon API] Starting reconciliation job:', { date, merchantId, acquirerId, dryRun, test })
+  
+  if (pgTransactions) {
+    console.log('[Recon API] Using uploaded PG transactions:', pgTransactions.length);
+  }
+  if (bankRecords) {
+    console.log('[Recon API] Using uploaded bank records:', bankRecords.length);
+  }
   
   try {
     const job = await runReconciliation({
@@ -31,7 +40,9 @@ app.post('/recon/run', async (req, res) => {
       acquirerId,
       dryRun,
       limit,
-      test
+      test,
+      pgTransactions,  // Pass uploaded data
+      bankRecords      // Pass uploaded data
     })
     
     res.json({

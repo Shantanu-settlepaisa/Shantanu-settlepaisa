@@ -25,6 +25,7 @@ export interface UploadedFile {
     columns: string[]
     rows: any[][]
   }
+  parsedData?: any[]  // Full parsed CSV data
 }
 
 interface FileCardProps {

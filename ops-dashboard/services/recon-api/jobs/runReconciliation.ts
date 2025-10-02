@@ -304,7 +304,16 @@ function normalizeTransactions(transactions: any[]): any[] {
   return transactions.map(t => ({
     ...t,
     normalized: true,
-    amount: Number(t.amount)
+    transaction_id: t['Transaction ID'] || t.transaction_id || t.TXN_ID || '',
+    merchant_id: t['Merchant ID'] || t.merchant_id || t.CLIENT_CODE || '',
+    amount: Number(t.Amount || t.AMOUNT || t.amount || 0),
+    currency: t.Currency || t.currency || 'INR',
+    transaction_date: t['Transaction Date'] || t.transaction_date || t.TXN_DATE || '',
+    transaction_time: t['Transaction Time'] || t.transaction_time || '',
+    payment_method: t['Payment Method'] || t.payment_method || t.PAYMENT_MODE || '',
+    utr: t.UTR || t.utr || '',
+    rrn: t.RRN || t.rrn || '',
+    status: t.Status || t.status || 'SUCCESS'
   }));
 }
 
@@ -312,7 +321,14 @@ function normalizeBankRecords(records: any[]): any[] {
   return records.map(r => ({
     ...r,
     normalized: true,
-    amount: Number(r.amount)
+    bank_reference: r['Bank Reference'] || r.bank_reference || r.TRANSACTION_ID || '',
+    bank_name: r['Bank Name'] || r.bank_name || r.BANK || '',
+    amount: Number(r.Amount || r.AMOUNT || r.amount || 0),
+    transaction_date: r['Transaction Date'] || r.transaction_date || r.DATE || r.TXN_DATE || '',
+    value_date: r['Value Date'] || r.value_date || '',
+    utr: r.UTR || r.utr || '',
+    remarks: r.Remarks || r.remarks || '',
+    debit_credit: r['Debit/Credit'] || r.debit_credit || 'CREDIT'
   }));
 }
 
@@ -322,13 +338,33 @@ function matchRecords(pgRecords: any[], bankRecords: any[]): any {
   const unmatchedBank = [...bankRecords];
   const exceptions: any[] = [];
   
-  // Simple UTR-based matching
+  const AMOUNT_TOLERANCE = 0.01;
+  
   pgRecords.forEach(pg => {
-    const bankMatch = bankRecords.find(b => b.utr === pg.utr);
+    const utrToMatch = pg.utr?.trim();
+    if (!utrToMatch) return;
+    
+    const bankMatch = bankRecords.find(b => b.utr?.trim() === utrToMatch);
     if (bankMatch) {
-      matched.push({ pg, bank: bankMatch });
-      unmatchedPg.splice(unmatchedPg.indexOf(pg), 1);
-      unmatchedBank.splice(unmatchedBank.indexOf(bankMatch), 1);
+      const pgAmount = Number(pg.amount) || 0;
+      const bankAmount = Number(bankMatch.amount) || 0;
+      const amountDiff = Math.abs(pgAmount - bankAmount);
+      
+      if (amountDiff <= AMOUNT_TOLERANCE) {
+        matched.push({ pg, bank: bankMatch });
+        unmatchedPg.splice(unmatchedPg.indexOf(pg), 1);
+        unmatchedBank.splice(unmatchedBank.indexOf(bankMatch), 1);
+      } else {
+        exceptions.push({
+          pg,
+          bank: bankMatch,
+          reasonCode: 'AMOUNT_MISMATCH',
+          reason: `Amount mismatch: PG ₹${pgAmount.toFixed(2)} vs Bank ₹${bankAmount.toFixed(2)} (Δ ₹${amountDiff.toFixed(2)})`,
+          delta: amountDiff
+        });
+        unmatchedPg.splice(unmatchedPg.indexOf(pg), 1);
+        unmatchedBank.splice(unmatchedBank.indexOf(bankMatch), 1);
+      }
     }
   });
   

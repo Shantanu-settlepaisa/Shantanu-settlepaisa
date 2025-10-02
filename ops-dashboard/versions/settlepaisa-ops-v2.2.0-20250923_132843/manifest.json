@@ -1,0 +1,14 @@
+{
+  "version": "2.2.0",
+  "timestamp": "20250923_132843",
+  "features": [
+    "SFTP Bank File Ingestion Pipeline",
+    "Connector Health Integration",
+    "Expected vs Received Tracking",
+    "Admin-only APIs",
+    "Feature Flag Control"
+  ],
+  "files_count":    11337,
+  "backup_date": "Tue Sep 23 13:29:53 IST 2025",
+  "previous_version": "2.1.1"
+}

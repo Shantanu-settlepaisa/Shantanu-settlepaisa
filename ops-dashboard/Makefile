@@ -1,4 +1,4 @@
-.PHONY: help install dev build test clean docker-up docker-down docker-reset sftp-demo seed-data connectors-up connectors-demo connectors-seed
+.PHONY: help install dev build test clean docker-up docker-down docker-reset sftp-demo seed-data connectors-up connectors-demo connectors-seed data-context tile-map schema-erd lineage
 
 # Colors for terminal output
 BLUE := \033[0;34m
@@ -303,3 +303,13 @@ connectors-seed: ## Seed SFTP with initial sample files
 		docker cp infra/sftp/samples/AXIS_RECON_20250110.csv ops-sftp:/home/bank/upload/ 2>/dev/null || true; \
 	fi
 	@echo "${GREEN}SFTP seeded with sample files${NC}"
+
+data-context: ## Generate complete data/schema context
+	@python3 -m pip install -r tools/data_context/requirements.txt >/dev/null || true
+	@python3 tools/data_context/analyze.py
+
+tile-map: data-context ## Generate tile mapping docs
+
+schema-erd: data-context ## Generate schema ERD
+
+lineage: data-context ## Generate lineage graphs

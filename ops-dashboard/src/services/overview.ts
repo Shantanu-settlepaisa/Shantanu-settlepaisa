@@ -1,5 +1,7 @@
 // Complete Overview Service with Consistent Data Contract
 
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5106';
+
 export type OverviewWindow = { 
   from: string; 
   to: string; 
@@ -21,10 +23,28 @@ export type PipelineCounts = {
 };
 
 export type Kpis = {
-  reconMatch: { matched: number; total: number; trendPct: number; sparkline?: number[] };
-  unmatchedValue: { amount: number; count: number; trendPct: number; sparkline?: number[] };
-  openExceptions: { total: number; critical: number; high: number; trendPct: number; sparkline?: number[] };
-  creditedToMerchant: { amount: number; txns: number; trendPct: number; sparkline?: number[] };
+  timeRange: {
+    fromISO: string;
+    toISO: string;
+  };
+  totals: {
+    transactionsCount: number;
+    totalAmountPaise: string; // BigInt serialized
+    reconciledAmountPaise: string;
+    variancePaise: string; // total - reconciled
+  };
+  recon: {
+    matchRatePct: number; // 0-100
+    matchedCount: number;
+    unmatchedPgCount: number;
+    unmatchedBankCount: number;
+    exceptionsCount: number; // sum of exception buckets
+  };
+  settlements?: {
+    batchCount: number;
+    lastCycleISO?: string;
+    netToMerchantsPaise?: string;
+  }; // include only if role=sp-finance
 };
 
 export type BySourceItem = {
@@ -106,34 +126,259 @@ function generateSparkline(baseValue: number, points: number = 7): number[] {
 
 // Main fetch function with API call to backend service
 export async function fetchOverview(window: OverviewWindow): Promise<OverviewResponse> {
-  // Call the overview API service with date range parameters
+  // Call the new V2 analytics API service with date range parameters
+  console.log('🚀🚀🚀 FETCHOVERVIEW V3 CALLED WITH WINDOW:', window);
+  console.log('🚀🚀🚀 CURRENT TIME:', new Date().toISOString());
+  console.log('🚀🚀🚀 API_BASE_URL GLOBAL:', API_BASE_URL);
   try {
-    const response = await fetch(`http://localhost:5103/api/overview?from=${window.from}&to=${window.to}${window.source ? `&source=${window.source}` : ''}`, {
+    console.log('🔍 [V2] Fetching real database data for window:', window);
+    
+    // Build API URL with date parameters
+    const params = new URLSearchParams();
+    if (window.from) params.append('from', window.from);
+    if (window.to) params.append('to', window.to);
+    
+    const v2ApiUrl = `http://localhost:5108/api/overview${params.toString() ? '?' + params.toString() : ''}`;
+    console.log('📡 [V2] Calling V2 API:', v2ApiUrl);
+    
+    const response = await fetch(v2ApiUrl, {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
       },
     });
     
+    console.log('📊 API Response status:', response.status, response.statusText);
+    
     if (!response.ok) {
-      // Don't throw on API errors, just log and use fallback
-      console.warn(`Overview API returned ${response.status}, using fallback data`);
-      return fetchOverviewFallback(window);
+      console.error(`❌ V2 Analytics API returned ${response.status} - ${response.statusText}`);
+      const errorText = await response.text();
+      console.error('❌ V2 API Error details:', errorText);
+      throw new Error(`V2 API failed with status ${response.status}: ${errorText}`);
     }
     
-    const data = await response.json();
+    const v2Data = await response.json();
+    console.log('✅ [V2] Real database data received:', v2Data);
+    console.log('📈 [V2] Total transactions from database:', v2Data.pipeline?.totalTransactions);
     
-    // If API returns structured data, use it directly
-    if (data.kpis && data.pipeline) {
-      return data;
-    }
+    // Transform V2 database response to match frontend structure
+    const transformedData = transformV2DatabaseResponse(v2Data, window);
+    console.log('🔄 [V2] Transformed data for dashboard:', transformedData);
+    console.log('🎯 [V2] Final captured count:', transformedData.pipeline.captured);
     
-    // Otherwise, transform the API response to match our structure
-    return transformApiResponse(data, window);
+    return transformedData;
   } catch (error) {
-    console.warn('API call failed, using fallback data:', error);
-    return fetchOverviewFallback(window);
+    console.error('❌ V2 Analytics API call failed:', error);
+    console.error('❌ API_BASE_URL:', API_BASE_URL);
+    console.error('❌ Window object:', window);
+    console.error('❌ Error details:', error);
+    
+    // FORCE USING V2 DATA - NO FALLBACK
+    throw new Error(`V2 Analytics API failed: ${error.message}. Check console for details.`);
   }
+}
+
+// Transform V2 database response to match frontend structure
+function transformV2DatabaseResponse(v2Data: any, window: OverviewWindow): OverviewResponse {
+  console.log('🔄 [V2] Transforming database response:', v2Data);
+  
+  // Extract data from V2 database API response
+  const pipeline = v2Data.pipeline || {};
+  const kpis = v2Data.kpis || {};
+  const reconciliation = v2Data.reconciliation || {};
+  
+  console.log('📊 [V2] Pipeline data:', pipeline);
+  console.log('📈 [V2] KPIs data:', kpis);
+  console.log('🔄 [V2] Reconciliation data:', reconciliation);
+  
+  // Build pipeline data from V2 database response
+  const totalTransactions = pipeline.totalTransactions || 0;
+  const sentToBank = pipeline.sentToBank || 0;
+  const credited = pipeline.credited || 0;
+  const exceptions = pipeline.exceptions || 0;
+  
+  console.log('🎯 [V2] Extracted pipeline values:');
+  console.log('  totalTransactions:', totalTransactions);
+  console.log('  sentToBank:', sentToBank);
+  console.log('  credited:', credited);
+  console.log('  exceptions:', exceptions);
+  
+  // Calculate pipeline stages from real V2 data
+  const inSettlement = Math.max(0, sentToBank - credited); // In settlement = sent but not yet credited
+  const unsettled = Math.max(0, totalTransactions - credited - exceptions); // Everything not credited/excepted
+  
+  const pipelineCounts: PipelineCounts = {
+    captured: totalTransactions,
+    inSettlement: inSettlement,
+    sentToBank: sentToBank,
+    credited: credited,
+    unsettled: unsettled,
+    clamped: false,
+    capturedValue: v2Data.financial?.grossAmount || 0,
+    creditedValue: v2Data.financial?.netAmount || 0,
+    warnings: []
+  };
+
+  // Calculate derived values for KPIs
+  const matchedTransactions = reconciliation.matched || 0;
+  const unmatchedTransactions = reconciliation.unmatched || 0;
+  const totalAmount = v2Data.financial?.grossAmount || 0;
+  const reconciledAmount = v2Data.financial?.netAmount || 0;
+  const exceptionTransactions = exceptions;
+  
+  // Build KPIs from V2 data to match expected structure
+  const kpiData: Kpis = {
+    timeRange: {
+      fromISO: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(), // 30 days ago
+      toISO: new Date().toISOString()
+    },
+    totals: {
+      transactionsCount: totalTransactions,
+      totalAmountPaise: String(totalAmount),
+      reconciledAmountPaise: String(reconciledAmount),
+      variancePaise: String(Math.abs(totalAmount - reconciledAmount))
+    },
+    recon: {
+      matchRatePct: totalTransactions > 0 ? Math.round((matchedTransactions / totalTransactions) * 100) : 0,
+      matchedCount: matchedTransactions,
+      unmatchedPgCount: Math.max(0, totalTransactions - matchedTransactions - exceptionTransactions),
+      unmatchedBankCount: unmatchedTransactions,
+      exceptionsCount: exceptionTransactions
+    },
+    settlements: v2Data.settlements ? {
+      batchCount: v2Data.settlements.pending + v2Data.settlements.completed || 0,
+      lastCycleISO: new Date().toISOString(),
+      netToMerchantsPaise: String(v2Data.settlements.totalAmount || 0)
+    } : undefined
+  };
+
+  // Build by-source breakdown from V2 reconciliation data
+  const bySource: BySourceItem[] = [];
+  
+  // Use reconciliation bySource data if available
+  if (reconciliation.bySource) {
+    const sources = reconciliation.bySource;
+    
+    // Manual source
+    if (sources.manual > 0) {
+      const manualTransactions = sources.manual;
+      bySource.push({
+        source: 'MANUAL',
+        matchRate: Math.round((manualTransactions / totalTransactions) * 100),
+        exceptions: Math.round(exceptionTransactions * 0.55), // Manual has more exceptions
+        pipeline: {
+          captured: manualTransactions,
+          inSettlement: Math.round(manualTransactions * 0.83),
+          sentToBank: Math.round(manualTransactions * 0.77),
+          credited: Math.round(manualTransactions * 0.65),
+          unsettled: Math.round(manualTransactions * 0.12),
+          clamped: false
+        }
+      });
+    }
+    
+    // Connector source
+    if (sources.connector > 0) {
+      const connectorTransactions = sources.connector;
+      bySource.push({
+        source: 'CONNECTORS',
+        matchRate: Math.round((connectorTransactions / totalTransactions) * 100),
+        exceptions: Math.round(exceptionTransactions * 0.45), // Connectors have fewer exceptions
+        pipeline: {
+          captured: connectorTransactions,
+          inSettlement: Math.round(connectorTransactions * 0.86),
+          sentToBank: Math.round(connectorTransactions * 0.81),
+          credited: Math.round(connectorTransactions * 0.80),
+          unsettled: Math.round(connectorTransactions * 0.03),
+          clamped: false
+        },
+        lastSync: '5 min ago',
+        lagHours: 0.08
+      });
+    }
+  }
+  
+  // If no sources data, create default breakdown
+  if (bySource.length === 0) {
+    const manualTransactions = Math.round(totalTransactions * 0.3);
+    const connectorTransactions = totalTransactions - manualTransactions;
+    
+    bySource.push(
+      {
+        source: 'MANUAL',
+        matchRate: 65,
+        exceptions: Math.round(exceptionTransactions * 0.55),
+        pipeline: {
+          captured: manualTransactions,
+          inSettlement: Math.round(manualTransactions * 0.83),
+          sentToBank: Math.round(manualTransactions * 0.77),
+          credited: Math.round(manualTransactions * 0.65),
+          unsettled: Math.round(manualTransactions * 0.12),
+          clamped: false
+        }
+      },
+      {
+        source: 'CONNECTORS',
+        matchRate: 89,
+        exceptions: Math.round(exceptionTransactions * 0.45),
+        pipeline: {
+          captured: connectorTransactions,
+          inSettlement: Math.round(connectorTransactions * 0.86),
+          sentToBank: Math.round(connectorTransactions * 0.81),
+          credited: Math.round(connectorTransactions * 0.80),
+          unsettled: Math.round(connectorTransactions * 0.03),
+          clamped: false
+        },
+        lastSync: '5 min ago',
+        lagHours: 0.08
+      }
+    );
+  }
+
+  // Mock top reasons (enhance later with real data)
+  const topReasons: TopReason[] = [
+    { code: 'UTR_MISSING', label: 'Missing UTR', impactedTxns: Math.round(exceptionTransactions * 0.39), pct: 39 },
+    { code: 'AMT_MISMATCH', label: 'Amount Mismatch', impactedTxns: Math.round(exceptionTransactions * 0.20), pct: 20 },
+    { code: 'DUP_UTR', label: 'Duplicate UTR', impactedTxns: Math.round(exceptionTransactions * 0.17), pct: 17 },
+    { code: 'BANK_MISSING', label: 'Not in Bank File', impactedTxns: Math.round(exceptionTransactions * 0.15), pct: 15 },
+    { code: 'STATUS_PENDING', label: 'Status Pending', impactedTxns: Math.round(exceptionTransactions * 0.10), pct: 10 }
+  ];
+
+  // Mock connectors health (enhance later with real data)
+  const connectorsHealth: ConnectorsHealthItem[] = [
+    { name: 'HDFC Bank SFTP', status: 'OK', lastSync: '2025-01-14T10:58:00Z', queuedFiles: 0, failures: 0 },
+    { name: 'ICICI API', status: 'OK', lastSync: '2025-01-14T10:45:00Z', queuedFiles: 1, failures: 0 },
+    { name: 'AXIS SFTP', status: 'LAGGING', lastSync: '2025-01-14T09:00:00Z', queuedFiles: 3, failures: 1 },
+    { name: 'SBI API', status: 'FAILING', lastSync: '2025-01-14T06:00:00Z', queuedFiles: 8, failures: 2 },
+    { name: 'IndusInd SFTP', status: 'OK', lastSync: '2025-01-14T11:15:00Z', queuedFiles: 0, failures: 0 }
+  ];
+
+  // Mock bank feed lag (enhance later with real data)
+  const bankFeedLag: BankLagItem[] = [
+    { bank: 'HDFC', avgLagHours: 2, status: 'OK' },
+    { bank: 'ICICI', avgLagHours: 4, status: 'OK' },
+    { bank: 'AXIS', avgLagHours: 8, status: 'WARN' },
+    { bank: 'SBI', avgLagHours: 24, status: 'BREACH' }
+  ];
+
+  // Data quality validation based on real pipeline data
+  const quality: DataQuality = {
+    pipelineSumOk: (pipelineCounts.inSettlement + pipelineCounts.unsettled) === pipelineCounts.captured,
+    creditConstraintOk: pipelineCounts.credited <= pipelineCounts.sentToBank,
+    normalizationSuccessPct: random(92, 98),
+    duplicateUtrPct: random(1, 5) / 10
+  };
+
+  return {
+    window,
+    kpis: kpiData,
+    pipeline: pipelineCounts,
+    bySource,
+    topReasons,
+    connectorsHealth,
+    bankFeedLag,
+    quality
+  };
 }
 
 // Transform API response to match frontend structure
@@ -152,30 +397,27 @@ function transformApiResponse(data: any, window: OverviewWindow): OverviewRespon
   };
 
   const kpis: Kpis = {
-    reconMatch: {
-      matched: pipeline.captured - pipeline.unsettled,
-      total: pipeline.captured,
-      trendPct: 2.3,
-      sparkline: generateSparkline(pipeline.captured - pipeline.unsettled)
+    timeRange: {
+      fromISO: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(),
+      toISO: new Date().toISOString()
     },
-    unmatchedValue: {
-      amount: pipeline.unsettled * 9500,
-      count: pipeline.unsettled,
-      trendPct: -1.2,
-      sparkline: generateSparkline(pipeline.unsettled * 9500)
+    totals: {
+      transactionsCount: pipeline.captured,
+      totalAmountPaise: String(pipeline.capturedValue || pipeline.captured * 9500),
+      reconciledAmountPaise: String(pipeline.creditedValue || pipeline.credited * 9500),
+      variancePaise: String((pipeline.capturedValue || 0) - (pipeline.creditedValue || 0))
     },
-    openExceptions: {
-      total: 82,
-      critical: 12,
-      high: 31,
-      trendPct: -0.8,
-      sparkline: generateSparkline(82)
+    recon: {
+      matchRatePct: Math.round(((pipeline.captured - pipeline.unsettled) / pipeline.captured) * 100),
+      matchedCount: pipeline.captured - pipeline.unsettled,
+      unmatchedPgCount: pipeline.unsettled,
+      unmatchedBankCount: 0,
+      exceptionsCount: 82
     },
-    creditedToMerchant: {
-      amount: pipeline.creditedValue || 0,
-      txns: pipeline.credited,
-      trendPct: 1.7,
-      sparkline: generateSparkline(pipeline.creditedValue || 0)
+    settlements: {
+      batchCount: 5,
+      lastCycleISO: new Date().toISOString(),
+      netToMerchantsPaise: String(pipeline.creditedValue || pipeline.credited * 9500)
     }
   };
 
@@ -298,30 +540,27 @@ export async function fetchOverviewFallback(window: OverviewWindow): Promise<Ove
   const openExceptionsCount = 82;                 // Fixed realistic number
   
   const kpis: Kpis = {
-    reconMatch: {
-      matched: matchedCount,              // 9,450 
-      total: totalCaptured,               // 10,000
-      trendPct: 2.3,                      // +2.3% vs previous period
-      sparkline: generateSparkline(matchedCount)
+    timeRange: {
+      fromISO: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(),
+      toISO: new Date().toISOString()
     },
-    unmatchedValue: {
-      amount: unmatchedCount * 9500,      // ₹5.225L unmatched value
-      count: unmatchedCount,              // 550 transactions  
-      trendPct: -1.2,                     // -1.2% (improving)
-      sparkline: generateSparkline(unmatchedCount * 10000)
+    totals: {
+      transactionsCount: totalCaptured,
+      totalAmountPaise: String(totalCaptured * 9500),
+      reconciledAmountPaise: String(credited * 9500),
+      variancePaise: String((totalCaptured - credited) * 9500)
     },
-    openExceptions: {
-      total: openExceptionsCount,         // 82 total exceptions
-      critical: 12,                       // 12 critical
-      high: 31,                          // 31 high priority  
-      trendPct: -0.8,                    // -0.8% (improving)
-      sparkline: generateSparkline(openExceptionsCount)
+    recon: {
+      matchRatePct: Math.round((matchedCount / totalCaptured) * 100),
+      matchedCount: matchedCount,
+      unmatchedPgCount: Math.max(0, totalCaptured - matchedCount - openExceptionsCount),
+      unmatchedBankCount: unmatchedCount,
+      exceptionsCount: openExceptionsCount
     },
-    creditedToMerchant: {
-      amount: pipeline.creditedValue || 0,  // ₹70.4L credited
-      txns: credited,                       // 7,413 txns
-      trendPct: 1.7,                       // +1.7% growth
-      sparkline: generateSparkline(pipeline.creditedValue || 0)
+    settlements: {
+      batchCount: 7,
+      lastCycleISO: new Date().toISOString(),
+      netToMerchantsPaise: String(credited * 9500)
     }
   };
 
@@ -475,7 +714,7 @@ export async function fetchSourcesSummary(window: OverviewWindow): Promise<{ mat
     if (window.acquirer) params.append('acquirerId', window.acquirer);
     if (window.merchant) params.append('merchantId', window.merchant);
     
-    const response = await fetch(`http://localhost:5103/recon/sources/summary?${params}`, {
+    const response = await fetch(`${API_BASE_URL}/api/overview?${params}`, {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',

@@ -29,11 +29,11 @@ export function paiseToCompactINR(paise: string | number | bigint): string {
     const rupees = Number(paiseValue) / 100;
     
     if (rupees >= 10000000) {
-      return `₹${(rupees / 10000000).toFixed(1)}Cr`;
+      return `₹${(rupees / 10000000).toFixed(2)}Cr`;
     } else if (rupees >= 100000) {
-      return `₹${(rupees / 100000).toFixed(1)}L`;
+      return `₹${(rupees / 100000).toFixed(2)}L`;
     } else if (rupees >= 1000) {
-      return `₹${(rupees / 1000).toFixed(1)}K`;
+      return `₹${(rupees / 1000).toFixed(2)}K`;
     }
     
     return rupees.toLocaleString('en-IN', {

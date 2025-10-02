@@ -28,13 +28,28 @@ const defaultFilter: TimeFilter = {
 
 export const useTimeFilterStore = create<TimeFilterStore>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       filter: defaultFilter,
       setFilter: (filter) => set({ filter }),
       resetToDefault: () => set({ filter: defaultFilter }),
     }),
     {
       name: 'time-filter-storage',
+      // Custom merge to recalculate dates on hydration
+      merge: (persistedState, currentState) => {
+        const persisted = persistedState as TimeFilterStore;
+        // If persisted filter exists, recalculate dates based on label
+        if (persisted?.filter?.label) {
+          const preset = TIME_RANGES.find(r => r.label === persisted.filter.label);
+          if (preset) {
+            return {
+              ...currentState,
+              filter: preset, // Use recalculated dates
+            };
+          }
+        }
+        return { ...currentState, ...persistedState };
+      },
     }
   )
 );

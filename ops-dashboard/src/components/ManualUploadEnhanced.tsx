@@ -1,12 +1,9 @@
 import { useState, useCallback, useEffect } from 'react'
-import { FileUp, Settings, Activity, CheckCircle, XCircle, AlertCircle } from 'lucide-react'
+import { FileUp, Settings, Download } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 import { FileCard, type UploadedFile } from './recon/FileCard'
-import { ReconStats, type ReconStatsData } from './recon/ReconStats'
 import { ReconResultsTable, type ReconRow } from './recon/ReconResultsTable'
 import { ReconConfigDrawer } from './recon/ReconConfigDrawer'
-import { updateReconResults, updateExceptions, updateProgress, updateSettlements } from '../services/overview-aggregator'
-import type { JobSummary, JobResult } from '../shared/reconMap'
-import { formatINR, toUiStatus, getStatusLabel } from '../shared/reconMap'
 import ManualUploadTiles from './recon/ManualUploadTiles'
 import { useReconJobSummary, useReconJobCounts, useReconJobResults } from '../hooks/useReconJobSummary'
 import { useQueryClient } from '@tanstack/react-query'
@@ -39,177 +36,82 @@ async function readFilePreview(file: File, rows = 5): Promise<{ columns: string[
   })
 }
 
-// Helper to filter rows based on tab and search
-function filterRows(rows: ReconRow[], tab: 'all' | 'matched' | 'exceptions', query: string) {
-  let filteredRows = rows
-  
-  // Filter by tab
-  if (tab === 'matched') {
-    filteredRows = rows.filter(r => r.status === 'Matched')
-  } else if (tab === 'exceptions') {
-    filteredRows = rows.filter(r => r.status !== 'Matched' && r.status !== 'Unknown')
-  }
-  
-  // Filter by search query
-  if (query?.trim()) {
-    const searchTerm = query.trim().toLowerCase()
-    filteredRows = filteredRows.filter(r =>
-      r.txnId?.toLowerCase().includes(searchTerm) ||
-      r.utr?.toLowerCase().includes(searchTerm) ||
-      (r.rrn && r.rrn.toLowerCase().includes(searchTerm))
-    )
-  }
-  
-  return filteredRows
+// Helper to parse entire CSV file
+async function parseCSVFile(file: File): Promise<any[]> {
+  return new Promise((resolve) => {
+    const reader = new FileReader()
+    reader.onload = (e) => {
+      const text = e.target?.result as string
+      const lines = text.split('\n').filter(line => line.trim())
+      const headers = lines[0]?.split(',').map(h => h.trim()) || []
+      
+      const data = lines.slice(1).map(line => {
+        const values = line.split(',').map(cell => cell.trim())
+        const obj: any = {}
+        headers.forEach((header, index) => {
+          obj[header] = values[index] || ''
+        })
+        return obj
+      })
+      
+      resolve(data)
+    }
+    reader.readAsText(file)
+  })
 }
 
-// Mock reconciliation data with more entries
-const mockReconData: ReconRow[] = [
-  {
-    id: '1',
-    txnId: 'TXN000001',
-    utr: 'UTR000000000001',
-    rrn: 'RRN000001',
-    pgAmount: 3827.79,
-    bankAmount: 3827.79,
-    delta: 0,
-    pgDate: '2025-09-11',
-    bankDate: '2025-09-11',
-    status: 'MATCHED'
-  },
-  {
-    id: '2',
-    txnId: 'TXN000002',
-    utr: 'UTR000000000002',
-    rrn: 'RRN000002',
-    pgAmount: 1142.18,
-    bankAmount: 1142.18,
-    delta: 0,
-    pgDate: '2025-09-11',
-    bankDate: '2025-09-11',
-    status: 'MATCHED'
-  },
-  {
-    id: '3',
-    txnId: 'TXN000003',
-    utr: 'UTR000000000003',
-    pgAmount: 5000.00,
-    bankAmount: 4950.00,
-    delta: -50.00,
-    pgDate: '2025-09-11',
-    bankDate: '2025-09-11',
-    status: 'EXCEPTION'
-  },
-  {
-    id: '4',
-    txnId: 'TXN000004',
-    utr: 'UTR000000000004',
-    pgAmount: 2500.00,
-    bankAmount: null,
-    delta: null,
-    pgDate: '2025-09-11',
-    bankDate: null,
-    status: 'UNMATCHED_PG'
-  },
-  {
-    id: '5',
-    txnId: 'TXN000005',
-    utr: 'UTR000000000005',
-    pgAmount: 7500.00,
-    bankAmount: 7500.00,
-    delta: 0,
-    pgDate: '2025-09-11',
-    bankDate: '2025-09-11',
-    status: 'MATCHED'
-  },
-  {
-    id: '6',
-    txnId: 'TXN000006',
-    utr: 'UTR000000000006',
-    rrn: 'RRN000006',
-    pgAmount: 15234.50,
-    bankAmount: 15234.50,
-    delta: 0,
-    pgDate: '2025-09-11',
-    bankDate: '2025-09-11',
-    status: 'MATCHED'
-  },
-  {
-    id: '7',
-    txnId: 'TXN000007',
-    utr: 'UTR000000000007',
-    rrn: 'RRN000007',
-    pgAmount: 892.75,
-    bankAmount: 892.75,
-    delta: 0,
-    pgDate: '2025-09-11',
-    bankDate: '2025-09-11',
-    status: 'MATCHED'
-  },
-  {
-    id: '8',
-    txnId: 'TXN000008',
-    utr: 'UTR000000000008',
-    pgAmount: 12500.00,
-    bankAmount: 12500.00,
-    delta: 0,
-    pgDate: '2025-09-11',
-    bankDate: '2025-09-11',
-    status: 'MATCHED'
-  },
-  {
-    id: '9',
-    txnId: '',
-    utr: 'UTR000000000009',
-    pgAmount: null,
-    bankAmount: 6750.00,
-    delta: null,
-    pgDate: null,
-    bankDate: '2025-09-11',
-    status: 'UNMATCHED_BANK'
-  },
-  {
-    id: '10',
-    txnId: 'TXN000010',
-    utr: 'UTR000000000010',
-    pgAmount: 4250.00,
-    bankAmount: 4250.00,
-    delta: 0,
-    pgDate: '2025-09-11',
-    bankDate: '2025-09-11',
-    status: 'MATCHED'
-  }
-]
-
-const mockStats: ReconStatsData = {
-  matched: {
-    count: 95,
-    amount: 9500000 // in paise
-  },
-  unmatched: {
-    count: 35,
-    amount: 3500000 // in paise
-  },
-  exceptions: {
-    count: 20
-  },
-  lastRun: {
-    at: new Date().toISOString(),
-    jobId: `preview-${Date.now().toString().slice(-8)}`
-  }
-}
+// All mock data removed - using real V2 API data only
 
 export function ManualUploadEnhanced() {
   const queryClient = useQueryClient()
-  const [cycleDate, setCycleDate] = useState('11/09/2025')
-  const [merchant, setMerchant] = useState('All Merchants')
-  const [acquirer, setAcquirer] = useState('All Banks')
-  const [pgFiles, setPgFiles] = useState<UploadedFile[]>([])
-  const [bankFiles, setBankFiles] = useState<UploadedFile[]>([])
+  const [cycleDate, setCycleDate] = useState('10/02/2025')
+  const [merchant] = useState('All Merchants')
+  const [acquirer] = useState('All Banks')
+  // Restore file metadata from localStorage (create mock File objects for display)
+  const [pgFiles, setPgFiles] = useState<UploadedFile[]>(() => {
+    try {
+      const saved = localStorage.getItem('lastPgFileMetadata');
+      if (saved) {
+        const metadata = JSON.parse(saved);
+        console.log('[ManualUploadEnhanced] Restoring PG file metadata:', metadata);
+        return metadata.map((m: any) => ({
+          ...m,
+          file: new File([], m.file.name, { type: m.file.type })
+        }));
+      }
+    } catch (error) {
+      console.error('[ManualUploadEnhanced] Failed to restore PG file metadata:', error);
+    }
+    return [];
+  })
+  
+  const [bankFiles, setBankFiles] = useState<UploadedFile[]>(() => {
+    try {
+      const saved = localStorage.getItem('lastBankFileMetadata');
+      if (saved) {
+        const metadata = JSON.parse(saved);
+        console.log('[ManualUploadEnhanced] Restoring Bank file metadata:', metadata);
+        return metadata.map((m: any) => ({
+          ...m,
+          file: new File([], m.file.name, { type: m.file.type })
+        }));
+      }
+    } catch (error) {
+      console.error('[ManualUploadEnhanced] Failed to restore Bank file metadata:', error);
+    }
+    return [];
+  })
+  
   const [configDrawerOpen, setConfigDrawerOpen] = useState(false)
   const [reconResults, setReconResults] = useState<ReconRow[]>([])
-  const [reconStats, setReconStats] = useState<ReconStatsData | null>(null)
-  const [jobId, setJobId] = useState<string | null>(null)
+  
+  // Persist jobId in localStorage
+  const [jobId, setJobId] = useState<string | null>(() => {
+    const savedJobId = localStorage.getItem('lastReconJobId');
+    console.log('[ManualUploadEnhanced] Restoring jobId from localStorage:', savedJobId);
+    return savedJobId;
+  })
+  
   const [isLoading, setIsLoading] = useState(false)
   const [activeTab, setActiveTab] = useState<'all' | 'matched' | 'unmatchedPg' | 'unmatchedBank' | 'exceptions'>('all')
   const [isTabChanging, setIsTabChanging] = useState(false)
@@ -224,7 +126,7 @@ export function ManualUploadEnhanced() {
   })
   
   // Fetch job summary from backend using custom hooks
-  const { data: jobSummary, refetch: refetchSummary } = useReconJobSummary(jobId);
+  const { data: jobSummary } = useReconJobSummary(jobId);
   const { data: jobCounts } = useReconJobCounts(jobId);
   const { data: jobResults } = useReconJobResults(jobId, activeTab);
 
@@ -263,6 +165,58 @@ export function ManualUploadEnhanced() {
       };
     });
   };
+  
+  // Save jobId to localStorage whenever it changes
+  useEffect(() => {
+    if (jobId) {
+      console.log('[ManualUploadEnhanced] Saving jobId to localStorage:', jobId);
+      localStorage.setItem('lastReconJobId', jobId);
+    }
+  }, [jobId]);
+  
+  // Save PG file metadata to localStorage (serialize without File object)
+  useEffect(() => {
+    if (pgFiles.length > 0) {
+      const metadata = pgFiles.map(f => ({
+        id: f.id,
+        file: { name: f.file.name, size: f.file.size, type: f.file.type },
+        size: f.size,
+        md5: f.md5,
+        analysis: f.analysis,
+        preview: f.preview,
+        parsedData: f.parsedData
+      }));
+      console.log('[ManualUploadEnhanced] Saving PG file metadata to localStorage');
+      localStorage.setItem('lastPgFileMetadata', JSON.stringify(metadata));
+    }
+  }, [pgFiles]);
+  
+  // Save Bank file metadata to localStorage (serialize without File object)
+  useEffect(() => {
+    if (bankFiles.length > 0) {
+      const metadata = bankFiles.map(f => ({
+        id: f.id,
+        file: { name: f.file.name, size: f.file.size, type: f.file.type },
+        size: f.size,
+        md5: f.md5,
+        analysis: f.analysis,
+        preview: f.preview,
+        parsedData: f.parsedData
+      }));
+      console.log('[ManualUploadEnhanced] Saving Bank file metadata to localStorage');
+      localStorage.setItem('lastBankFileMetadata', JSON.stringify(metadata));
+    }
+  }, [bankFiles]);
+  
+  // Restore results from saved jobId on component mount
+  useEffect(() => {
+    const savedJobId = localStorage.getItem('lastReconJobId');
+    if (savedJobId && !jobId) {
+      console.log('[ManualUploadEnhanced] Restoring results from saved jobId:', savedJobId);
+      setJobId(savedJobId);
+      // The useReconJobResults hook will automatically fetch results for this jobId
+    }
+  }, []); // Empty deps - run only on mount
   
   // Clear results immediately when tab changes to prevent showing stale data
   useEffect(() => {
@@ -328,9 +282,6 @@ export function ManualUploadEnhanced() {
       let unmatchedBankCount = 0;
       let exceptionsCount = 0;
       let totalCount = 0;
-      let matchedAmount = 0;
-      let unmatchedAmount = 0;
-      let exceptionsAmount = 0;
       
       if (jobSummary?.breakdown) {
         // Use breakdown structure if available
@@ -339,13 +290,6 @@ export function ManualUploadEnhanced() {
         unmatchedBankCount = jobSummary.breakdown.unmatchedBank?.count || 0;
         exceptionsCount = jobSummary.breakdown.exceptions?.count || 0;
         totalCount = jobSummary.totals?.count || 0;
-        
-        // Extract amounts from API (in paise) and convert to rupees
-        matchedAmount = jobSummary.breakdown.matched?.amountPaise ? parseInt(jobSummary.breakdown.matched.amountPaise) / 100 : 0;
-        const unmatchedPgAmount = jobSummary.breakdown.unmatchedPg?.amountPaise ? parseInt(jobSummary.breakdown.unmatchedPg.amountPaise) / 100 : 0;
-        const unmatchedBankAmount = jobSummary.breakdown.unmatchedBank?.amountPaise ? parseInt(jobSummary.breakdown.unmatchedBank.amountPaise) / 100 : 0;
-        unmatchedAmount = unmatchedPgAmount + unmatchedBankAmount;
-        exceptionsAmount = jobSummary.breakdown.exceptions?.amountPaise ? parseInt(jobSummary.breakdown.exceptions.amountPaise) / 100 : 0;
       } else if (jobSummary) {
         // Alternative structure from API
         matchedCount = jobSummary.matched?.count || jobSummary.matchedCount || 0;
@@ -361,29 +305,6 @@ export function ManualUploadEnhanced() {
         exceptionsCount = jobCounts.exceptions || 0;
         totalCount = jobCounts.all || 0;
       }
-      
-      const unmatchedCount = unmatchedPgCount + unmatchedBankCount;
-      
-      const stats: ReconStatsData = {
-        matched: {
-          count: matchedCount,
-          amount: matchedAmount
-        },
-        unmatched: {
-          count: unmatchedCount,
-          amount: unmatchedAmount
-        },
-        exceptions: {
-          count: exceptionsCount,
-          amount: exceptionsAmount
-        },
-        lastRun: jobId ? {
-          at: new Date().toISOString(),
-          jobId: jobId,
-          status: 'completed'
-        } : null
-      };
-      setReconStats(stats);
       
       // Store breakdown counts for display
       setBreakdownCounts({
@@ -431,97 +352,92 @@ export function ManualUploadEnhanced() {
         setIsLoading(true)
         
         try {
-          // Call the manual upload reconciliation API
-          const response = await axios.post('http://localhost:5103/ops/recon/manual/upload', {
-            pgFiles: pgFiles.map(f => ({ name: f.file.name, size: f.file.size })),
-            bankFiles: bankFiles.map(f => ({ name: f.file.name, size: f.file.size })),
-            cycleDate: cycleDate || new Date().toISOString().split('T')[0]
+          // Parse cycle date to YYYY-MM-DD format
+          const dateParts = cycleDate.split('/'); // Format: MM/DD/YYYY
+          const reconDate = dateParts.length === 3 
+            ? `${dateParts[2]}-${dateParts[0].padStart(2, '0')}-${dateParts[1].padStart(2, '0')}`
+            : new Date().toISOString().split('T')[0];
+          
+          console.log('[Manual Upload] Starting reconciliation for date:', reconDate);
+          console.log('[Manual Upload] PG File:', pgFiles[0].file.name);
+          console.log('[Manual Upload] Bank File:', bankFiles[0].file.name);
+          
+          // Get parsed CSV data
+          const pgData = pgFiles[0].parsedData || [];
+          const bankData = bankFiles[0].parsedData || [];
+          
+          console.log('[Manual Upload] Sending PG data:', pgData.length, 'records');
+          console.log('[Manual Upload] Sending bank data:', bankData.length, 'records');
+          
+          // Call the real recon API with uploaded data
+          const response = await fetch('http://localhost:5103/recon/run', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              date: reconDate,
+              dryRun: false,
+              pgTransactions: pgData,
+              bankRecords: bankData
+            })
           });
           
-          if (response.data.success && response.data.resultId) {
-            console.log('Reconciliation completed with result ID:', response.data.resultId);
-            
-            // Use the resultId directly as the jobId
-            const newJobId = response.data.resultId;
+          if (!response.ok) {
+            throw new Error(`Recon API error: ${response.status}`);
+          }
+          
+          const data = await response.json();
+          console.log('[Manual Upload] Recon API response:', data);
+          
+          if (data.success && data.jobId) {
+            const newJobId = data.jobId;
             setJobId(newJobId);
             
-            // Set the stats from the response
-            if (response.data.summary) {
-              const summary = response.data.summary;
-              // Calculate unmatched PG and Bank from reasonCounts
-              const unmatchedPg = summary.reasonCounts?.PG_TXN_MISSING_IN_BANK || 0;
-              const unmatchedBank = summary.reasonCounts?.BANK_TXN_MISSING_IN_PG || 0;
-              
-              setBreakdownCounts({
-                totalCount: summary.total || 0,
-                matchedCount: summary.matched || 0,
-                unmatchedPgCount: unmatchedPg,
-                unmatchedBankCount: unmatchedBank,
-                exceptionsCount: summary.exceptions || 0
-              });
-              
-              // Create stats for display
-              const stats: ReconStatsData = {
-                matched: {
-                  count: summary.matched || 0,
-                  amount: 0
-                },
-                unmatched: {
-                  count: summary.unmatched || 0,
-                  amount: 0
-                },
-                exceptions: {
-                  count: summary.exceptions || 0,
-                  amount: 0
-                },
-                total: {
-                  count: summary.total || 0,
-                  amount: 0
-                }
-              };
-              setReconStats(stats);
-              
-              // The hooks will fetch the actual results when jobId is set
-              console.log('Reconciliation started, hooks will fetch results for jobId:', newJobId);
-            }
+            // Extract counters from response
+            const counters = data.counters || {};
+            const matchedCount = counters.matched || 0;
+            const unmatchedPgCount = counters.unmatchedPg || 0;
+            const unmatchedBankCount = counters.unmatchedBank || 0;
+            const exceptionsCount = counters.exceptions || 0;
+            const totalCount = counters.pgFetched || (matchedCount + unmatchedPgCount);
+            
+            console.log('[Manual Upload] Job created:', newJobId);
+            console.log('[Manual Upload] Counters:', counters);
+            console.log('[Manual Upload] Setting breakdownCounts:', {
+              totalCount,
+              matchedCount,
+              unmatchedPgCount,
+              unmatchedBankCount,
+              exceptionsCount
+            });
+            
+            setBreakdownCounts({
+              totalCount,
+              matchedCount,
+              unmatchedPgCount,
+              unmatchedBankCount,
+              exceptionsCount
+            });
+            
+            // Create stats for display
+            console.log('[Manual Upload] Reconciliation completed successfully');
+          } else {
+            throw new Error('Invalid response from recon API');
           }
         } catch (error: any) {
-          console.error('Failed to start reconciliation:', error);
-          console.error('Error response:', error.response?.data);
-          console.error('Error status:', error.response?.status);
-          
-          // Still try to set a job ID to trigger the UI update
-          // The backend will return demo data for any job ID
-          const fallbackJobId = `demo-${Date.now()}`;
-          setJobId(fallbackJobId);
-          
-          // Set some default stats to show something
-          setBreakdownCounts({
-            totalCount: 28,
-            matchedCount: 19,
-            unmatchedPgCount: 6,
-            unmatchedBankCount: 2,
-            exceptionsCount: 4
-          });
-          
-          setReconStats({
-            matched: { count: 19, amount: 0 },
-            unmatched: { count: 9, amount: 0 },
-            exceptions: { count: 4, amount: 0 },
-            total: { count: 28, amount: 0 }
-          });
+          console.error('[Manual Upload] Reconciliation failed:', error);
+          console.error('[Manual Upload] Error details:', error.message);
         } finally {
           setIsLoading(false);
         }
       };
       
       startRecon();
-    } else if (pgFiles.length === 0 || bankFiles.length === 0) {
-      // Only clear when files are removed
-      console.log('Files cleared, showing empty state');
+    } else if (pgFiles.length === 0 && bankFiles.length === 0 && !jobId) {
+      // Only clear when BOTH files are removed AND there's no active job
+      console.log('Files cleared and no active job, showing empty state');
       setReconResults([]);
-      setReconStats(null);
-      setJobId(null);
       setIsLoading(false);
     }
   }, [pgFiles, bankFiles, cycleDate])
@@ -537,89 +453,251 @@ export function ManualUploadEnhanced() {
     }
   }, [jobId, breakdownCounts, reconResults.length])
 
-  // Handle PG file upload
+  // Handle PG file upload with V2 API
   const handlePGUpload = useCallback(async (files: File[]) => {
-    const uploadedFiles: UploadedFile[] = await Promise.all(
-      files.map(async (file, index) => {
-        const id = `pg_${Date.now()}_${index}`
-        const md5 = await computeMD5(file)
-        const preview = await readFilePreview(file)
-        
-        return {
-          id,
-          file,
-          size: file.size,
-          md5,
-          analysis: {
-            fileTypeOk: true,
-            delimiter: 'comma' as const,
-            encoding: 'utf-8' as const,
-            headersRecognized: true,
-            schemaDetected: 'STANDARD_PG'
-          },
-          preview
-        }
-      })
-    )
+    console.log(`📁 [V2 Upload] Uploading ${files.length} PG files to V2 API...`);
     
-    setPgFiles(prev => [...prev, ...uploadedFiles])
+    try {
+      // Upload files to V2 API for processing and database insertion
+      const formData = new FormData();
+      files.forEach((file) => {
+        formData.append('files', file);
+      });
+      formData.append('fileType', 'transactions');
+      
+      const response = await fetch('http://localhost:5107/api/upload/multiple', {
+        method: 'POST',
+        body: formData
+      });
+      
+      const data = await response.json();
+      console.log('V2 Upload response:', data);
+      
+      if (data.success) {
+        console.log(`✅ [V2 Upload] Successfully uploaded ${data.results.length} files`);
+        
+        // Create uploaded file objects for UI display
+        const uploadedFiles: UploadedFile[] = await Promise.all(
+          files.map(async (file, _index) => {
+            const id = `pg_${Date.now()}_${_index}`
+            const md5 = await computeMD5(file)
+            const preview = await readFilePreview(file)
+            const parsedData = await parseCSVFile(file)  // Parse full CSV
+            
+            console.log(`[CSV Parse] PG file parsed: ${parsedData.length} records`);
+            
+            return {
+              id,
+              file,
+              size: file.size,
+              md5,
+              analysis: {
+                fileTypeOk: true,
+                delimiter: 'comma' as const,
+                encoding: 'utf-8' as const,
+                headersRecognized: true,
+                schemaDetected: 'STANDARD_PG'
+              },
+              preview,
+              parsedData  // Store parsed data
+            }
+          })
+        );
+        
+        setPgFiles(prev => [...prev, ...uploadedFiles]);
+        
+        // Show processing summary
+        const summary = data.summary;
+        if (summary) {
+          console.log(`📊 [V2 Upload] Processing summary: ${summary.successful} successful, ${summary.failed} failed`);
+        }
+      } else {
+        console.error('❌ [V2 Upload] Failed to upload files:', data.error);
+      }
+    } catch (error) {
+      console.error('❌ [V2 Upload] Upload error:', error);
+      
+      // Fallback: create file objects for UI display even if API fails
+      const uploadedFiles: UploadedFile[] = await Promise.all(
+        files.map(async (file, index) => {
+          const id = `pg_${Date.now()}_${index}`
+          const md5 = await computeMD5(file)
+          const preview = await readFilePreview(file)
+          const parsedData = await parseCSVFile(file)  // Parse full CSV in fallback too
+          
+          console.log(`[CSV Parse Fallback] PG file "${file.name}" parsed: ${parsedData.length} records`);
+          
+          return {
+            id,
+            file,
+            size: file.size,
+            md5,
+            analysis: {
+              fileTypeOk: true,
+              delimiter: 'comma' as const,
+              encoding: 'utf-8' as const,
+              headersRecognized: true,
+              schemaDetected: 'STANDARD_PG'
+            },
+            preview,
+            parsedData  // Store parsed data
+          }
+        })
+      );
+      
+      setPgFiles(prev => [...prev, ...uploadedFiles]);
+    }
   }, [])
 
-  // Handle Bank file upload
+  // Handle Bank file upload with V2 API
   const handleBankUpload = useCallback(async (files: File[]) => {
-    const uploadedFiles: UploadedFile[] = await Promise.all(
-      files.map(async (file, index) => {
-        const id = `bank_${Date.now()}_${index}`
-        const md5 = await computeMD5(file)
-        const preview = await readFilePreview(file)
-        
-        return {
-          id,
-          file,
-          size: file.size,
-          md5,
-          analysis: {
-            fileTypeOk: true,
-            delimiter: 'comma' as const,
-            encoding: 'utf-8' as const,
-            headersRecognized: true,
-            schemaDetected: 'AXIS_BANK'
-          },
-          preview
-        }
-      })
-    )
+    console.log(`🏦 [V2 Upload] Uploading ${files.length} Bank files to V2 API...`);
     
-    setBankFiles(prev => [...prev, ...uploadedFiles])
+    try {
+      // Upload files to V2 API for processing and database insertion
+      const formData = new FormData();
+      files.forEach((file) => {
+        formData.append('files', file);
+      });
+      formData.append('fileType', 'bank_statements');
+      
+      const response = await fetch('http://localhost:5107/api/upload/multiple', {
+        method: 'POST',
+        body: formData
+      });
+      
+      const data = await response.json();
+      console.log('V2 Bank Upload response:', data);
+      
+      if (data.success) {
+        console.log(`✅ [V2 Upload] Successfully uploaded ${data.results.length} bank files`);
+        
+        // Create uploaded file objects for UI display
+        const uploadedFiles: UploadedFile[] = await Promise.all(
+          files.map(async (file, _index) => {
+            const id = `bank_${Date.now()}_${_index}`
+            const md5 = await computeMD5(file)
+            const preview = await readFilePreview(file)
+            const parsedData = await parseCSVFile(file)  // Parse full CSV
+            
+            console.log(`[CSV Parse] Bank file parsed: ${parsedData.length} records`);
+            
+            return {
+              id,
+              file,
+              size: file.size,
+              md5,
+              analysis: {
+                fileTypeOk: true,
+                delimiter: 'comma' as const,
+                encoding: 'utf-8' as const,
+                headersRecognized: true,
+                schemaDetected: 'AXIS_BANK'
+              },
+              preview,
+              parsedData  // Store parsed data
+            }
+          })
+        );
+        
+        setBankFiles(prev => [...prev, ...uploadedFiles]);
+        
+        // Show processing summary
+        const summary = data.summary;
+        if (summary) {
+          console.log(`📊 [V2 Upload] Bank processing summary: ${summary.successful} successful, ${summary.failed} failed`);
+        }
+      } else {
+        console.error('❌ [V2 Upload] Failed to upload bank files:', data.error);
+      }
+    } catch (error) {
+      console.error('❌ [V2 Upload] Bank upload error:', error);
+      
+      // Fallback: create file objects for UI display even if API fails
+      const uploadedFiles: UploadedFile[] = await Promise.all(
+        files.map(async (file, index) => {
+          const id = `bank_${Date.now()}_${index}`
+          const md5 = await computeMD5(file)
+          const preview = await readFilePreview(file)
+          const parsedData = await parseCSVFile(file)  // Parse full CSV in fallback too
+          
+          console.log(`[CSV Parse Fallback] Bank file "${file.name}" parsed: ${parsedData.length} records`);
+          
+          return {
+            id,
+            file,
+            size: file.size,
+            md5,
+            analysis: {
+              fileTypeOk: true,
+              delimiter: 'comma' as const,
+              encoding: 'utf-8' as const,
+              headersRecognized: true,
+              schemaDetected: 'AXIS_BANK'
+            },
+            preview,
+            parsedData  // Store parsed data
+          }
+        })
+      );
+      
+      setBankFiles(prev => [...prev, ...uploadedFiles]);
+    }
   }, [])
 
-  // Upload sample files
+  // Upload sample files from V2 API
   const handleUploadSampleFiles = async () => {
     try {
-      // Generate sample demo data matching the API's expected format
-      const generatePGData = () => {
-        // Create simple CSV that the API expects
-        const csvContent = `transaction_id,utr,amount,date\nTXN001,UTR001,1000,2025-09-18\nTXN002,UTR002,2000,2025-09-18`;
-        return csvContent;
-      };
+      setIsLoading(true)
+      console.log('Starting sample file upload...')
       
-      const generateBankData = () => {
-        // Create simple CSV for bank data
-        const csvContent = `reference,utr,amount,date\nREF001,UTR001,1000,2025-09-18\nREF002,UTR002,2000,2025-09-18`;
-        return csvContent;
-      };
+      // Get sample files from V2 API
+      const sampleResponse = await fetch('http://localhost:5106/api/upload/sample-files')
+      const sampleData = await sampleResponse.json()
+      console.log('Sample files response:', sampleData)
       
-      const pgFileContent = generatePGData();
-      const bankFileContent = generateBankData()
-
-      const pgFileObj = new File([pgFileContent], 'pg_demo_2025-09-18.csv', { type: 'text/csv' })
-      const bankFileObj = new File([bankFileContent], 'bank_demo_2025-09-18.csv', { type: 'text/csv' })
-
-      // Upload the files which will trigger automatic reconciliation
-      await handlePGUpload([pgFileObj])
-      await handleBankUpload([bankFileObj])
+      if (sampleData.sampleFiles && sampleData.sampleFiles.length >= 2) {
+        // Download the first two sample files (PG and Bank)
+        const pgFile = sampleData.sampleFiles.find((f: any) => f.file_type === 'PG_SAMPLE')
+        const bankFile = sampleData.sampleFiles.find((f: any) => f.file_type === 'BANK_SAMPLE')
+        
+        if (pgFile && bankFile) {
+          console.log('Found PG and Bank files:', pgFile.file_name, bankFile.file_name)
+          
+          // Download file contents
+          const pgResponse = await fetch(`http://localhost:5106/api/upload/sample-files/${pgFile.file_id}/download`)
+          const bankResponse = await fetch(`http://localhost:5106/api/upload/sample-files/${bankFile.file_id}/download`)
+          
+          const pgContent = await pgResponse.text()
+          const bankContent = await bankResponse.text()
+          console.log('Downloaded file contents, PG:', pgContent.length, 'chars, Bank:', bankContent.length, 'chars')
+          
+          // Create file objects
+          const pgFileObj = new File([pgContent], pgFile.file_name, { type: 'text/csv' })
+          const bankFileObj = new File([bankContent], bankFile.file_name, { type: 'text/csv' })
+          
+          // Upload the files which will trigger automatic reconciliation
+          console.log('Uploading files to trigger reconciliation...')
+          await handlePGUpload([pgFileObj])
+          await handleBankUpload([bankFileObj])
+          console.log('Sample files uploaded successfully!')
+        } else {
+          console.error('Could not find both PG and Bank sample files:', { pgFile, bankFile })
+        }
+      }
     } catch (error) {
       console.error('Failed to upload sample files:', error)
+      // Fallback: create simple demo files if API fails
+      const pgContent = 'transaction_id,utr,amount,date\nTXN001,UTR001,1000,2025-09-18\nTXN002,UTR002,2000,2025-09-18'
+      const bankContent = 'reference,utr,amount,date\nREF001,UTR001,1000,2025-09-18\nREF002,UTR002,2000,2025-09-18'
+      
+      const pgFileObj = new File([pgContent], 'pg_demo_2025-09-18.csv', { type: 'text/csv' })
+      const bankFileObj = new File([bankContent], 'bank_demo_2025-09-18.csv', { type: 'text/csv' })
+      
+      await handlePGUpload([pgFileObj])
+      await handleBankUpload([bankFileObj])
+    } finally {
+      setIsLoading(false)
     }
   }
 
@@ -643,14 +721,96 @@ export function ManualUploadEnhanced() {
     setBankFiles([])
   }
 
-  // Handle export
-  const handleExport = (format: 'csv' | 'excel') => {
-    console.log(`Exporting as ${format}...`)
+  // Handle export to CSV
+  const handleExportResults = () => {
+    if (!jobId || reconResults.length === 0) {
+      console.warn('[Export] No results to export');
+      return;
+    }
+
+    console.log('[Export] Exporting', reconResults.length, 'results for job', jobId);
+
+    // CSV headers
+    const headers = [
+      'Transaction ID',
+      'UTR',
+      'RRN',
+      'PG Amount (₹)',
+      'Bank Amount (₹)',
+      'Delta (₹)',
+      'Status',
+      'Reason Code',
+      'Reason Label',
+      'PG Date',
+      'Bank Date'
+    ];
+
+    // Convert results to CSV rows
+    const csvRows = [headers.join(',')];
+    
+    reconResults.forEach(row => {
+      const values = [
+        row.txnId || '',
+        row.utr || '',
+        row.rrn || '',
+        row.pgAmount?.toString() || '',
+        row.bankAmount?.toString() || '',
+        row.delta?.toString() || '',
+        row.status || '',
+        row.reasonCode || '',
+        row.reasonLabel || '',
+        row.pgDate || '',
+        row.bankDate || ''
+      ];
+      
+      // Escape values that contain commas
+      const escapedValues = values.map(val => {
+        const strVal = String(val);
+        return strVal.includes(',') ? `"${strVal}"` : strVal;
+      });
+      
+      csvRows.push(escapedValues.join(','));
+    });
+
+    // Create CSV content
+    const csvContent = csvRows.join('\n');
+    
+    // Create blob and download
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `recon-results-${jobId}-${activeTab}-${new Date().toISOString().split('T')[0]}.csv`;
+    link.click();
+    
+    // Cleanup
+    window.URL.revokeObjectURL(url);
+    
+    console.log('[Export] CSV downloaded successfully');
   }
 
   // Handle row action
   const handleRowAction = (row: ReconRow, action: 'view' | 'edit') => {
     console.log(`${action} row:`, row)
+  }
+  
+  // Clear all and start fresh
+  const handleStartNew = () => {
+    console.log('[ManualUploadEnhanced] Starting new reconciliation');
+    setPgFiles([]);
+    setBankFiles([]);
+    setReconResults([]);
+    setJobId(null);
+    localStorage.removeItem('lastReconJobId');
+    localStorage.removeItem('lastPgFileMetadata');
+    localStorage.removeItem('lastBankFileMetadata');
+    setBreakdownCounts({
+      totalCount: 0,
+      matchedCount: 0,
+      unmatchedPgCount: 0,
+      unmatchedBankCount: 0,
+      exceptionsCount: 0,
+    });
   }
 
   return (
@@ -686,6 +846,15 @@ export function ManualUploadEnhanced() {
           </div>
           
           <div className="flex items-center gap-3">
+            {jobId && (
+              <button 
+                onClick={handleStartNew}
+                className="px-4 py-2 text-sm border border-blue-500 text-blue-600 rounded hover:bg-blue-50 flex items-center gap-2 whitespace-nowrap"
+              >
+                <FileUp className="h-4 w-4" />
+                Start New
+              </button>
+            )}
             <button 
               onClick={handleUploadSampleFiles}
               className="px-4 py-2 text-sm border border-gray-300 rounded hover:bg-gray-50 flex items-center gap-2 whitespace-nowrap"
@@ -741,7 +910,7 @@ export function ManualUploadEnhanced() {
       {(pgFiles.length > 0 && bankFiles.length > 0) && (
         <div className="px-6 py-4">
           <ManualUploadTiles
-          summary={jobSummary || jobCounts ? {
+          summary={jobSummary || jobCounts || breakdownCounts.totalCount > 0 ? {
             finalized: true,
             totals: {
               count: breakdownCounts.totalCount,
@@ -770,8 +939,7 @@ export function ManualUploadEnhanced() {
           onDrill={(key) => {
             if (key === 'all') setActiveTab('all');
             if (key === 'matched') setActiveTab('matched');
-            if (key === 'unmatchedPg') setActiveTab('unmatchedPg');
-            if (key === 'unmatchedBank') setActiveTab('unmatchedBank');
+            if (key === 'unmatched') setActiveTab('unmatchedPg');
             if (key === 'exceptions') setActiveTab('exceptions');
           }}
           />
@@ -781,7 +949,22 @@ export function ManualUploadEnhanced() {
       {/* Results Table - Only show after files are uploaded */}
       {(pgFiles.length > 0 && bankFiles.length > 0) && (
         <div className="px-6 pb-6">
-            <ReconResultsTable
+          {/* Export Button */}
+          {jobId && reconResults.length > 0 && (
+            <div className="mb-4 flex justify-end">
+              <Button
+                onClick={handleExportResults}
+                disabled={isLoading}
+                variant="outline"
+                className="flex items-center gap-2"
+              >
+                <Download className="h-4 w-4" />
+                Download Results CSV
+              </Button>
+            </div>
+          )}
+          
+          <ReconResultsTable
               rows={isTabChanging ? [] : reconResults}
               totalCount={breakdownCounts.totalCount || reconResults.length}
               matchedCount={breakdownCounts.matchedCount}
@@ -792,26 +975,44 @@ export function ManualUploadEnhanced() {
               isLoading={isLoading || isTabChanging}
               activeTab={activeTab}
               onTabChange={(tab) => setActiveTab(tab as any)}
-              onRefresh={() => {
+              onRefresh={async () => {
                 if (pgFiles.length > 0 && bankFiles.length > 0) {
-                  // Trigger a refresh of the preview job
-                  const newJobId = `preview-${Date.now().toString().slice(-8)}`
-                  setJobId(newJobId)
-                  setIsLoading(true)
-                  setTimeout(() => {
-                    setReconResults([...mockReconData]) // Create new array to trigger re-render
-                    setReconStats({
-                      ...mockStats,
-                      lastRun: {
-                        at: new Date().toISOString(),
-                        jobId: newJobId
-                      }
-                    })
+                  try {
+                    setIsLoading(true)
+                    // Use the latest reconciliation job from V2 API
+                    const response = await fetch(`http://localhost:5106/api/reconciliation/results`)
+                    const data = await response.json()
+                    
+                    if (data.reconciliationJobs && data.reconciliationJobs.length > 0) {
+                      const latestJob = data.reconciliationJobs[0]
+                      const newJobId = latestJob.job_id
+                      setJobId(newJobId)
+                      
+                      // Update breakdown counts
+                      setBreakdownCounts({
+                        totalCount: latestJob.total_pg_records || 0,
+                        matchedCount: latestJob.matched_records || 0,
+                        unmatchedPgCount: latestJob.unmatched_pg || 0,
+                        unmatchedBankCount: latestJob.unmatched_bank || 0,
+                        exceptionsCount: latestJob.exception_records || 0
+                      })
+                      
+                      // Invalidate queries to refetch fresh data
+                      queryClient.invalidateQueries({ queryKey: ['recon-job-summary'] })
+                      queryClient.invalidateQueries({ queryKey: ['recon-job-results'] })
+                      
+                      // Also invalidate Overview queries so tiles update
+                      queryClient.invalidateQueries({ queryKey: ['overview-v2'] })
+                      console.log('[ManualUploadEnhanced] Reconciliation completed, invalidated Overview cache')
+                    }
+                  } catch (error) {
+                    console.error('Error fetching V2 reconciliation data:', error)
+                  } finally {
                     setIsLoading(false)
-                  }, 800)
+                  }
                 }
               }}
-              onExport={handleExport}
+              onExport={handleExportResults}
               onRowAction={handleRowAction}
             />
         </div>
