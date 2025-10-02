@@ -1,9 +1,72 @@
 # SettlePaisa Ops Dashboard - Version History
 
-## Current Version: 2.7.0
+## Current Version: 2.7.1
 **Release Date**: October 2, 2025  
 **Status**: Production Ready  
 **Environment**: Development
+
+---
+
+## Version 2.7.1 - Exception Reasons Fix (UNMATCHED_IN_BANK)
+**Date**: October 2, 2025  
+**Implementation Time**: 30 minutes
+
+### 🐛 Bug Fix
+
+#### Problem:
+- Exceptions tab showed all 136 exceptions as "AMOUNT_MISMATCH"
+- But 131 exceptions had `bankAmount = 0` (no bank record found)
+- These should be "UNMATCHED_IN_BANK", not "AMOUNT_MISMATCH"
+- Only 5 were genuine amount mismatches (but also turned out to be unmatched)
+
+#### Root Cause:
+```javascript
+// In runReconciliation.js - Line 754
+// Unmatched PG transactions were saved without exception_reason
+INSERT INTO sp_v2_transactions (..., status)
+VALUES (..., 'EXCEPTION')
+// Missing: exception_reason = 'UNMATCHED_IN_BANK'
+```
+
+#### Solution:
+1. **Updated reconciliation logic** (runReconciliation.js:723-760)
+   - Added `exception_reason` column to unmatched PG INSERT
+   - Set `exception_reason = 'UNMATCHED_IN_BANK'` for all unmatched PG transactions
+   
+2. **Fixed existing data**
+   - Updated 131 rows in `sp_v2_transactions`
+   - Updated 136 rows in `sp_v2_exception_workflow`
+   - Changed misclassified AMOUNT_MISMATCH → UNMATCHED_IN_BANK
+
+#### Result:
+```
+Before:
+- AMOUNT_MISMATCH: 136 (incorrect)
+
+After:
+- UNMATCHED_IN_BANK: 136 (correct - all are PG txns with no bank match)
+```
+
+### 📝 Files Changed
+- `services/recon-api/jobs/runReconciliation.js` - Added exception_reason to unmatched PG logic
+
+### 🗄️ Database Updates
+```sql
+-- Fix existing data
+UPDATE sp_v2_transactions 
+SET exception_reason = 'UNMATCHED_IN_BANK'
+WHERE status = 'EXCEPTION' AND exception_reason IS NULL;
+
+UPDATE sp_v2_exception_workflow
+SET reason = 'UNMATCHED_IN_BANK'
+WHERE (bank_amount_paise = 0 OR bank_amount_paise IS NULL);
+```
+
+### ✅ Verification
+```bash
+curl http://localhost:5103/exceptions-v2?limit=5
+# All 136 exceptions now show reason: "UNMATCHED_IN_BANK"
+```
 
 ---
 

@@ -733,12 +733,16 @@ async function persistResults(results, jobId = 'UNKNOWN', job = {}, params = {})
             source_name,
             payment_method,
             utr,
-            status
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            status,
+            exception_reason
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
           ON CONFLICT (transaction_id) DO UPDATE SET
             status = CASE WHEN sp_v2_transactions.status = 'RECONCILED' 
                           THEN sp_v2_transactions.status 
                           ELSE EXCLUDED.status END,
+            exception_reason = CASE WHEN sp_v2_transactions.status = 'RECONCILED'
+                                    THEN sp_v2_transactions.exception_reason
+                                    ELSE EXCLUDED.exception_reason END,
             updated_at = NOW()
         `, [
           unmatchedPg.transaction_id || unmatchedPg.pgw_ref,
@@ -751,7 +755,8 @@ async function persistResults(results, jobId = 'UNKNOWN', job = {}, params = {})
           job.sourceType === 'MANUAL_UPLOAD' ? 'MANUAL_UPLOAD' : 'PG_API',
           unmatchedPg.payment_method || unmatchedPg.payment_mode || 'UNKNOWN',
           unmatchedPg.utr,
-          'EXCEPTION'
+          'EXCEPTION',
+          'UNMATCHED_IN_BANK'
         ]);
       }
       
