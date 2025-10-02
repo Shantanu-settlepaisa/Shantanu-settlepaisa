@@ -1657,8 +1657,27 @@ export class OpsApiExtended {
       }
     }
     
-    const response = await apiClient.get('/ops/exceptions', { params })
-    return response.data
+    // Use V2 API with new exception workflow
+    const queryParams = new URLSearchParams()
+    if (params.q) queryParams.append('q', params.q)
+    if (params.status) params.status.forEach(s => queryParams.append('status', s))
+    if (params.severity) params.severity.forEach(s => queryParams.append('severity', s))
+    if (params.reason) params.reason.forEach(r => queryParams.append('reason', r))
+    if (params.merchantId) queryParams.append('merchantId', params.merchantId)
+    if (params.acquirer) queryParams.append('acquirer', params.acquirer)
+    if (params.assignedTo) queryParams.append('assignedTo', params.assignedTo)
+    if (params.tags) params.tags.forEach(t => queryParams.append('tags', t))
+    if (params.dateFrom) queryParams.append('dateFrom', params.dateFrom)
+    if (params.dateTo) queryParams.append('dateTo', params.dateTo)
+    if (params.amountDeltaGt) queryParams.append('amountDeltaGt', params.amountDeltaGt.toString())
+    if (params.amountDeltaLt) queryParams.append('amountDeltaLt', params.amountDeltaLt.toString())
+    if (params.slaBreached !== undefined) queryParams.append('slaBreached', params.slaBreached.toString())
+    if (params.cursor) queryParams.append('offset', params.cursor)
+    if (params.limit) queryParams.append('limit', params.limit.toString())
+    
+    const response = await fetch(`http://localhost:5103/exceptions-v2?${queryParams.toString()}`)
+    const data = await response.json()
+    return data
   }
 
   async getException(id: string): Promise<any> {
@@ -1752,8 +1771,10 @@ export class OpsApiExtended {
       }
     }
     
-    const response = await apiClient.get(`/ops/exceptions/${id}`)
-    return response.data
+    // Use V2 API
+    const response = await fetch(`http://localhost:5103/exceptions-v2/${id}`)
+    const data = await response.json()
+    return data.success ? data.data : data
   }
 
   async bulkUpdateExceptions(request: {
@@ -1771,10 +1792,17 @@ export class OpsApiExtended {
       }
     }
     
-    const response = await apiClient.post('/ops/exceptions/bulk', request, {
-      headers: { 'X-Idempotency-Key': `bulk_${Date.now()}` }
+    // Use V2 API
+    const response = await fetch('http://localhost:5103/exceptions-v2/bulk-update', {
+      method: 'POST',
+      headers: { 
+        'Content-Type': 'application/json',
+        'X-Idempotency-Key': `bulk_${Date.now()}`
+      },
+      body: JSON.stringify(request)
     })
-    return response.data
+    const data = await response.json()
+    return data
   }
 
   async getSavedViews(): Promise<any[]> {
@@ -1838,8 +1866,10 @@ export class OpsApiExtended {
       ]
     }
     
-    const response = await apiClient.get('/ops/exceptions/views')
-    return response.data
+    // Use V2 API
+    const response = await fetch('http://localhost:5103/exception-saved-views?userId=current_user')
+    const data = await response.json()
+    return data.success ? data.data : []
   }
 
   async createSavedView(view: {
@@ -1948,8 +1978,10 @@ export class OpsApiExtended {
       ]
     }
     
-    const response = await apiClient.get('/ops/exceptions/rules')
-    return response.data
+    // Use V2 API
+    const response = await fetch('http://localhost:5103/exception-rules')
+    const data = await response.json()
+    return data.success ? data.data : []
   }
 
   async reprocessException(exceptionId: string): Promise<any> {
@@ -2258,52 +2290,51 @@ export class OpsApiExtended {
   async getSettlementSummary(params?: {
     fromDate?: string
     toDate?: string
+    cycleDate?: string
     acquirer?: string
     merchant?: string
   }): Promise<any> {
-    if (USE_MOCK_API) {
-      const { reportGeneratorV2 } = await import('@/services/report-generator-v2')
-      const data = await reportGeneratorV2.generateSettlementSummary(params || {})
-      return { data, rowCount: data.length }
-    }
-    return apiClient.get('/ops/reports/settlement-summary', { params })
+    const response = await fetch('http://localhost:5103/reports/settlement-summary?' + new URLSearchParams(
+      Object.entries(params || {}).filter(([_, v]) => v != null).map(([k, v]) => [k, String(v)])
+    ))
+    return response.json()
   }
 
   async getBankMIS(params?: {
     cycleDate?: string
+    fromDate?: string
+    toDate?: string
     acquirer?: string
   }): Promise<any> {
-    if (USE_MOCK_API) {
-      const { reportGeneratorV2 } = await import('@/services/report-generator-v2')
-      const data = await reportGeneratorV2.generateBankMIS(params || {})
-      return { data, rowCount: data.length }
-    }
-    return apiClient.get('/ops/reports/bank-mis', { params })
+    const response = await fetch('http://localhost:5103/reports/bank-mis?' + new URLSearchParams(
+      Object.entries(params || {}).filter(([_, v]) => v != null).map(([k, v]) => [k, String(v)])
+    ))
+    return response.json()
   }
 
   async getReconOutcome(params?: {
     cycleDate?: string
+    fromDate?: string
+    toDate?: string
+    acquirer?: string
     status?: 'MATCHED' | 'UNMATCHED' | 'EXCEPTION'
   }): Promise<any> {
-    if (USE_MOCK_API) {
-      const { reportGeneratorV2 } = await import('@/services/report-generator-v2')
-      const data = await reportGeneratorV2.generateReconOutcome(params || {})
-      return { data, rowCount: data.length }
-    }
-    return apiClient.get('/ops/reports/recon-outcome', { params })
+    const response = await fetch('http://localhost:5103/reports/recon-outcome?' + new URLSearchParams(
+      Object.entries(params || {}).filter(([_, v]) => v != null).map(([k, v]) => [k, String(v)])
+    ))
+    return response.json()
   }
 
   async getTaxReport(params?: {
     fromDate?: string
     toDate?: string
+    cycleDate?: string
     merchant?: string
   }): Promise<any> {
-    if (USE_MOCK_API) {
-      const { reportGeneratorV2 } = await import('@/services/report-generator-v2')
-      const data = await reportGeneratorV2.generateTaxReport(params || {})
-      return { data, rowCount: data.length }
-    }
-    return apiClient.get('/ops/reports/tax', { params })
+    const response = await fetch('http://localhost:5103/reports/tax-report?' + new URLSearchParams(
+      Object.entries(params || {}).filter(([_, v]) => v != null).map(([k, v]) => [k, String(v)])
+    ))
+    return response.json()
   }
 
   async exportReport(params: {

@@ -5,6 +5,10 @@ const axios = require('axios')
 const { runReconciliation, getJob, getJobLogs } = require('./jobs/runReconciliation')
 const jobRoutes = require('./routes/jobRoutes')
 const exceptionsRoutes = require('./routes/exceptions')
+const exceptionsV2Routes = require('./routes/exceptions-v2')
+const exceptionSavedViewsRoutes = require('./routes/exception-saved-views')
+const exceptionRulesRoutes = require('./routes/exception-rules')
+const reportsRoutes = require('./routes/reports')
 
 const app = express()
 app.use(cors())
@@ -12,7 +16,11 @@ app.use(express.json())
 
 // Mount routes
 app.use('/recon', jobRoutes)
-app.use('/exceptions', exceptionsRoutes)
+app.use('/exceptions', exceptionsRoutes)  // Legacy route
+app.use('/exceptions-v2', exceptionsV2Routes)  // New workflow-based route
+app.use('/exception-saved-views', exceptionSavedViewsRoutes)
+app.use('/exception-rules', exceptionRulesRoutes)
+app.use('/reports', reportsRoutes)
 
 // Store reconciliation results in memory
 const reconResults = new Map()
