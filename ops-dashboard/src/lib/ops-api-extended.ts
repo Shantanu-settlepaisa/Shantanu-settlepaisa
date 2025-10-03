@@ -2351,6 +2351,19 @@ export class OpsApiExtended {
     return response.json()
   }
 
+  async getSettlementTransactions(params?: {
+    fromDate?: string
+    toDate?: string
+    cycleDate?: string
+    merchantId?: string
+    batchId?: string
+  }): Promise<any> {
+    const response = await fetch('http://localhost:5103/reports/settlement-transactions?' + new URLSearchParams(
+      Object.entries(params || {}).filter(([_, v]) => v != null).map(([k, v]) => [k, String(v)])
+    ))
+    return response.json()
+  }
+
   async exportReport(params: {
     type: string
     filters: any

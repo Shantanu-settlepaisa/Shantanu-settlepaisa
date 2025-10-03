@@ -32,9 +32,10 @@ import { reportScheduler } from '@/services/report-scheduler'
 import type { ReportType, ReportFormat, ReportFilters, ReportSchedule } from '@/types/reports'
 
 export default function Reports() {
-  const [activeTab, setActiveTab] = useState<ReportType>('SETTLEMENT_SUMMARY')
+  const [activeTab, setActiveTab] = useState<ReportType | 'SETTLEMENT_TRANSACTIONS'>('SETTLEMENT_SUMMARY')
   const [filters, setFilters] = useState<ReportFilters>({
-    cycleDate: new Date().toISOString().split('T')[0]
+    // Don't default to today - show all records initially
+    // cycleDate: new Date().toISOString().split('T')[0]
   })
   const [exportFormat, setExportFormat] = useState<ReportFormat>('CSV')
   const [showExportDialog, setShowExportDialog] = useState(false)
@@ -55,6 +56,8 @@ export default function Reports() {
       switch (activeTab) {
         case 'SETTLEMENT_SUMMARY':
           return opsApi.getSettlementSummary(filters)
+        case 'SETTLEMENT_TRANSACTIONS':
+          return opsApi.getSettlementTransactions(filters)
         case 'BANK_MIS':
           return opsApi.getBankMIS(filters)
         case 'RECON_OUTCOME':
@@ -127,7 +130,9 @@ export default function Reports() {
   const getColumns = () => {
     switch (activeTab) {
       case 'SETTLEMENT_SUMMARY':
-        return ['Cycle Date', 'Acquirer', 'Merchant', 'Gross Amount', 'Fees', 'GST', 'TDS', 'Net Amount', 'Txn Count']
+        return ['Cycle Date', 'Acquirer', 'Merchant', 'Gross Amount', 'MDR+Fees', 'GST', 'PG Charges', 'Rolling Reserve', 'Net Settlement', 'Txn Count']
+      case 'SETTLEMENT_TRANSACTIONS':
+        return ['Txn ID', 'Cycle Date', 'Merchant', 'Payment Mode', 'Gross Amount', 'MDR Fees', 'GST', 'PG Charges', 'Reserve', 'Net Settlement', 'Fee Bearer']
       case 'BANK_MIS':
         return ['Txn ID', 'UTR', 'PG Amount', 'Bank Amount', 'Delta', 'PG Date', 'Bank Date', 'Status', 'Acquirer', 'Merchant']
       case 'RECON_OUTCOME':
@@ -143,11 +148,15 @@ export default function Reports() {
   const formatCellValue = (value: any, column: string) => {
     if (value === null || value === undefined) return '-'
     
-    // Format amounts
+    // Format amounts (rupees, fees, charges, reserve, settlement)
     if (column.toLowerCase().includes('amount') || column.toLowerCase().includes('fees') || 
         column.toLowerCase().includes('gst') || column.toLowerCase().includes('tds') ||
-        column.toLowerCase().includes('commission') || column.toLowerCase().includes('delta')) {
-      return `₹${Number(value).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+        column.toLowerCase().includes('commission') || column.toLowerCase().includes('delta') ||
+        column.toLowerCase().includes('charges') || column.toLowerCase().includes('reserve') ||
+        column.toLowerCase().includes('settlement')) {
+      const numValue = parseFloat(value)
+      if (isNaN(numValue)) return '-'
+      return `₹${numValue.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
     }
     
     // Format percentages
@@ -197,7 +206,7 @@ export default function Reports() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
             <div>
               <Label htmlFor="cycleDate">Cycle Date</Label>
               <Input
@@ -240,6 +249,16 @@ export default function Reports() {
                 </SelectContent>
               </Select>
             </div>
+            <div>
+              <Label htmlFor="merchantId">Merchant ID</Label>
+              <Input
+                id="merchantId"
+                type="text"
+                placeholder="e.g. MERCH001"
+                value={filters.merchantId || ''}
+                onChange={(e) => updateFilter('merchantId', e.target.value)}
+              />
+            </div>
           </div>
           <div className="mt-4 flex justify-end">
             <Button variant="secondary" onClick={() => refetch()}>
@@ -251,8 +270,9 @@ export default function Reports() {
 
       {/* Report Tabs */}
       <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as ReportType)}>
-        <TabsList className="grid w-full grid-cols-4">
+        <TabsList className="grid w-full grid-cols-5">
           <TabsTrigger value="SETTLEMENT_SUMMARY">Settlement Summary</TabsTrigger>
+          <TabsTrigger value="SETTLEMENT_TRANSACTIONS">Settlement Transactions</TabsTrigger>
           <TabsTrigger value="BANK_MIS">Bank MIS</TabsTrigger>
           <TabsTrigger value="RECON_OUTCOME">Recon Outcome</TabsTrigger>
           <TabsTrigger value="TAX">Tax Report</TabsTrigger>
@@ -265,6 +285,8 @@ export default function Reports() {
               <CardTitle>{activeTab.replace(/_/g, ' ')}</CardTitle>
               <CardDescription>
                 {reportData?.rowCount || 0} records found
+                {!filters.cycleDate && !filters.fromDate && !filters.toDate && 
+                  ' (showing all available data - use filters to narrow results)'}
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -299,11 +321,27 @@ export default function Reports() {
                               <TableCell>{row.acquirer}</TableCell>
                               <TableCell>{row.merchantName}</TableCell>
                               <TableCell>{formatCellValue(row.grossAmountRupees, 'Gross Amount')}</TableCell>
-                              <TableCell>{formatCellValue(row.feesRupees, 'Fees')}</TableCell>
+                              <TableCell>{formatCellValue(row.totalFeesRupees, 'Fees')}</TableCell>
                               <TableCell>{formatCellValue(row.gstRupees, 'GST')}</TableCell>
-                              <TableCell>{formatCellValue(row.tdsRupees, 'TDS')}</TableCell>
-                              <TableCell>{formatCellValue(row.netAmountRupees, 'Net Amount')}</TableCell>
+                              <TableCell>{formatCellValue(row.totalPgChargesRupees, 'PG Charges')}</TableCell>
+                              <TableCell>{formatCellValue(row.rollingReserveRupees, 'Reserve')}</TableCell>
+                              <TableCell className="font-semibold">{formatCellValue(row.netAmountRupees, 'Net Amount')}</TableCell>
                               <TableCell>{row.transactionCount}</TableCell>
+                            </>
+                          )}
+                          {activeTab === 'SETTLEMENT_TRANSACTIONS' && (
+                            <>
+                              <TableCell className="font-mono text-xs">{row.txnId}</TableCell>
+                              <TableCell>{row.cycleDate}</TableCell>
+                              <TableCell>{row.merchantName}</TableCell>
+                              <TableCell>{row.paymentMode || '-'}</TableCell>
+                              <TableCell>{formatCellValue(row.grossAmountRupees, 'Gross Amount')}</TableCell>
+                              <TableCell>{formatCellValue(row.mdrFeesRupees, 'MDR Fees')}</TableCell>
+                              <TableCell>{formatCellValue(row.gstRupees, 'GST')}</TableCell>
+                              <TableCell>{formatCellValue(row.totalPgChargesRupees, 'PG Charges')}</TableCell>
+                              <TableCell>{formatCellValue(row.rollingReserveRupees, 'Reserve')}</TableCell>
+                              <TableCell className="font-semibold">{formatCellValue(row.netSettlementRupees, 'Net Settlement')}</TableCell>
+                              <TableCell>{row.feeBearer || '-'}</TableCell>
                             </>
                           )}
                           {activeTab === 'BANK_MIS' && (
