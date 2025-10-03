@@ -10,6 +10,62 @@ import { useQueryClient } from '@tanstack/react-query'
 import axios from 'axios'
 
 
+// Helper to detect PG schema from headers
+function detectPGSchema(headers: string[]): string {
+  const lowerHeaders = headers.map(h => h.toLowerCase().trim());
+  
+  // V1 PG format indicators
+  const v1Indicators = ['transaction id', 'client code', 'payee amount', 'paid amount', 'trans complete date'];
+  const v1Score = v1Indicators.filter(indicator => 
+    lowerHeaders.some(h => h.includes(indicator))
+  ).length;
+  
+  // V2 PG format indicators
+  const v2Indicators = ['transaction_id', 'merchant_id', 'amount_paise', 'payment_method'];
+  const v2Score = v2Indicators.filter(indicator =>
+    lowerHeaders.some(h => h.includes(indicator))
+  ).length;
+  
+  if (v1Score >= 3) {
+    return 'STANDARD_PG_V1';
+  } else if (v2Score >= 2) {
+    return 'STANDARD_PG_V2';
+  }
+  
+  return 'STANDARD_PG';
+}
+
+// Helper to detect bank from filename
+function detectBankFromFilename(filename: string): string {
+  const normalized = filename.toUpperCase();
+  
+  const patterns: Record<string, string[]> = {
+    'HDFC_BANK': ['HDFC BANK', 'HDFC_BANK', 'HDFCBANK', 'HDFC'],
+    'AXIS_BANK': ['AXIS BANK', 'AXIS_BANK', 'AXISBANK', 'AXIS'],
+    'SBI_BANK': ['SBI BANK', 'SBI_BANK', 'SBIBANK', 'SBI'],
+    'ICICI_BANK': ['ICICI BANK', 'ICICI_BANK', 'ICICIBANK', 'ICICI'],
+    'YES_BANK': ['YES BANK', 'YES_BANK', 'YESBANK', 'YES'],
+    'BOB': ['BOB', 'BANK OF BARODA'],
+    'CANARA': ['CANARA'],
+    'IDBI': ['IDBI'],
+    'INDIAN_BANK': ['INDIAN BANK', 'INDIAN_BANK'],
+    'FEDERAL': ['FEDERAL'],
+    'BOI': ['BOI', 'BANK OF INDIA']
+  };
+  
+  for (const [bankSchema, bankPatterns] of Object.entries(patterns)) {
+    for (const pattern of bankPatterns) {
+      if (normalized.includes(pattern)) {
+        console.log(`[Bank Detection] Matched "${filename}" → "${bankSchema}"`);
+        return bankSchema;
+      }
+    }
+  }
+  
+  console.warn(`[Bank Detection] Could not detect bank from: ${filename}`);
+  return 'UNKNOWN_BANK';
+}
+
 // Helper to compute MD5 (simplified)
 async function computeMD5(file: File): Promise<string> {
   const buffer = await file.arrayBuffer()
@@ -376,7 +432,8 @@ export function ManualUploadEnhanced() {
               date: reconDate,
               dryRun: false,
               pgTransactions: pgData,
-              bankRecords: bankData
+              bankRecords: bankData,
+              bankFilename: bankFiles[0].file.name  // Pass filename for bank detection
             })
           });
           
@@ -493,7 +550,7 @@ export function ManualUploadEnhanced() {
                 delimiter: 'comma' as const,
                 encoding: 'utf-8' as const,
                 headersRecognized: true,
-                schemaDetected: 'STANDARD_PG'
+                schemaDetected: detectPGSchema(preview.columns)
               },
               preview,
               parsedData  // Store parsed data
@@ -534,7 +591,7 @@ export function ManualUploadEnhanced() {
               delimiter: 'comma' as const,
               encoding: 'utf-8' as const,
               headersRecognized: true,
-              schemaDetected: 'STANDARD_PG'
+              schemaDetected: detectPGSchema(preview.columns)
             },
             preview,
             parsedData  // Store parsed data
@@ -589,7 +646,7 @@ export function ManualUploadEnhanced() {
                 delimiter: 'comma' as const,
                 encoding: 'utf-8' as const,
                 headersRecognized: true,
-                schemaDetected: 'AXIS_BANK'
+                schemaDetected: detectBankFromFilename(file.name)
               },
               preview,
               parsedData  // Store parsed data
@@ -630,7 +687,7 @@ export function ManualUploadEnhanced() {
               delimiter: 'comma' as const,
               encoding: 'utf-8' as const,
               headersRecognized: true,
-              schemaDetected: 'AXIS_BANK'
+              schemaDetected: detectBankFromFilename(file.name)
             },
             preview,
             parsedData  // Store parsed data
@@ -852,13 +909,6 @@ export function ManualUploadEnhanced() {
                 Start New
               </button>
             )}
-            <button 
-              onClick={handleUploadSampleFiles}
-              className="px-4 py-2 text-sm border border-gray-300 rounded hover:bg-gray-50 flex items-center gap-2 whitespace-nowrap"
-            >
-              <FileUp className="h-4 w-4" />
-              Upload Sample Files
-            </button>
             <button 
               onClick={() => setConfigDrawerOpen(true)}
               className="px-4 py-2 text-sm border border-gray-300 rounded hover:bg-gray-50 flex items-center gap-2 whitespace-nowrap"

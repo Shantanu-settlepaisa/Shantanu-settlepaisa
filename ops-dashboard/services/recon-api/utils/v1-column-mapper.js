@@ -4,6 +4,9 @@ const V1_TO_V2_COLUMN_MAPPING = {
     'client_code': 'merchant_id',
     'payee_amount': 'amount_paise',
     'paid_amount': 'amount_paise',
+    'bank_exclude_amount': 'bank_fee_paise',
+    'settlement_amount': 'settlement_amount_paise',
+    'settled_amount_by_bank': 'settlement_amount_paise',
     'payment_mode': 'payment_method',
     'trans_complete_date': 'transaction_timestamp',
     'trans_date': 'transaction_date',
@@ -18,8 +21,8 @@ const V1_TO_V2_COLUMN_MAPPING = {
   bank_statements: {
     'utr': 'utr',
     'rrn': 'rrn',
-    'paid_amount': 'amount',
-    'payee_amount': 'amount',
+    'paid_amount': 'amount_paise',
+    'payee_amount': 'amount_paise',
     'trans_complete_date': 'transaction_date',
     'trans_date': 'transaction_date',
     'bank_name': 'bank_name',
@@ -84,13 +87,36 @@ function mapV1ToV2(v1Row, type = 'pg_transactions') {
         value = Math.round(value * 100)
       }
       
+      // Handle fee columns (V2.10.0)
+      if ((v2Col === 'bank_fee_paise' || v2Col === 'settlement_amount_paise') && typeof value === 'string') {
+        const numValue = parseFloat(value.replace(/,/g, ''))
+        if (!isNaN(numValue)) {
+          value = Math.round(numValue * 100)
+        }
+      } else if ((v2Col === 'bank_fee_paise' || v2Col === 'settlement_amount_paise') && typeof value === 'number') {
+        value = Math.round(value * 100)
+      }
+      
       if (v2Col === 'merchant_id') {
         value = String(value).trim().toUpperCase()
       }
       
       if (v2Col === 'transaction_timestamp' || v2Col === 'transaction_date') {
         if (typeof value === 'string' && value.trim()) {
-          value = new Date(value).toISOString()
+          try {
+            const parsedDate = new Date(value);
+            if (!isNaN(parsedDate.getTime())) {
+              value = parsedDate.toISOString();
+            } else {
+              console.warn(`[V1 Mapper] Invalid date value: "${value}", skipping conversion`);
+              value = null; // Set to null instead of invalid ISO string
+            }
+          } catch (error) {
+            console.error(`[V1 Mapper] Error parsing date: "${value}"`, error.message);
+            value = null;
+          }
+        } else {
+          value = null; // Empty or missing date
         }
       }
       

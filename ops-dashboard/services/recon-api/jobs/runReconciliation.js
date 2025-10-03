@@ -210,9 +210,11 @@ async function runReconciliation(params) {
     logStructured(jobId, 'info', 'Fetching bank records');
     
     let bankRecords;
+    let bankFilename = null;
     if (params.bankRecords && params.bankRecords.length > 0) {
       bankRecords = params.bankRecords;
-      logStructured(jobId, 'info', `Using uploaded bank records: ${bankRecords.length}`);
+      bankFilename = params.bankFilename; // Pass filename for bank detection
+      logStructured(jobId, 'info', `Using uploaded bank records: ${bankRecords.length}`, { filename: bankFilename });
     } else {
       bankRecords = await fetchBankRecords(params);
       logStructured(jobId, 'info', `Fetched ${bankRecords.length} bank records from API`);
@@ -228,7 +230,7 @@ async function runReconciliation(params) {
     logStructured(jobId, 'info', 'Normalizing data');
     
     const normalizedPg = normalizeTransactions(pgTransactions);
-    const normalizedBank = normalizeBankRecords(bankRecords);
+    const normalizedBank = await normalizeBankRecords(bankRecords, bankFilename, jobId);
     job.counters.normalized = normalizedPg.length + normalizedBank.length;
     
     // Stage 5: Match records
@@ -489,11 +491,60 @@ async function fetchBankRecords(params) {
 }
 
 function normalizeTransactions(transactions) {
+  const { convertV1CSVToV2 } = require('../utils/v1-column-mapper');
+  
+  // Check if this is V1 format by looking for V1 column names
+  if (transactions.length > 0) {
+    const firstRow = transactions[0];
+    const hasV1Columns = 
+      firstRow['Transaction ID'] || 
+      firstRow['Client Code'] || 
+      firstRow['Payee Amount'] ||
+      firstRow['Paid Amount'] ||
+      firstRow['Trans Complete Date'];
+    
+    if (hasV1Columns) {
+      console.log('[PG Normalization] Detected V1 format, converting to V2');
+      
+      // Normalize V1 CSV headers to lowercase_with_underscores
+      const normalizedV1 = transactions.map(row => {
+        const normalized = {};
+        for (const [key, value] of Object.entries(row)) {
+          // Convert "Transaction ID" -> "transaction_id"
+          const normalizedKey = key.toLowerCase().trim().replace(/\s+/g, '_');
+          normalized[normalizedKey] = value;
+        }
+        return normalized;
+      });
+      
+      // Apply V1 -> V2 conversion
+      const v2Data = convertV1CSVToV2(normalizedV1, 'pg_transactions');
+      
+      // Convert to reconciliation engine format
+      return v2Data.map(t => ({
+        ...t,
+        normalized: true,
+        transaction_id: t.transaction_id || '',
+        merchant_id: t.merchant_id || '',
+        amount: t.amount_paise || 0,
+        bank_fee: t.bank_fee_paise || 0,
+        settlement_amount: t.settlement_amount_paise || 0,
+        currency: t.currency || 'INR',
+        transaction_date: t.transaction_date || t.transaction_timestamp || '',
+        transaction_time: t.transaction_time || '',
+        payment_method: t.payment_method || '',
+        utr: (t.utr || '').toString().trim().toUpperCase(),
+        rrn: t.rrn || '',
+        status: t.status || 'SUCCESS'
+      }));
+    }
+  }
+  
+  // Fallback: V2 format or unknown format
   return transactions.map(t => {
     const amountInRupees = Number(t.Amount || t.AMOUNT || t.amount || 0);
-    const amountInPaise = Math.round(amountInRupees * 100); // Convert rupees to paise
+    const amountInPaise = Math.round(amountInRupees * 100);
     
-    // Parse fee columns (V2.10.0 enhancement)
     const bankFeeInRupees = Number(t['Bank Fee'] || t.bank_fee || t.BANK_FEE || 0);
     const bankFeeInPaise = Math.round(bankFeeInRupees * 100);
     
@@ -505,9 +556,9 @@ function normalizeTransactions(transactions) {
       normalized: true,
       transaction_id: t['Transaction ID'] || t.transaction_id || t.TXN_ID || '',
       merchant_id: t['Merchant ID'] || t.merchant_id || t.CLIENT_CODE || '',
-      amount: amountInPaise, // Store in paise
-      bank_fee: bankFeeInPaise, // Bank fee in paise (V2.10.0)
-      settlement_amount: settlementAmountInPaise, // Settlement amount in paise (V2.10.0)
+      amount: amountInPaise,
+      bank_fee: bankFeeInPaise,
+      settlement_amount: settlementAmountInPaise,
       currency: t.Currency || t.currency || 'INR',
       transaction_date: t['Transaction Date'] || t.transaction_date || t.TXN_DATE || '',
       transaction_time: t['Transaction Time'] || t.transaction_time || '',
@@ -519,21 +570,103 @@ function normalizeTransactions(transactions) {
   });
 }
 
-function normalizeBankRecords(records) {
+async function normalizeBankRecords(records, bankFilename = null, jobId = null) {
+  // Two-stage normalization if bank filename is available
+  if (bankFilename) {
+    try {
+      const { detectBankFromFilename, normalizeBankData } = require('../utils/bank-normalizer');
+      const { Pool } = require('pg');
+      
+      // Detect bank from filename
+      const bankConfigName = detectBankFromFilename(bankFilename);
+      
+      if (bankConfigName) {
+        if (jobId) {
+          logStructured(jobId, 'info', `Detected bank: ${bankConfigName} from filename: ${bankFilename}`);
+        }
+        
+        // Fetch bank mapping from database
+        const pool = new Pool({
+          host: process.env.DB_HOST || 'localhost',
+          port: process.env.DB_PORT || 5433,
+          database: process.env.DB_NAME || 'settlepaisa_v2',
+          user: process.env.DB_USER || 'postgres',
+          password: process.env.DB_PASSWORD || 'settlepaisa123'
+        });
+        
+        const result = await pool.query(`
+          SELECT 
+            config_name,
+            bank_name,
+            file_type,
+            delimiter,
+            v1_column_mappings,
+            special_fields
+          FROM sp_v2_bank_column_mappings
+          WHERE config_name = $1 AND is_active = TRUE
+        `, [bankConfigName]);
+        
+        await pool.end();
+        
+        if (result.rows.length > 0) {
+          const bankMapping = result.rows[0];
+          if (jobId) {
+            logStructured(jobId, 'info', `Applying two-stage normalization (Bank → V1 → V2) for ${bankMapping.bank_name}`);
+          }
+          
+          // Apply two-stage normalization
+          const v2Data = normalizeBankData(records, bankMapping);
+          
+          if (jobId) {
+            logStructured(jobId, 'info', `Two-stage normalization complete: ${v2Data.length} records`);
+          }
+          
+          // Convert V2 format to reconciliation engine format
+          return v2Data.map(r => ({
+            ...r,
+            normalized: true,
+            bank_reference: r.utr || r.rrn || '',
+            bank_name: r.bank_name || bankMapping.bank_name,
+            amount: r.amount_paise || 0,
+            transaction_date: r.transaction_date || '',
+            value_date: r.value_date || r.transaction_date || '',
+            utr: (r.utr || '').toString().trim().toUpperCase(),
+            rrn: r.rrn || '',
+            remarks: r.remarks || '',
+            debit_credit: 'CREDIT'
+          }));
+        } else {
+          if (jobId) {
+            logStructured(jobId, 'warn', `Bank mapping not found for ${bankConfigName}, using fallback normalization`);
+          }
+        }
+      } else {
+        if (jobId) {
+          logStructured(jobId, 'warn', `Could not detect bank from filename: ${bankFilename}, using fallback normalization`);
+        }
+      }
+    } catch (error) {
+      if (jobId) {
+        logStructured(jobId, 'error', `Two-stage normalization failed: ${error.message}, using fallback`);
+      }
+      console.error('[Bank Normalization] Error:', error);
+    }
+  }
+  
+  // Fallback: Basic normalization (existing logic)
   return records.map(r => {
     const amountInRupees = Number(r.Amount || r.AMOUNT || r.amount || 0);
-    const amountInPaise = Math.round(amountInRupees * 100); // Convert rupees to paise
+    const amountInPaise = Math.round(amountInRupees * 100);
     
     return {
-      ...r,  // Keep all original fields
+      ...r,
       normalized: true,
-      // Normalize common fields
       bank_reference: r['Bank Reference'] || r.bank_reference || r.TRANSACTION_ID || '',
       bank_name: r['Bank Name'] || r.bank_name || r.BANK || '',
-      amount: amountInPaise, // Store in paise
+      amount: amountInPaise,
       transaction_date: r['Transaction Date'] || r.transaction_date || r.DATE || r.TXN_DATE || '',
       value_date: r['Value Date'] || r.value_date || '',
-      utr: r.UTR || r.utr || '',
+      utr: (r.UTR || r.utr || '').toString().trim().toUpperCase(),
       remarks: r.Remarks || r.remarks || '',
       debit_credit: r['Debit/Credit'] || r.debit_credit || 'CREDIT'
     };
@@ -1018,13 +1151,13 @@ async function persistResults(results, jobId = 'UNKNOWN', job = {}, params = {})
             ON CONFLICT (bank_ref) DO UPDATE SET
               processed = EXCLUDED.processed
           `, [
-            bankStmt.TRANSACTION_ID || bankStmt.UTR || `BANK_${Date.now()}`,
-            bankStmt.BANK || 'UNKNOWN',
-            Math.round(parseFloat(bankStmt.AMOUNT || bankStmt.CREDIT_AMT || 0) * 100),
-            bankStmt.DATE || bankStmt.VALUE_DATE || new Date().toISOString().split('T')[0],
-            bankStmt.VALUE_DATE || bankStmt.DATE || new Date().toISOString().split('T')[0],
-            bankStmt.UTR,
-            bankStmt.REMARKS || '',
+            bankStmt.bank_reference || bankStmt.utr || bankStmt.TRANSACTION_ID || bankStmt.UTR || `BANK_${Date.now()}`,
+            bankStmt.bank_name || bankStmt.BANK || 'UNKNOWN',
+            bankStmt.amount || Math.round(parseFloat(bankStmt.AMOUNT || bankStmt.CREDIT_AMT || 0) * 100),
+            bankStmt.transaction_date || bankStmt.DATE || bankStmt.VALUE_DATE || new Date().toISOString().split('T')[0],
+            bankStmt.value_date || bankStmt.VALUE_DATE || bankStmt.DATE || new Date().toISOString().split('T')[0],
+            bankStmt.utr || bankStmt.UTR,
+            bankStmt.remarks || bankStmt.REMARKS || '',
             'CREDIT',
             job.sourceType === 'MANUAL' ? 'MANUAL_UPLOAD' : 'SFTP_CONNECTOR',
             job.sourceType === 'MANUAL' ? 'MANUAL_UPLOAD' : 'BANK_API',
@@ -1034,7 +1167,7 @@ async function persistResults(results, jobId = 'UNKNOWN', job = {}, params = {})
           // Get bank statement ID
           const bankResult = await client.query(
             'SELECT id FROM sp_v2_bank_statements WHERE bank_ref = $1',
-            [bankStmt.TRANSACTION_ID || bankStmt.UTR || `BANK_${Date.now()}`]
+            [bankStmt.bank_reference || bankStmt.utr || bankStmt.TRANSACTION_ID || bankStmt.UTR || `BANK_${Date.now()}`]
           );
           
           if (bankResult.rows.length > 0) {
@@ -1141,9 +1274,9 @@ async function persistResults(results, jobId = 'UNKNOWN', job = {}, params = {})
                 processed = false,
                 remarks = CONCAT(COALESCE(sp_v2_bank_statements.remarks, ''), ' [', $12::text, ']')
             `, [
-              exceptionBank.bank_ref || exceptionBank.TRANSACTION_ID || exceptionBank.UTR || `BANK_${Date.now()}`,
+              exceptionBank.bank_reference || exceptionBank.bank_ref || exceptionBank.utr || exceptionBank.TRANSACTION_ID || exceptionBank.UTR || `BANK_${Date.now()}`,
               exceptionBank.bank_name || exceptionBank.BANK || 'UNKNOWN',
-              Math.round(parseFloat(exceptionBank.amount || exceptionBank.AMOUNT || exceptionBank.CREDIT_AMT || 0) * 100),
+              exceptionBank.amount || Math.round(parseFloat(exceptionBank.AMOUNT || exceptionBank.CREDIT_AMT || 0)),
               exceptionBank.transaction_date || exceptionBank.DATE || exceptionBank.VALUE_DATE || new Date().toISOString().split('T')[0],
               exceptionBank.value_date || exceptionBank.VALUE_DATE || exceptionBank.DATE || new Date().toISOString().split('T')[0],
               exceptionBank.utr || exceptionBank.UTR,
@@ -1205,11 +1338,11 @@ async function persistResults(results, jobId = 'UNKNOWN', job = {}, params = {})
           job.sourceType === 'MANUAL_UPLOAD' ? 'MANUAL_UPLOAD' : 'PG_API',
           unmatchedPg.payment_method || unmatchedPg.payment_mode || 'UNKNOWN',
           unmatchedPg.utr,
-          'EXCEPTION',
-          'UNMATCHED_IN_BANK'
+          'UNMATCHED',
+          null
         ]);
       }
-      console.log(`[Persistence] Saved ${results.unmatchedPg?.length || 0} unmatched PG transactions as UNMATCHED_IN_BANK`);
+      console.log(`[Persistence] Saved ${results.unmatchedPg?.length || 0} unmatched PG transactions as UNMATCHED`);
       
       // Insert unmatched bank records
       for (const unmatchedBank of results.unmatchedBank) {
@@ -1229,13 +1362,13 @@ async function persistResults(results, jobId = 'UNKNOWN', job = {}, params = {})
           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
           ON CONFLICT (bank_ref) DO NOTHING
         `, [
-          unmatchedBank.TRANSACTION_ID || unmatchedBank.UTR || `BANK_${Date.now()}_${Math.random()}`,
-          unmatchedBank.BANK || 'UNKNOWN',
-          Math.round(parseFloat(unmatchedBank.AMOUNT || unmatchedBank.CREDIT_AMT || 0) * 100),
-          unmatchedBank.DATE || unmatchedBank.VALUE_DATE || new Date().toISOString().split('T')[0],
-          unmatchedBank.VALUE_DATE || unmatchedBank.DATE || new Date().toISOString().split('T')[0],
-          unmatchedBank.UTR,
-          unmatchedBank.REMARKS || '',
+          unmatchedBank.bank_reference || unmatchedBank.utr || unmatchedBank.TRANSACTION_ID || unmatchedBank.UTR || `BANK_${Date.now()}_${Math.random()}`,
+          unmatchedBank.bank_name || unmatchedBank.BANK || 'UNKNOWN',
+          unmatchedBank.amount || Math.round(parseFloat(unmatchedBank.AMOUNT || unmatchedBank.CREDIT_AMT || 0) * 100),
+          unmatchedBank.transaction_date || unmatchedBank.DATE || unmatchedBank.VALUE_DATE || new Date().toISOString().split('T')[0],
+          unmatchedBank.value_date || unmatchedBank.VALUE_DATE || unmatchedBank.DATE || new Date().toISOString().split('T')[0],
+          unmatchedBank.utr || unmatchedBank.UTR,
+          unmatchedBank.remarks || unmatchedBank.REMARKS || '',
           'CREDIT',
           job.sourceType === 'MANUAL_UPLOAD' ? 'MANUAL_UPLOAD' : 'SFTP_CONNECTOR',
           job.sourceType === 'MANUAL_UPLOAD' ? 'MANUAL_UPLOAD' : 'BANK_API',

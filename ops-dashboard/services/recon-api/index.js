@@ -9,6 +9,7 @@ const exceptionsV2Routes = require('./routes/exceptions-v2')
 const exceptionSavedViewsRoutes = require('./routes/exception-saved-views')
 const exceptionRulesRoutes = require('./routes/exception-rules')
 const reportsRoutes = require('./routes/reports')
+const bankMappingsRoutes = require('./routes/bank-mappings')
 
 const app = express()
 app.use(cors())
@@ -21,6 +22,7 @@ app.use('/exceptions-v2', exceptionsV2Routes)  // New workflow-based route
 app.use('/exception-saved-views', exceptionSavedViewsRoutes)
 app.use('/exception-rules', exceptionRulesRoutes)
 app.use('/reports', reportsRoutes)
+app.use('/bank-mappings', bankMappingsRoutes)
 
 // Store reconciliation results in memory
 const reconResults = new Map()
@@ -31,8 +33,8 @@ const HEALTH_CHECK_CACHE_MS = 5000
 
 // New reconciliation endpoint using job runner
 app.post('/recon/run', async (req, res) => {
-  const { date, merchantId, acquirerId, dryRun, limit, test, pgTransactions, bankRecords } = req.body
-  console.log('[Recon API] Starting reconciliation job:', { date, merchantId, acquirerId, dryRun, test })
+  const { date, merchantId, acquirerId, dryRun, limit, test, pgTransactions, bankRecords, bankFilename } = req.body
+  console.log('[Recon API] Starting reconciliation job:', { date, merchantId, acquirerId, dryRun, test, bankFilename })
   
   if (pgTransactions) {
     console.log('[Recon API] Using uploaded PG transactions:', pgTransactions.length);
@@ -50,7 +52,8 @@ app.post('/recon/run', async (req, res) => {
       limit,
       test,
       pgTransactions,  // Pass uploaded data
-      bankRecords      // Pass uploaded data
+      bankRecords,     // Pass uploaded data
+      bankFilename     // Pass filename for bank detection
     })
     
     res.json({
