@@ -1,4 +1,5 @@
 // Complete Overview Service with Consistent Data Contract
+// Updated: Real connector health data from V2 database
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5106';
 
@@ -162,7 +163,7 @@ export async function fetchOverview(window: OverviewWindow): Promise<OverviewRes
     console.log('📈 [V2] Total transactions from database:', v2Data.pipeline?.totalTransactions);
     
     // Transform V2 database response to match frontend structure
-    const transformedData = transformV2DatabaseResponse(v2Data, window);
+    const transformedData = await transformV2DatabaseResponse(v2Data, window);
     console.log('🔄 [V2] Transformed data for dashboard:', transformedData);
     console.log('🎯 [V2] Final captured count:', transformedData.pipeline.captured);
     
@@ -179,7 +180,7 @@ export async function fetchOverview(window: OverviewWindow): Promise<OverviewRes
 }
 
 // Transform V2 database response to match frontend structure
-function transformV2DatabaseResponse(v2Data: any, window: OverviewWindow): OverviewResponse {
+async function transformV2DatabaseResponse(v2Data: any, window: OverviewWindow): Promise<OverviewResponse> {
   console.log('🔄 [V2] Transforming database response:', v2Data);
   
   // Extract data from V2 database API response
@@ -344,14 +345,20 @@ function transformV2DatabaseResponse(v2Data: any, window: OverviewWindow): Overv
     { code: 'STATUS_PENDING', label: 'Status Pending', impactedTxns: Math.round(exceptionTransactions * 0.10), pct: 10 }
   ];
 
-  // Mock connectors health (enhance later with real data)
-  const connectorsHealth: ConnectorsHealthItem[] = [
-    { name: 'HDFC Bank SFTP', status: 'OK', lastSync: '2025-01-14T10:58:00Z', queuedFiles: 0, failures: 0 },
-    { name: 'ICICI API', status: 'OK', lastSync: '2025-01-14T10:45:00Z', queuedFiles: 1, failures: 0 },
-    { name: 'AXIS SFTP', status: 'LAGGING', lastSync: '2025-01-14T09:00:00Z', queuedFiles: 3, failures: 1 },
-    { name: 'SBI API', status: 'FAILING', lastSync: '2025-01-14T06:00:00Z', queuedFiles: 8, failures: 2 },
-    { name: 'IndusInd SFTP', status: 'OK', lastSync: '2025-01-14T11:15:00Z', queuedFiles: 0, failures: 0 }
-  ];
+  // Fetch real connectors health from V2 API
+  let connectorsHealth: ConnectorsHealthItem[] = [];
+  try {
+    const connectorsResponse = await fetch('http://localhost:5108/api/connectors/health');
+    if (connectorsResponse.ok) {
+      const connectorsData = await connectorsResponse.json();
+      connectorsHealth = connectorsData.connectors || [];
+      console.log('✅ [V2] Real connector health data loaded:', connectorsHealth);
+    } else {
+      console.warn('⚠️ [V2] Connector health API failed, using empty list');
+    }
+  } catch (error) {
+    console.warn('⚠️ [V2] Failed to fetch connector health:', error);
+  }
 
   // Mock bank feed lag (enhance later with real data)
   const bankFeedLag: BankLagItem[] = [
@@ -636,44 +643,20 @@ export async function fetchOverviewFallback(window: OverviewWindow): Promise<Ove
   ];
   // VERIFY: 32 + 16 + 14 + 12 + 8 = 82 ✓
 
-  // Connectors Health - Bank SFTP/API connections for automatic reconciliation
-  const connectorsHealth: ConnectorsHealthItem[] = [
-    { 
-      name: 'HDFC Bank SFTP', 
-      status: 'OK', 
-      lastSync: '2025-01-14T10:58:00Z', 
-      queuedFiles: 0, 
-      failures: 0 
-    },
-    { 
-      name: 'ICICI API', 
-      status: 'OK', 
-      lastSync: '2025-01-14T10:45:00Z', 
-      queuedFiles: 1, 
-      failures: 0 
-    },
-    { 
-      name: 'AXIS SFTP', 
-      status: 'LAGGING', 
-      lastSync: '2025-01-14T09:00:00Z', 
-      queuedFiles: 3, 
-      failures: 1 
-    },
-    { 
-      name: 'SBI API', 
-      status: 'FAILING', 
-      lastSync: '2025-01-14T06:00:00Z', 
-      queuedFiles: 8, 
-      failures: 2 
-    },
-    { 
-      name: 'IndusInd SFTP', 
-      status: 'OK', 
-      lastSync: '2025-01-14T11:15:00Z', 
-      queuedFiles: 0, 
-      failures: 0 
+  // Fetch real connectors health from V2 API (fallback data)
+  let connectorsHealth: ConnectorsHealthItem[] = [];
+  try {
+    const connectorsResponse = await fetch('http://localhost:5108/api/connectors/health');
+    if (connectorsResponse.ok) {
+      const connectorsData = await connectorsResponse.json();
+      connectorsHealth = connectorsData.connectors || [];
+      console.log('✅ [V2 Fallback] Real connector health data loaded:', connectorsHealth);
+    } else {
+      console.warn('⚠️ [V2 Fallback] Connector health API failed, using empty list');
     }
-  ];
+  } catch (error) {
+    console.warn('⚠️ [V2 Fallback] Failed to fetch connector health:', error);
+  }
 
   // Bank Feed Lag
   const bankFeedLag: BankLagItem[] = [

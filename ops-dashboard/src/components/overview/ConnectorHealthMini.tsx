@@ -20,15 +20,22 @@ interface ConnectorHealthMiniProps {
 export function ConnectorHealthMini({ filters, isLoading: parentLoading }: ConnectorHealthMiniProps) {
   const navigate = useNavigate();
 
-  // Fetch connector health status
+  // Fetch connector health status from V2 API
   const { data: connectors, isLoading } = useQuery({
     queryKey: ['connector-health-mini', filters],
     queryFn: async () => {
-      const { data } = await apiClient.get<ConnectorStatus[]>('/api/connectors/health-summary', {
-        params: filters,
-        baseURL: 'http://localhost:5105'
-      });
-      return data;
+      const response = await fetch('http://localhost:5108/api/connectors/health');
+      if (!response.ok) return [];
+      const result = await response.json();
+      
+      // Transform V2 format to match ConnectorStatus
+      return (result.connectors || []).map((c: any) => ({
+        id: c.name.toLowerCase().replace(/\s+/g, '-'),
+        name: c.name,
+        status: c.status === 'OK' ? 'healthy' : c.status === 'LAGGING' ? 'degraded' : 'down',
+        lastSync: c.lastSync,
+        lag: c.queuedFiles > 0 ? Math.floor((new Date().getTime() - new Date(c.lastSync).getTime()) / 60000) : undefined
+      }));
     },
     refetchInterval: 30000,
     staleTime: 20000,

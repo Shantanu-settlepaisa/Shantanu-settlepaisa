@@ -646,10 +646,81 @@ app.get('/api/reports/tax', async (req, res) => {
   }
 });
 
+// Connector Health endpoint - returns real connector data from database
+app.get('/api/connectors/health', async (req, res) => {
+  try {
+    const client = await pool.connect();
+    
+    const query = `
+      SELECT 
+        c.name,
+        c.connector_type,
+        c.status,
+        c.last_run_at,
+        c.last_run_status,
+        c.failure_count,
+        c.total_runs
+      FROM sp_v2_connectors c
+      ORDER BY c.created_at
+    `;
+    
+    const result = await client.query(query);
+    client.release();
+    
+    const connectors = result.rows.map(row => {
+      const lastSync = row.last_run_at || new Date(Date.now() - 360 * 60 * 1000).toISOString();
+      const queuedFiles = 0; // No queued files tracking yet
+      const failures = parseInt(row.failure_count) || 0;
+      
+      // Determine status based on last_run_at and last_run_status
+      let status = 'OK';
+      
+      if (row.status === 'INACTIVE') {
+        status = 'FAILING';
+      } else if (row.last_run_status === 'FAILED') {
+        status = 'FAILING';
+      } else if (row.last_run_at) {
+        const lastSyncDate = new Date(lastSync);
+        const now = new Date();
+        const diffMinutes = (now - lastSyncDate) / (1000 * 60);
+        
+        if (diffMinutes > 360) {
+          status = 'FAILING';
+        } else if (diffMinutes > 120 || failures > 0) {
+          status = 'LAGGING';
+        }
+      }
+      
+      return {
+        name: row.name,
+        status: status,
+        lastSync: lastSync,
+        queuedFiles: queuedFiles,
+        failures: failures
+      };
+    });
+    
+    res.json({
+      success: true,
+      connectors: connectors,
+      timestamp: new Date().toISOString()
+    });
+    
+  } catch (error) {
+    console.error('❌ [V2 API] Connector health error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`🚀 [V2 Overview API] Running on port ${PORT}`);
   console.log(`📊 Real data endpoint: GET http://localhost:${PORT}/api/overview`);
   console.log(`📈 Statistics: GET http://localhost:${PORT}/api/stats`);
+  console.log(`🔌 Connector health: GET http://localhost:${PORT}/api/connectors/health`);
   console.log(`📋 Settlement reports: GET http://localhost:${PORT}/api/reports/settlements`);
   console.log(`🏦 Bank MIS reports: GET http://localhost:${PORT}/api/reports/bank-mis`);
   console.log(`🔄 Recon outcome: GET http://localhost:${PORT}/api/reports/recon-outcome`);
