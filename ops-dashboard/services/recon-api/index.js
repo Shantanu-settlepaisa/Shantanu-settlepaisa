@@ -10,6 +10,7 @@ const exceptionSavedViewsRoutes = require('./routes/exception-saved-views')
 const exceptionRulesRoutes = require('./routes/exception-rules')
 const reportsRoutes = require('./routes/reports')
 const bankMappingsRoutes = require('./routes/bank-mappings')
+const pgTransactionsRoutes = require('./routes/pg-transactions')
 
 const app = express()
 app.use(cors())
@@ -23,6 +24,7 @@ app.use('/exception-saved-views', exceptionSavedViewsRoutes)
 app.use('/exception-rules', exceptionRulesRoutes)
 app.use('/reports', reportsRoutes)
 app.use('/bank-mappings', bankMappingsRoutes)
+app.use('/pg-transactions', pgTransactionsRoutes)
 
 // Store reconciliation results in memory
 const reconResults = new Map()
@@ -458,6 +460,9 @@ app.listen(PORT, () => {
   console.log(`Reconciliation API running on port ${PORT}`)
   console.log(`Health check: http://localhost:${PORT}/recon/health`)
   console.log(`Job runner: POST http://localhost:${PORT}/recon/run`)
+  
+  const { scheduleDailyPgSync } = require('./jobs/daily-pg-sync')
+  scheduleDailyPgSync()
 })
 
 module.exports = app

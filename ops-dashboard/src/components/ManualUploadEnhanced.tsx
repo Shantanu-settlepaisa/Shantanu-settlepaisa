@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'react'
-import { FileUp, Settings, Download } from 'lucide-react'
+import { FileUp, Settings, Download, CheckCircle, AlertCircle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { FileCard, type UploadedFile } from './recon/FileCard'
 import { ReconResultsTable, type ReconRow } from './recon/ReconResultsTable'
@@ -120,7 +120,11 @@ async function parseCSVFile(file: File): Promise<any[]> {
 
 export function ManualUploadEnhanced() {
   const queryClient = useQueryClient()
-  const [cycleDate, setCycleDate] = useState('2025-10-02')
+  const [cycleDate, setCycleDate] = useState(() => {
+    const yesterday = new Date()
+    yesterday.setDate(yesterday.getDate() - 1)
+    return yesterday.toISOString().split('T')[0]
+  })
   const [merchant] = useState('All Merchants')
   const [acquirer] = useState('All Banks')
   // Restore file metadata from localStorage (create mock File objects for display)
@@ -171,6 +175,13 @@ export function ManualUploadEnhanced() {
   const [isLoading, setIsLoading] = useState(false)
   const [activeTab, setActiveTab] = useState<'all' | 'matched' | 'unmatchedPg' | 'unmatchedBank' | 'exceptions'>('all')
   const [isTabChanging, setIsTabChanging] = useState(false)
+  const [isFetchingPg, setIsFetchingPg] = useState(false)
+  const [pgFetchStatus, setPgFetchStatus] = useState<{
+    success: boolean
+    count: number
+    source: 'API_SYNC' | 'MANUAL_UPLOAD' | 'DATABASE'
+    message: string
+  } | null>(null)
   
   // Store the breakdown counts for display
   const [breakdownCounts, setBreakdownCounts] = useState({
@@ -603,6 +614,85 @@ export function ManualUploadEnhanced() {
     }
   }, [])
 
+  // Fetch PG transactions from database/API
+  const handleFetchPgData = useCallback(async () => {
+    console.log(`🔍 [PG Fetch] Fetching PG data for cycle_date=${cycleDate}`);
+    setIsFetchingPg(true);
+    setPgFetchStatus(null);
+    
+    try {
+      const response = await axios.get('http://localhost:5103/pg-transactions/fetch', {
+        params: {
+          cycle_date: cycleDate,
+          merchant_id: merchant !== 'All Merchants' ? merchant : undefined
+        }
+      });
+      
+      const data = response.data;
+      console.log('[PG Fetch] API response:', data);
+      
+      if (data.success && data.transactions && data.transactions.length > 0) {
+        const sourceType = data.source_breakdown?.API_SYNC > 0 ? 'API_SYNC' : 
+                          data.source_breakdown?.MANUAL_UPLOAD > 0 ? 'MANUAL_UPLOAD' : 'DATABASE';
+        
+        setPgFetchStatus({
+          success: true,
+          count: data.count,
+          source: sourceType,
+          message: data.message || `${data.count} transactions loaded`
+        });
+        
+        // Create a virtual file object to display in UI
+        const virtualFile = new File(
+          [JSON.stringify(data.transactions)],
+          `PG_Data_${cycleDate}_${sourceType}.json`,
+          { type: 'application/json' }
+        );
+        
+        const uploadedFile: UploadedFile = {
+          id: `pg_fetched_${Date.now()}`,
+          file: virtualFile,
+          size: virtualFile.size,
+          md5: `${sourceType}_${cycleDate}`,
+          analysis: {
+            fileTypeOk: true,
+            delimiter: 'comma' as const,
+            encoding: 'utf-8' as const,
+            headersRecognized: true,
+            schemaDetected: 'STANDARD_PG_V2'
+          },
+          preview: {
+            columns: Object.keys(data.transactions[0] || {}),
+            rows: data.transactions.slice(0, 5).map((txn: any) => Object.values(txn))
+          },
+          parsedData: data.transactions
+        };
+        
+        setPgFiles([uploadedFile]);
+        
+        console.log(`✅ [PG Fetch] Successfully loaded ${data.count} transactions (${sourceType})`);
+      } else {
+        setPgFetchStatus({
+          success: false,
+          count: 0,
+          source: 'DATABASE',
+          message: data.message || 'No transactions found for this date'
+        });
+        console.warn('[PG Fetch] No data found:', data.message);
+      }
+    } catch (error: any) {
+      console.error('❌ [PG Fetch] Error:', error);
+      setPgFetchStatus({
+        success: false,
+        count: 0,
+        source: 'DATABASE',
+        message: error.response?.data?.message || error.message || 'Failed to fetch PG data'
+      });
+    } finally {
+      setIsFetchingPg(false);
+    }
+  }, [cycleDate, merchant]);
+
   // Handle Bank file upload with V2 API
   const handleBankUpload = useCallback(async (files: File[]) => {
     console.log(`🏦 [V2 Upload] Uploading ${files.length} Bank files to V2 API...`);
@@ -924,18 +1014,74 @@ export function ManualUploadEnhanced() {
       <div className="px-6 py-4">
         <div className="grid grid-cols-2 gap-6">
           {/* Transaction/PG File Card */}
-          <FileCard
-            title="Transaction/PG File"
-            meta={{
-              merchant,
-              acquirer,
-              cycle: cycleDate // Already in YYYY-MM-DD format
-            }}
-            files={pgFiles}
-            onDropFiles={handlePGUpload}
-            onRemoveFile={handleRemovePgFile}
-            onReplaceAll={pgFiles.length > 0 ? handleReplaceAllPg : undefined}
-          />
+          <div className="space-y-3">
+            <FileCard
+              title="Transaction/PG File"
+              meta={{
+                merchant,
+                acquirer,
+                cycle: cycleDate // Already in YYYY-MM-DD format
+              }}
+              files={pgFiles}
+              onDropFiles={handlePGUpload}
+              onRemoveFile={handleRemovePgFile}
+              onReplaceAll={pgFiles.length > 0 ? handleReplaceAllPg : undefined}
+            />
+            
+            {/* Fetch from Database Button */}
+            <div className="flex items-center gap-3">
+              <Button
+                onClick={handleFetchPgData}
+                disabled={isFetchingPg}
+                className="flex-1"
+                variant="outline"
+              >
+                {isFetchingPg ? (
+                  <>
+                    <div className="h-4 w-4 border-2 border-gray-300 border-t-blue-600 rounded-full animate-spin mr-2"></div>
+                    Fetching...
+                  </>
+                ) : (
+                  <>
+                    <Download className="h-4 w-4 mr-2" />
+                    Fetch from Database
+                  </>
+                )}
+              </Button>
+            </div>
+            
+            {/* PG Fetch Status */}
+            {pgFetchStatus && (
+              <div className={`px-3 py-2 rounded-md text-sm ${
+                pgFetchStatus.success 
+                  ? 'bg-green-50 border border-green-200 text-green-800'
+                  : 'bg-yellow-50 border border-yellow-200 text-yellow-800'
+              }`}>
+                <div className="flex items-center gap-2">
+                  {pgFetchStatus.success ? (
+                    <CheckCircle className="h-4 w-4" />
+                  ) : (
+                    <AlertCircle className="h-4 w-4" />
+                  )}
+                  <div>
+                    <div className="font-medium">
+                      {pgFetchStatus.success ? '✓ ' : '⚠️ '}{pgFetchStatus.count.toLocaleString()} transactions
+                      {pgFetchStatus.success && (
+                        <span className="ml-2 px-2 py-0.5 bg-white rounded text-xs">
+                          {pgFetchStatus.source === 'API_SYNC' && 'From API Sync'}
+                          {pgFetchStatus.source === 'MANUAL_UPLOAD' && 'Manual Upload'}
+                          {pgFetchStatus.source === 'DATABASE' && 'From Database'}
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-xs mt-0.5 opacity-80">
+                      {pgFetchStatus.message}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
 
           {/* Bank Recon File Card */}
           <FileCard

@@ -1107,8 +1107,48 @@ async function persistResults(results, jobId = 'UNKNOWN', job = {}, params = {})
             status
           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
           ON CONFLICT (transaction_id) DO UPDATE SET
-            status = EXCLUDED.status,
+            merchant_id = CASE 
+              WHEN sp_v2_transactions.source_type = 'API_SYNC' 
+              THEN sp_v2_transactions.merchant_id 
+              ELSE EXCLUDED.merchant_id 
+            END,
+            amount_paise = CASE 
+              WHEN sp_v2_transactions.source_type = 'API_SYNC' 
+              THEN sp_v2_transactions.amount_paise 
+              ELSE EXCLUDED.amount_paise 
+            END,
+            transaction_timestamp = CASE 
+              WHEN sp_v2_transactions.source_type = 'API_SYNC' 
+              THEN sp_v2_transactions.transaction_timestamp 
+              ELSE EXCLUDED.transaction_timestamp 
+            END,
+            source_type = CASE 
+              WHEN sp_v2_transactions.source_type = 'API_SYNC' 
+              THEN 'API_SYNC' 
+              ELSE EXCLUDED.source_type 
+            END,
+            source_name = CASE 
+              WHEN sp_v2_transactions.source_type = 'API_SYNC' 
+              THEN sp_v2_transactions.source_name 
+              ELSE EXCLUDED.source_name 
+            END,
+            payment_method = CASE 
+              WHEN sp_v2_transactions.source_type = 'API_SYNC' 
+              THEN sp_v2_transactions.payment_method 
+              ELSE EXCLUDED.payment_method 
+            END,
+            utr = CASE 
+              WHEN sp_v2_transactions.source_type = 'API_SYNC' 
+              THEN sp_v2_transactions.utr 
+              ELSE EXCLUDED.utr 
+            END,
+            status = CASE 
+              WHEN sp_v2_transactions.source_type = 'API_SYNC' 
+              THEN sp_v2_transactions.status 
+              ELSE EXCLUDED.status 
+            END,
             updated_at = NOW()
+          WHERE sp_v2_transactions.source_type != 'API_SYNC'
         `, [
           pgTxn.transaction_id || pgTxn.pgw_ref,
           pgTxn.merchant_id || 'UNKNOWN',
