@@ -64,7 +64,7 @@ async function parseCSVFile(file: File): Promise<any[]> {
 
 export function ManualUploadEnhanced() {
   const queryClient = useQueryClient()
-  const [cycleDate, setCycleDate] = useState('10/02/2025')
+  const [cycleDate, setCycleDate] = useState('2025-10-02')
   const [merchant] = useState('All Merchants')
   const [acquirer] = useState('All Banks')
   // Restore file metadata from localStorage (create mock File objects for display)
@@ -352,11 +352,8 @@ export function ManualUploadEnhanced() {
         setIsLoading(true)
         
         try {
-          // Parse cycle date to YYYY-MM-DD format
-          const dateParts = cycleDate.split('/'); // Format: MM/DD/YYYY
-          const reconDate = dateParts.length === 3 
-            ? `${dateParts[2]}-${dateParts[0].padStart(2, '0')}-${dateParts[1].padStart(2, '0')}`
-            : new Date().toISOString().split('T')[0];
+          // cycleDate is already in YYYY-MM-DD format
+          const reconDate = cycleDate || new Date().toISOString().split('T')[0];
           
           console.log('[Manual Upload] Starting reconciliation for date:', reconDate);
           console.log('[Manual Upload] PG File:', pgFiles[0].file.name);
@@ -836,7 +833,7 @@ export function ManualUploadEnhanced() {
               <div className="flex items-center gap-2">
                 <label className="text-xs text-gray-500">Cycle Date</label>
                 <input
-                  type="text"
+                  type="date"
                   value={cycleDate}
                   onChange={(e) => setCycleDate(e.target.value)}
                   className="px-2 py-1 text-sm border border-gray-300 rounded"
@@ -882,7 +879,7 @@ export function ManualUploadEnhanced() {
             meta={{
               merchant,
               acquirer,
-              cycle: '2025-09-11'
+              cycle: cycleDate // Already in YYYY-MM-DD format
             }}
             files={pgFiles}
             onDropFiles={handlePGUpload}
@@ -896,7 +893,7 @@ export function ManualUploadEnhanced() {
             meta={{
               merchant,
               acquirer,
-              cycle: '2025-09-11'
+              cycle: cycleDate // Already in YYYY-MM-DD format
             }}
             files={bankFiles}
             onDropFiles={handleBankUpload}
