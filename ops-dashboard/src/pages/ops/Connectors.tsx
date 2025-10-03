@@ -144,7 +144,7 @@ export default function ConnectorsPage() {
 
   const filteredConnectors = (Array.isArray(connectors) ? connectors : []).filter(connector => {
     const matchesSearch = connector.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                         connector.provider.toLowerCase().includes(searchQuery.toLowerCase())
+                         (connector.source_entity || connector.provider || '').toLowerCase().includes(searchQuery.toLowerCase())
     const matchesTab = selectedTab === 'all' || 
                       (selectedTab === 'active' && connector.status === 'ACTIVE') ||
                       (selectedTab === 'paused' && connector.status === 'PAUSED')
@@ -249,7 +249,7 @@ export default function ConnectorsPage() {
                 </div>
                 
                 <div className="text-xs text-gray-600 mb-4">
-                  {connector.type} • {connector.provider}
+                  {connector.connector_type || connector.type} • {connector.source_entity || connector.provider}
                   {connector.merchantName && ` • ${connector.merchantName}`}
                 </div>
 
@@ -258,13 +258,17 @@ export default function ConnectorsPage() {
                   <div className="flex items-center justify-between text-xs mb-2">
                     <span className="text-gray-600">Success Rate</span>
                     <span className="font-medium text-gray-900">
-                      {Math.floor(Math.random() * 30 + 70)}%
+                      {connector.success_rate || (connector.total_runs > 0 
+                        ? Math.round((connector.success_count / connector.total_runs) * 100)
+                        : 0)}%
                     </span>
                   </div>
                   <div className="flex items-center justify-between text-xs">
                     <span className="text-gray-600">Last Run</span>
                     <span className="font-medium text-gray-900">
-                      {connector.lastRunAt ? new Date(connector.lastRunAt).toLocaleString() : 'Never'}
+                      {connector.last_run_at || connector.lastRunAt 
+                        ? new Date(connector.last_run_at || connector.lastRunAt).toLocaleString() 
+                        : 'Never'}
                     </span>
                   </div>
                 </div>

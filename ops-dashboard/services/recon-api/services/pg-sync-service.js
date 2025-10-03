@@ -10,7 +10,24 @@ const pool = new Pool({
   database: 'settlepaisa_v2'
 });
 
-const SABPAISA_REPORT_API_BASE = 'https://reportapi.sabpaisa.in/SabPaisaReport/REST/SettlePaisa/txnData';
+function getSabPaisaAPIBase() {
+  const env = process.env.NODE_ENV || 'development';
+  const apiMode = process.env.SABPAISA_API_MODE || 'direct';
+  
+  if (apiMode === 'mock') {
+    return 'http://localhost:5103/pg-transactions/mock-sabpaisa';
+  }
+  
+  if (apiMode === 'proxy') {
+    return process.env.SABPAISA_PROXY_URL || 'https://settlepaisainternalapi.sabpaisa.in/proxy/report';
+  }
+  
+  return 'https://reportapi.sabpaisa.in/SabPaisaReport/REST/SettlePaisa/txnData';
+}
+
+const SABPAISA_REPORT_API_BASE = getSabPaisaAPIBase();
+
+console.log(`[PG Sync] Using SabPaisa API: ${SABPAISA_REPORT_API_BASE}`);
 
 async function fetchFromSabPaisaAPI(fromDate, toDate, clientCode) {
   try {

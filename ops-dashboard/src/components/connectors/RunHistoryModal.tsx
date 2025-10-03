@@ -102,12 +102,12 @@ export function RunHistoryModal({ isOpen, connector, onClose }: RunHistoryModalP
 
   const stats = {
     total: runs.length,
-    successful: runs.filter(r => r.outcome === 'SUCCESS').length,
-    failed: runs.filter(r => r.outcome === 'FAILED').length,
+    successful: runs.filter(r => (r.outcome || r.status) === 'SUCCESS').length,
+    failed: runs.filter(r => (r.outcome || r.status) === 'FAILED').length,
     successRate: runs.length > 0 
-      ? ((runs.filter(r => r.outcome === 'SUCCESS').length / runs.length) * 100).toFixed(0)
+      ? ((runs.filter(r => (r.outcome || r.status) === 'SUCCESS').length / runs.length) * 100).toFixed(0)
       : '0',
-    totalFiles: runs.reduce((sum, r) => sum + r.filesDownloaded, 0)
+    totalFiles: runs.reduce((sum, r) => sum + (r.records_processed || r.filesDownloaded || 0), 0)
   }
 
   return (
@@ -173,22 +173,28 @@ export function RunHistoryModal({ isOpen, connector, onClose }: RunHistoryModalP
                         {getOutcomeIcon(run.outcome)}
                         <div>
                           <p className="font-medium">
-                            {format(new Date(run.cycleDate), 'MMM dd, yyyy')}
+                            {run.cycleDate 
+                              ? format(new Date(run.cycleDate), 'MMM dd, yyyy')
+                              : `${run.run_type || 'Run'} - ${format(new Date(run.startedAt || run.started_at), 'MMM dd, yyyy')}`
+                            }
                           </p>
                           <p className="text-xs text-gray-600">
-                            Started {formatDistanceToNow(new Date(run.startedAt), { addSuffix: true })}
+                            Started {formatDistanceToNow(new Date(run.startedAt || run.started_at), { addSuffix: true })}
                           </p>
                         </div>
-                        {getOutcomeBadge(run.outcome)}
+                        {getOutcomeBadge(run.outcome || run.status)}
                       </div>
                       
                       <div className="flex items-center gap-4">
                         <div className="text-right">
                           <p className="text-sm font-medium">
-                            {run.filesDownloaded}/{run.filesDiscovered} files
+                            {run.records_processed || run.filesDownloaded || 0} records
                           </p>
                           <p className="text-xs text-gray-600">
-                            {formatDuration(run.startedAt, run.finishedAt)}
+                            {run.duration_seconds 
+                              ? `${run.duration_seconds}s`
+                              : formatDuration(run.startedAt || run.started_at, run.finishedAt || run.completed_at)
+                            }
                           </p>
                         </div>
                         {expandedRun === run.id ? (
@@ -199,9 +205,9 @@ export function RunHistoryModal({ isOpen, connector, onClose }: RunHistoryModalP
                       </div>
                     </div>
 
-                    {run.error && (
+                    {(run.error || run.error_message) && (
                       <div className="mt-2 p-2 bg-red-50 rounded text-sm text-red-700">
-                        Error: {run.error}
+                        Error: {run.error || run.error_message}
                       </div>
                     )}
                   </div>

@@ -11,6 +11,7 @@ const exceptionRulesRoutes = require('./routes/exception-rules')
 const reportsRoutes = require('./routes/reports')
 const bankMappingsRoutes = require('./routes/bank-mappings')
 const pgTransactionsRoutes = require('./routes/pg-transactions')
+const connectorsRoutes = require('./routes/connectors')
 
 const app = express()
 app.use(cors())
@@ -25,6 +26,7 @@ app.use('/exception-rules', exceptionRulesRoutes)
 app.use('/reports', reportsRoutes)
 app.use('/bank-mappings', bankMappingsRoutes)
 app.use('/pg-transactions', pgTransactionsRoutes)
+app.use('/connectors', connectorsRoutes)
 
 // Store reconciliation results in memory
 const reconResults = new Map()
@@ -463,6 +465,9 @@ app.listen(PORT, () => {
   
   const { scheduleDailyPgSync } = require('./jobs/daily-pg-sync')
   scheduleDailyPgSync()
+  
+  const { scheduleConnectorSync } = require('./jobs/daily-connector-sync')
+  scheduleConnectorSync()
 })
 
 module.exports = app

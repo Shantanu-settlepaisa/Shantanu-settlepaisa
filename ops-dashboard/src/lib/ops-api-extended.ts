@@ -2087,7 +2087,7 @@ export class OpsApiExtended {
       }
     }
 
-    const response = await apiClient.get('/ops/connectors', { params })
+    const response = await apiClient.get('http://localhost:5103/connectors', { params })
     return response.data
   }
 
@@ -2145,7 +2145,7 @@ export class OpsApiExtended {
       }
     }
 
-    const response = await apiClient.get(`/ops/connectors/${id}`)
+    const response = await apiClient.get(`http://localhost:5103/connectors/${id}`)
     return response.data
   }
 
@@ -2160,9 +2160,7 @@ export class OpsApiExtended {
       }
     }
 
-    const response = await apiClient.post('/ops/connectors', params, {
-      headers: { 'X-Idempotency-Key': `create_conn_${Date.now()}` }
-    })
+    const response = await apiClient.post('http://localhost:5103/connectors', params)
     return response.data
   }
 
@@ -2175,7 +2173,7 @@ export class OpsApiExtended {
       }
     }
 
-    const response = await apiClient.patch(`/ops/connectors/${id}`, params)
+    const response = await apiClient.put(`http://localhost:5103/connectors/${id}`, params)
     return response.data
   }
 
@@ -2194,7 +2192,7 @@ export class OpsApiExtended {
       }
     }
 
-    const response = await apiClient.post(`/ops/connectors/${id}/test`)
+    const response = await apiClient.post(`http://localhost:5103/connectors/${id}/test`)
     return response.data
   }
 
@@ -2209,9 +2207,33 @@ export class OpsApiExtended {
       }
     }
 
-    const response = await apiClient.post(`/ops/connectors/${id}/run-now`, params, {
-      headers: { 'X-Idempotency-Key': `run_${id}_${Date.now()}` }
-    })
+    const response = await apiClient.post(`http://localhost:5103/connectors/${id}/run`, params)
+    return response.data
+  }
+  
+  async pauseConnector(id: string): Promise<any> {
+    if (USE_MOCK_API) {
+      return {
+        success: true,
+        connector: { id, status: 'PAUSED' },
+        message: 'Connector paused successfully'
+      }
+    }
+
+    const response = await apiClient.post(`http://localhost:5103/connectors/${id}/pause`)
+    return response.data
+  }
+  
+  async resumeConnector(id: string): Promise<any> {
+    if (USE_MOCK_API) {
+      return {
+        success: true,
+        connector: { id, status: 'ACTIVE' },
+        message: 'Connector resumed successfully'
+      }
+    }
+
+    const response = await apiClient.post(`http://localhost:5103/connectors/${id}/resume`)
     return response.data
   }
 
@@ -2271,16 +2293,8 @@ export class OpsApiExtended {
       }
     }
 
-    const response = await apiClient.get(`/ops/connectors/${connectorId}/runs`, { params })
+    const response = await apiClient.get(`http://localhost:5103/connectors/${connectorId}/history`, { params })
     return response.data
-  }
-
-  async pauseConnector(id: string): Promise<any> {
-    return this.updateConnector(id, { status: 'PAUSED' })
-  }
-
-  async resumeConnector(id: string): Promise<any> {
-    return this.updateConnector(id, { status: 'ACTIVE' })
   }
 
   // ============================================

@@ -45,16 +45,29 @@ export function ConnectorFormModal({ isOpen, connector, onSave, onClose }: Conne
 
   useEffect(() => {
     if (connector) {
+      const connectorType = (connector as any).connector_type || connector.type
+      const sourceEntity = (connector as any).source_entity || connector.provider
+      const connectionConfig = (connector as any).connection_config || connector.config
+      
       setFormData({
         name: connector.name,
-        type: connector.type,
-        provider: connector.provider,
+        type: connectorType === 'PG_API' ? 'API' : (connectorType === 'BANK_SFTP' ? 'SFTP' : connector.type),
+        provider: sourceEntity as ConnectorProvider,
         merchantId: connector.merchantId || '',
         acquirerCode: connector.acquirerCode || '',
-        config: { ...formData.config, ...(connector.config as any) }
+        config: { 
+          ...formData.config, 
+          ...(connectionConfig as any),
+          // Map PG_API fields to form fields
+          baseUrl: connectionConfig?.api_base_url || formData.config.baseUrl,
+          merchantCodes: connectionConfig?.merchant_codes?.join(',') || '',
+          syncDaysBack: connectionConfig?.sync_days_back || 1,
+          autoRetry: connectionConfig?.auto_retry || false,
+          retryCount: connectionConfig?.retry_count || 3,
+          authenticationType: connectionConfig?.authentication_type || 'IP_WHITELIST'
+        }
       })
     } else {
-      // Set default file pattern based on provider
       setFormData(prev => ({
         ...prev,
         config: {
@@ -85,41 +98,58 @@ export function ConnectorFormModal({ isOpen, connector, onSave, onClose }: Conne
     setSaving(true)
     
     try {
-      // Clean up config based on type
-      const config = formData.type === 'SFTP' 
-        ? {
-            host: formData.config.host,
-            port: formData.config.port,
-            username: formData.config.username,
-            authType: formData.config.authType,
-            password: formData.config.authType === 'password' ? formData.config.password : undefined,
-            privateKey: formData.config.authType === 'privateKey' ? formData.config.privateKey : undefined,
-            remotePath: formData.config.remotePath,
-            filePattern: formData.config.filePattern || getDefaultFilePattern(formData.provider),
-            checksumExt: formData.config.checksumExt,
-            pgpPublicKey: formData.config.pgpPublicKey || undefined,
-            timezone: formData.config.timezone,
-            schedule: formData.config.schedule,
-            targetCycleRule: formData.config.targetCycleRule,
-          } as SFTPConfig
-        : {
-            baseUrl: formData.config.baseUrl,
-            authType: formData.config.token ? 'bearer' : 'apiKey',
-            token: formData.config.token || undefined,
-            apiKey: formData.config.apiKey || undefined,
-            endpoint: formData.config.endpoint,
-            schedule: formData.config.schedule,
-            timezone: formData.config.timezone,
-            responseFormat: formData.config.responseFormat,
-          } as APIConfig
+      let config
+      let connectorType
+      
+      if (formData.provider === 'SABPAISA') {
+        connectorType = 'PG_API'
+        const merchantCodesStr = (formData.config as any).merchantCodes || 'ALL'
+        config = {
+          api_base_url: formData.config.baseUrl,
+          authentication_type: 'IP_WHITELIST',
+          merchant_codes: merchantCodesStr === 'ALL' ? ['ALL'] : merchantCodesStr.split(',').map((c: string) => c.trim()),
+          sync_days_back: (formData.config as any).syncDaysBack || 1,
+          auto_retry: (formData.config as any).autoRetry || true,
+          retry_count: (formData.config as any).retryCount || 3
+        }
+      } else if (formData.type === 'SFTP') {
+        connectorType = 'BANK_SFTP'
+        config = {
+          host: formData.config.host,
+          port: formData.config.port,
+          username: formData.config.username,
+          authType: formData.config.authType,
+          password: formData.config.authType === 'password' ? formData.config.password : undefined,
+          privateKey: formData.config.authType === 'privateKey' ? formData.config.privateKey : undefined,
+          remotePath: formData.config.remotePath,
+          filePattern: formData.config.filePattern || getDefaultFilePattern(formData.provider),
+          checksumExt: formData.config.checksumExt,
+          pgpPublicKey: formData.config.pgpPublicKey || undefined,
+          timezone: formData.config.timezone,
+          schedule: formData.config.schedule,
+          targetCycleRule: formData.config.targetCycleRule,
+        }
+      } else {
+        connectorType = 'BANK_API'
+        config = {
+          baseUrl: formData.config.baseUrl,
+          authType: formData.config.token ? 'bearer' : 'apiKey',
+          token: formData.config.token || undefined,
+          apiKey: formData.config.apiKey || undefined,
+          endpoint: formData.config.endpoint,
+          schedule: formData.config.schedule,
+          timezone: formData.config.timezone,
+          responseFormat: formData.config.responseFormat,
+        }
+      }
 
       await onSave({
         name: formData.name,
-        type: formData.type,
-        provider: formData.provider,
-        merchantId: formData.merchantId || undefined,
-        acquirerCode: formData.acquirerCode || undefined,
-        config
+        connector_type: connectorType,
+        source_entity: formData.provider,
+        connection_config: config,
+        schedule_enabled: true,
+        schedule_cron: formData.config.schedule || '0 2 * * *'
       })
       onClose()
     } catch (error) {
@@ -201,19 +231,24 @@ export function ConnectorFormModal({ isOpen, connector, onSave, onClose }: Conne
                       setFormData({ 
                         ...formData, 
                         provider,
+                        type: provider === 'SABPAISA' ? 'API' : formData.type,
                         config: {
                           ...formData.config,
-                          filePattern: getDefaultFilePattern(provider)
+                          filePattern: getDefaultFilePattern(provider),
+                          baseUrl: provider === 'SABPAISA' 
+                            ? 'https://reportapi.sabpaisa.in/SabPaisaReport/REST/SettlePaisa/txnData'
+                            : formData.config.baseUrl
                         }
                       })
                     }}
                     className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                   >
+                    <option value="SABPAISA">SabPaisa PG API</option>
                     <option value="AXIS">AXIS Bank</option>
                     <option value="BOB">Bank of Baroda</option>
                     <option value="HDFC">HDFC Bank</option>
                     <option value="ICICI">ICICI Bank</option>
-                    <option value="PG">Payment Gateway</option>
+                    <option value="PG">Payment Gateway (Other)</option>
                     <option value="CUSTOM">Custom</option>
                   </select>
                 </div>
@@ -346,7 +381,7 @@ export function ConnectorFormModal({ isOpen, connector, onSave, onClose }: Conne
                 </>
               )}
 
-              {activeTab === 'connection' && formData.type === 'API' && (
+              {activeTab === 'connection' && formData.type === 'API' && formData.provider !== 'SABPAISA' && (
                 <>
                   <div>
                     <label className="block text-sm font-medium mb-1">Base URL</label>
@@ -390,6 +425,117 @@ export function ConnectorFormModal({ isOpen, connector, onSave, onClose }: Conne
                       <option value="json">JSON</option>
                       <option value="xml">XML</option>
                     </select>
+                  </div>
+                </>
+              )}
+
+              {activeTab === 'connection' && formData.type === 'API' && formData.provider === 'SABPAISA' && (
+                <>
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+                    <h3 className="text-sm font-semibold text-blue-900 mb-2">SabPaisa PG API Configuration</h3>
+                    <p className="text-xs text-blue-700">
+                      This connector automatically syncs PG transactions from SabPaisa Report API daily at 2:00 AM IST.
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium mb-1">API Base URL</label>
+                    <input
+                      type="text"
+                      value={formData.config.baseUrl}
+                      onChange={(e) => setFormData({
+                        ...formData,
+                        config: { ...formData.config, baseUrl: e.target.value }
+                      })}
+                      className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50"
+                      placeholder="https://reportapi.sabpaisa.in/SabPaisaReport/REST/SettlePaisa/txnData"
+                      disabled
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      This is the SabPaisa Report API endpoint (read-only)
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium mb-1">
+                      Merchant Codes
+                      <span className="ml-1 text-xs text-gray-500">(comma-separated or "ALL")</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={(formData.config as any).merchantCodes || 'ALL'}
+                      onChange={(e) => setFormData({
+                        ...formData,
+                        config: { ...formData.config, merchantCodes: e.target.value } as any
+                      })}
+                      className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      placeholder="ALL or MERCH001,MERCH002,MERCH003"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      Specify which merchants to sync. Use "ALL" for all merchants.
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Sync Days Back</label>
+                      <input
+                        type="number"
+                        min="1"
+                        max="7"
+                        value={(formData.config as any).syncDaysBack || 1}
+                        onChange={(e) => setFormData({
+                          ...formData,
+                          config: { ...formData.config, syncDaysBack: parseInt(e.target.value) } as any
+                        })}
+                        className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                      <p className="text-xs text-gray-500 mt-1">
+                        How many days back to sync (default: 1 for T-1)
+                      </p>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Retry Count</label>
+                      <input
+                        type="number"
+                        min="0"
+                        max="10"
+                        value={(formData.config as any).retryCount || 3}
+                        onChange={(e) => setFormData({
+                          ...formData,
+                          config: { ...formData.config, retryCount: parseInt(e.target.value) } as any
+                        })}
+                        className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                      <p className="text-xs text-gray-500 mt-1">
+                        Number of retries on failure
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center">
+                    <input
+                      type="checkbox"
+                      id="autoRetry"
+                      checked={(formData.config as any).autoRetry || false}
+                      onChange={(e) => setFormData({
+                        ...formData,
+                        config: { ...formData.config, autoRetry: e.target.checked } as any
+                      })}
+                      className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                    />
+                    <label htmlFor="autoRetry" className="ml-2 block text-sm text-gray-700">
+                      Enable Auto-Retry on Failure
+                    </label>
+                  </div>
+
+                  <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                    <h4 className="text-sm font-semibold text-yellow-900 mb-1">Authentication</h4>
+                    <p className="text-xs text-yellow-700">
+                      <strong>Type:</strong> IP Whitelisting<br/>
+                      The SabPaisa Report API uses IP-based authentication. Ensure your server's IP address is whitelisted by SabPaisa team.
+                    </p>
                   </div>
                 </>
               )}
