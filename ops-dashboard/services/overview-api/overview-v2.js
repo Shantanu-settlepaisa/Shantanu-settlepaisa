@@ -181,12 +181,37 @@ app.get('/api/overview', async (req, res) => {
           WHERE transaction_date >= CURRENT_DATE - INTERVAL '30 days'
         `);
     
+    // Get settlement pipeline data with date filtering
+    // Status mapping: PENDING_APPROVAL/PROCESSING = in settlement, APPROVED/SENT = sent to bank, COMPLETED/CREDITED = credited
+    const settlementResult = queryParams.length > 0
+      ? await client.query(`
+          SELECT 
+            COUNT(si.id) FILTER (WHERE sb.status IN ('COMPLETED', 'CREDITED')) as credited_count,
+            COUNT(si.id) FILTER (WHERE sb.status IN ('APPROVED', 'SENT', 'PENDING_CONFIRMATION')) as sent_to_bank_count,
+            COUNT(si.id) FILTER (WHERE sb.status IN ('PENDING_APPROVAL', 'PROCESSING')) as in_settlement_count
+          FROM sp_v2_transactions t
+          LEFT JOIN sp_v2_settlement_items si ON t.transaction_id = si.transaction_id
+          LEFT JOIN sp_v2_settlement_batches sb ON si.settlement_batch_id = sb.id
+          WHERE t.transaction_date >= $1 AND t.transaction_date <= $2
+        `, queryParams)
+      : await client.query(`
+          SELECT 
+            COUNT(si.id) FILTER (WHERE sb.status IN ('COMPLETED', 'CREDITED')) as credited_count,
+            COUNT(si.id) FILTER (WHERE sb.status IN ('APPROVED', 'SENT', 'PENDING_CONFIRMATION')) as sent_to_bank_count,
+            COUNT(si.id) FILTER (WHERE sb.status IN ('PENDING_APPROVAL', 'PROCESSING')) as in_settlement_count
+          FROM sp_v2_transactions t
+          LEFT JOIN sp_v2_settlement_items si ON t.transaction_id = si.transaction_id
+          LEFT JOIN sp_v2_settlement_batches sb ON si.settlement_batch_id = sb.id
+          WHERE t.transaction_date >= CURRENT_DATE - INTERVAL '30 days'
+        `);
+    
     client.release();
     
     const txnData = txnResult.rows[0];
     const bankData = bankResult.rows[0];
     const reconData = reconResult.rows[0];
     const sourceData = sourceResult.rows[0];
+    const settlementData = settlementResult.rows[0];
     
     // Calculate metrics
     const totalTransactions = parseInt(txnData.total_transactions) || 0;
@@ -202,6 +227,12 @@ app.get('/api/overview', async (req, res) => {
     const connectorCount = parseInt(sourceData.connector_count) || 0;
     const apiCount = parseInt(sourceData.api_count) || 0;
     
+    // Settlement pipeline counts
+    const creditedCount = parseInt(settlementData.credited_count) || 0;
+    const inSettlementCount = parseInt(settlementData.in_settlement_count) || 0;
+    const sentToBankCount = parseInt(settlementData.sent_to_bank_count) || 0;
+    const unsettledCount = Math.max(0, totalTransactions - creditedCount - inSettlementCount - sentToBankCount - exceptions);
+    
     // Amount calculations (PostgreSQL returns bigint as strings)
     const totalAmountPaise = txnData.total_amount_paise ? parseInt(txnData.total_amount_paise, 10) : 0;
     const reconciledAmountPaise = reconData.reconciled_amount_paise ? parseInt(reconData.reconciled_amount_paise, 10) : 0;
@@ -214,13 +245,13 @@ app.get('/api/overview', async (req, res) => {
       lastUpdated: new Date().toISOString(),
       source: "V2_DATABASE",
       
-      // Pipeline data - mutually exclusive buckets for Settlement Pipeline
+      // Pipeline data - real settlement pipeline from database
       pipeline: {
         captured: totalTransactions,
-        inSettlement: matchedTransactions,
-        sentToBank: 0,  // Not tracking actual settlements yet
-        credited: 0,     // Not tracking credits yet
-        unsettled: exceptions  // Exceptions that need resolution
+        inSettlement: inSettlementCount,
+        sentToBank: sentToBankCount,
+        credited: creditedCount,
+        unsettled: unsettledCount
       },
       
       // KPI metrics from V2 data

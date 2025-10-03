@@ -192,21 +192,21 @@ async function transformV2DatabaseResponse(v2Data: any, window: OverviewWindow):
   console.log('📈 [V2] KPIs data:', kpis);
   console.log('🔄 [V2] Reconciliation data:', reconciliation);
   
-  // Build pipeline data from V2 database response
-  const totalTransactions = pipeline.totalTransactions || 0;
+  // Use pipeline data directly from V2 API response (no recalculation needed)
+  const totalTransactions = pipeline.captured || 0;
+  const inSettlement = pipeline.inSettlement || 0;
   const sentToBank = pipeline.sentToBank || 0;
   const credited = pipeline.credited || 0;
-  const exceptions = pipeline.exceptions || 0;
+  const unsettled = pipeline.unsettled || 0;
+  const exceptions = reconciliation.exceptions || 0;
   
-  console.log('🎯 [V2] Extracted pipeline values:');
-  console.log('  totalTransactions:', totalTransactions);
+  console.log('🎯 [V2] Using pipeline values directly from API:');
+  console.log('  captured:', totalTransactions);
+  console.log('  inSettlement:', inSettlement);
   console.log('  sentToBank:', sentToBank);
   console.log('  credited:', credited);
+  console.log('  unsettled:', unsettled);
   console.log('  exceptions:', exceptions);
-  
-  // Calculate pipeline stages from real V2 data
-  const inSettlement = Math.max(0, sentToBank - credited); // In settlement = sent but not yet credited
-  const unsettled = Math.max(0, totalTransactions - credited - exceptions); // Everything not credited/excepted
   
   const pipelineCounts: PipelineCounts = {
     captured: totalTransactions,

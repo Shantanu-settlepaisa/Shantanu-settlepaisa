@@ -258,29 +258,29 @@ function transformV2ToPipeline(v2Data: any): PipelineSummary {
   const hasRealData = (pipeline.captured || pipeline.totalTransactions || 0) > 0;
   
   if (hasRealData) {
-    // CORRECT PIPELINE FORMULAS based on V2 API structure:
-    const ingested = pipeline.captured || pipeline.totalTransactions || 0;
-    const reconciled = reconciliation.matched || 0;
-    const settled = pipeline.settled || 0; // Actual settled from pipeline
-    const credited = pipeline.credited || 0; // Actual credited from pipeline
-    const unsettled = reconciliation.exceptions || 0;
+    // Use pipeline data directly from V2 API - no fallback to avoid 0 being treated as falsy
+    const ingested = pipeline.captured ?? pipeline.totalTransactions ?? 0;
+    const inSettlement = pipeline.inSettlement ?? 0;
+    const sentToBank = pipeline.sentToBank ?? 0;
+    const credited = pipeline.credited ?? 0;
+    const unsettled = pipeline.unsettled ?? 0;
     
-    // In-settlement = captured but in settlement status
-    const inSettlement = pipeline.inSettlement || reconciled;
+    // Keep reconciled for backwards compatibility
+    const reconciled = reconciliation.matched ?? 0;
     
-    console.log('📊 [V2 Hooks] Pipeline Calculations:', {
+    console.log('📊 [V2 Hooks] Pipeline data from API:', {
       ingested,
-      reconciled,
-      settled,
-      credited,
       inSettlement,
-      unsettled
+      sentToBank,
+      credited,
+      unsettled,
+      reconciled
     });
     
     return {
       ingested: ingested,
-      reconciled: reconciled,
-      settled: settled,
+      reconciled: sentToBank, // Map sentToBank to reconciled for the UI
+      settled: credited, // Map credited to settled for the UI
       inSettlement: inSettlement,
       unsettled: unsettled,
     };
