@@ -9,6 +9,10 @@ import { RouteErrorBoundary } from './components/ErrorBoundary'
 // Lazy load pages for better performance
 import { lazy } from 'react'
 
+// Feature flags
+const ENABLE_OPS_DASHBOARD = import.meta.env.VITE_ENABLE_OPS_DASHBOARD !== 'false'
+const ENABLE_MERCHANT_DASHBOARD = import.meta.env.VITE_ENABLE_MERCHANT_DASHBOARD !== 'false'
+
 // Ops Pages
 const Overview = lazy(() => import('./pages/Overview'))
 const OverviewSimple = lazy(() => import('./pages/ops/OverviewSimple'))
@@ -35,7 +39,8 @@ const MerchantReports = lazy(() => import('./pages/merchant/Reports'))
 const MerchantDisputes = lazy(() => import('./pages/merchant/DisputesList'))
 const MerchantDisputeDetail = lazy(() => import('./pages/merchant/DisputeDetail'))
 
-export const router = createBrowserRouter([
+// Build route configuration based on enabled modules
+const routes = [
   {
     path: '/login',
     element: <LoginPage />,
@@ -44,7 +49,11 @@ export const router = createBrowserRouter([
     path: '/unauthorized',
     element: <UnauthorizedPage />,
   },
-  {
+]
+
+// Add Ops Dashboard routes if enabled
+if (ENABLE_OPS_DASHBOARD) {
+  routes.push({
     path: '/ops',
     element: <OpsLayout />,
     children: [
@@ -115,8 +124,12 @@ export const router = createBrowserRouter([
         element: <Settings />,
       },
     ],
-  },
-  {
+  })
+}
+
+// Add Merchant Dashboard routes if enabled
+if (ENABLE_MERCHANT_DASHBOARD) {
+  routes.push({
     path: '/merchant',
     element: <MerchantLayout />,
     children: [
@@ -153,12 +166,33 @@ export const router = createBrowserRouter([
         element: <div className="p-6"><Card><CardContent className="py-12 text-center">Settings coming soon</CardContent></Card></div>,
       },
     ],
-  },
-  {
+  })
+}
+
+// Add root redirect based on enabled modules
+if (ENABLE_MERCHANT_DASHBOARD) {
+  routes.push({
     path: '/',
     element: <Navigate to="/merchant/settlements" replace />,
-  },
-])
+  })
+} else if (ENABLE_OPS_DASHBOARD) {
+  routes.push({
+    path: '/',
+    element: <Navigate to="/ops/overview" replace />,
+  })
+} else {
+  routes.push({
+    path: '/',
+    element: <div className="flex items-center justify-center h-screen">
+      <Card><CardContent className="py-12 text-center">
+        <h1 className="text-2xl font-bold">No Dashboard Enabled</h1>
+        <p className="text-gray-600 mt-2">Please configure VITE_ENABLE_OPS_DASHBOARD or VITE_ENABLE_MERCHANT_DASHBOARD</p>
+      </CardContent></Card>
+    </div>,
+  })
+}
+
+export const router = createBrowserRouter(routes)
 
 // Import Card components for placeholder pages
 import { Card, CardContent } from './components/ui/card'
