@@ -18,26 +18,26 @@ export async function getSettlementCycle(): Promise<SettlementCycle> {
   const now = new Date(); // UTC
   const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
   
-  // 2pm IST is 08:30 UTC, round to 08:00 for demo
+  // 11pm IST is 17:30 UTC (daily auto-settlement as per merchant config)
   const todayCutoff = new Date(today);
-  todayCutoff.setUTCHours(8, 30, 0, 0);
+  todayCutoff.setUTCHours(17, 30, 0, 0);
   
   const prevCutoff = addDays(todayCutoff, -1);
   const nextCutoff = addDays(todayCutoff, 1);
 
   const dto: SettlementCycle = {
-    merchantId: 'demo-merchant',
+    merchantId: 'MERCH001',
     acquirer: 'ALL',
     slaHours: 24,
-    definition: 'T+1; 2:00 PM IST cutoff; bank credit next business day',
+    definition: 'Daily; 11:00 PM IST cutoff; bank credit next business day',
     windows: {
       previous: {
         label: 'previous',
         captureStart: iso(addDays(prevCutoff, -1)),
         captureEnd: iso(prevCutoff),
-        cutoffLocal: '02:00 PM IST',
+        cutoffLocal: '11:00 PM IST',
         tz: 'Asia/Kolkata',
-        nettingRule: 'T+1',
+        nettingRule: 'Daily',
         autoSettlementAt: iso(prevCutoff),
         payoutLagDays: 1,
         bankCreditETA: iso(addDays(prevCutoff, 1)),
@@ -46,9 +46,9 @@ export async function getSettlementCycle(): Promise<SettlementCycle> {
         label: 'current',
         captureStart: iso(prevCutoff),
         captureEnd: iso(todayCutoff),
-        cutoffLocal: '02:00 PM IST',
+        cutoffLocal: '11:00 PM IST',
         tz: 'Asia/Kolkata',
-        nettingRule: 'T+1',
+        nettingRule: 'Daily',
         autoSettlementAt: iso(todayCutoff),
         payoutLagDays: 1,
         bankCreditETA: iso(addDays(todayCutoff, 1)),
@@ -57,9 +57,9 @@ export async function getSettlementCycle(): Promise<SettlementCycle> {
         label: 'next',
         captureStart: iso(todayCutoff),
         captureEnd: iso(nextCutoff),
-        cutoffLocal: '02:00 PM IST',
+        cutoffLocal: '11:00 PM IST',
         tz: 'Asia/Kolkata',
-        nettingRule: 'T+1',
+        nettingRule: 'Daily',
         autoSettlementAt: iso(nextCutoff),
         payoutLagDays: 1,
         bankCreditETA: iso(addDays(nextCutoff, 1)),

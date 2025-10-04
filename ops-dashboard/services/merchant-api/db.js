@@ -38,40 +38,97 @@ const db = {
 
     try {
       const queries = {
-        // Current balance (sum of unsettled net amounts)
+        // Current balance (unsettled reconciled transactions + pending batches)
         currentBalance: `
-          SELECT COALESCE(SUM(net_paise), 0) as balance
-          FROM settlements
-          WHERE merchant_id = $1 AND status IN ('PENDING', 'PROCESSING')
+          WITH unsettled_txns AS (
+            SELECT COALESCE(SUM(t.amount_paise), 0) as balance
+            FROM sp_v2_transactions t
+            WHERE t.merchant_id = $1 
+              AND t.status = 'RECONCILED'
+              AND NOT EXISTS (
+                SELECT 1 FROM sp_v2_settlement_items si 
+                WHERE si.transaction_id = t.transaction_id
+              )
+          ),
+          pending_batches AS (
+            SELECT COALESCE(SUM(net_amount_paise), 0) as balance
+            FROM sp_v2_settlement_batches
+            WHERE merchant_id = $1 AND status IN ('PENDING_APPROVAL', 'APPROVED')
+          )
+          SELECT (unsettled_txns.balance + pending_batches.balance) as balance
+          FROM unsettled_txns, pending_batches
         `,
         // Last settlement
         lastSettlement: `
-          SELECT amount, status, settled_at as date
-          FROM settlements
+          SELECT net_amount_paise as amount, status, 
+                 COALESCE(settled_at, updated_at) as date
+          FROM sp_v2_settlement_batches
           WHERE merchant_id = $1 AND status = 'COMPLETED'
-          ORDER BY settled_at DESC LIMIT 1
+          ORDER BY COALESCE(settled_at, updated_at) DESC LIMIT 1
         `,
-        // Next settlement amount
+        // Next settlement amount (unsettled reconciled transactions)
         nextSettlement: `
-          SELECT COALESCE(SUM(net_paise), 0) as amount, 
-                 MIN(created_at) as due_date
-          FROM settlements
-          WHERE merchant_id = $1 AND status = 'PROCESSING'
+          SELECT COALESCE(SUM(t.amount_paise), 0) as amount
+          FROM sp_v2_transactions t
+          WHERE t.merchant_id = $1 
+            AND t.status = 'RECONCILED'
+            AND NOT EXISTS (
+              SELECT 1 FROM sp_v2_settlement_items si 
+              WHERE si.transaction_id = t.transaction_id
+            )
         `,
         // Unreconciled amount
         unreconciled: `
-          SELECT COALESCE(SUM(gross_paise), 0) as amount
-          FROM settlements
-          WHERE merchant_id = $1 AND status = 'PENDING'
+          SELECT COALESCE(SUM(gross_amount_paise), 0) as amount
+          FROM sp_v2_settlement_batches
+          WHERE merchant_id = $1 AND status = 'PENDING_APPROVAL'
         `
       };
 
-      const [balance, last, next, unrecon] = await Promise.all([
+      // Get settlement schedule
+      const scheduleQuery = `
+        SELECT settlement_frequency, settlement_day, settlement_time
+        FROM sp_v2_merchant_settlement_config
+        WHERE merchant_id = $1 AND is_active = true
+      `;
+
+      const [balance, last, next, unrecon, schedule] = await Promise.all([
         pool.query(queries.currentBalance, [merchantId]),
         pool.query(queries.lastSettlement, [merchantId]),
         pool.query(queries.nextSettlement, [merchantId]),
-        pool.query(queries.unreconciled, [merchantId])
+        pool.query(queries.unreconciled, [merchantId]),
+        pool.query(scheduleQuery, [merchantId])
       ]);
+
+      // Calculate next settlement due date based on schedule (in IST)
+      let nextSettlementDue;
+      if (schedule.rows.length > 0) {
+        const { settlement_frequency, settlement_time } = schedule.rows[0];
+        
+        // Get current IST time
+        const now = new Date();
+        const istOffset = 5.5 * 60 * 60 * 1000; // IST is UTC+5:30
+        const istNow = new Date(now.getTime() + istOffset);
+        
+        const [hours, minutes] = settlement_time.split(':');
+        
+        if (settlement_frequency === 'daily') {
+          // Create settlement time for today in IST
+          const settlementToday = new Date(istNow);
+          settlementToday.setUTCHours(parseInt(hours) - 5, parseInt(minutes) - 30, 0, 0); // Convert IST to UTC
+          
+          if (now > settlementToday) {
+            // Settlement time has passed, next is tomorrow
+            settlementToday.setDate(settlementToday.getDate() + 1);
+          }
+          nextSettlementDue = settlementToday.toISOString();
+        } else {
+          // Default to tomorrow if not daily
+          nextSettlementDue = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+        }
+      } else {
+        nextSettlementDue = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+      }
 
       return {
         currentBalance: parseInt(balance.rows[0]?.balance || 0),
@@ -80,7 +137,7 @@ const db = {
           amount: parseInt(last.rows[0].amount || 0),
           status: last.rows[0].status
         } : null,
-        nextSettlementDue: next.rows[0]?.due_date || new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+        nextSettlementDue,
         nextSettlementAmount: parseInt(next.rows[0]?.amount || 0),
         awaitingBankFile: false,
         pendingHolds: 0,
@@ -101,21 +158,18 @@ const db = {
     try {
       const query = `
         SELECT 
-          id, merchant_id, gross_paise, fees_paise, taxes_paise, net_paise,
-          status, utr, rrn, settlement_type, created_at, settled_at, updated_at,
-          CASE 
-            WHEN ba.bank_name IS NOT NULL THEN ba.bank_name || ' ****' || RIGHT(ba.account_number, 4)
-            ELSE 'Default Account'
-          END as bank_account
-        FROM settlements s
-        LEFT JOIN merchant_bank_accounts ba ON ba.merchant_id = s.merchant_id AND ba.is_primary = true
-        WHERE s.merchant_id = $1
-        ORDER BY s.created_at DESC
+          id, merchant_id, gross_amount_paise, total_commission_paise, total_gst_paise, net_amount_paise,
+          status, bank_reference_number as utr, bank_reference_number as rrn, 'regular' as settlement_type, 
+          created_at, settled_at, updated_at, total_transactions,
+          merchant_name || ' ****1234' as bank_account
+        FROM sp_v2_settlement_batches
+        WHERE merchant_id = $1
+        ORDER BY created_at DESC
         LIMIT $2 OFFSET $3
       `;
 
       const countQuery = `
-        SELECT COUNT(*) as total FROM settlements WHERE merchant_id = $1
+        SELECT COUNT(*) as total FROM sp_v2_settlement_batches WHERE merchant_id = $1
       `;
 
       const [settlements, count] = await Promise.all([
@@ -127,16 +181,16 @@ const db = {
         settlements: settlements.rows.map(row => ({
           id: row.id,
           type: row.settlement_type || 'regular',
-          amount: parseInt(row.net_paise),
-          fees: parseInt(row.fees_paise),
-          tax: parseInt(row.taxes_paise),
+          amount: parseInt(row.net_amount_paise),
+          fees: parseInt(row.total_commission_paise),
+          tax: parseInt(row.total_gst_paise),
           utr: row.utr || '-',
           rrn: row.rrn || '-',
           status: row.status.toLowerCase(),
           createdAt: row.created_at,
           settledAt: row.settled_at,
           bankAccount: row.bank_account,
-          transactionCount: Math.floor(parseInt(row.gross_paise) / 250000) // Estimate
+          transactionCount: parseInt(row.total_transactions) || 0
         })),
         pagination: {
           limit,
@@ -355,6 +409,63 @@ const db = {
       };
     } catch (error) {
       console.error('Get fees breakdown error:', error);
+      return null;
+    }
+  },
+
+  // List transactions for a settlement
+  async listSettlementTransactions(settlementId) {
+    if (!USE_DB || !pool) {
+      return null;
+    }
+
+    try {
+      const query = `
+        SELECT 
+          t.transaction_id,
+          t.transaction_timestamp,
+          t.amount_paise,
+          si.commission_paise,
+          si.gst_paise,
+          si.net_paise,
+          t.payment_method,
+          si.fee_bearer,
+          t.status,
+          t.settled_at,
+          si.net_paise as settlement_amount_paise,
+          si.reserve_paise,
+          t.utr,
+          t.rrn,
+          si.commission_rate,
+          t.acquirer_code
+        FROM sp_v2_settlement_items si
+        INNER JOIN sp_v2_transactions t ON si.transaction_id = t.transaction_id
+        WHERE si.settlement_batch_id = $1::uuid
+        ORDER BY t.transaction_timestamp DESC
+      `;
+
+      const result = await pool.query(query, [settlementId]);
+
+      return result.rows.map(row => ({
+        transaction_id: row.transaction_id,
+        transaction_timestamp: row.transaction_timestamp,
+        amount_paise: parseInt(row.amount_paise || 0),
+        commission_paise: parseInt(row.commission_paise || 0),
+        commission_rate: row.commission_rate || '0.00',
+        gst_paise: parseInt(row.gst_paise || 0),
+        net_paise: parseInt(row.net_paise || 0),
+        reserve_paise: parseInt(row.reserve_paise || 0),
+        settlement_amount_paise: parseInt(row.settlement_amount_paise || 0),
+        payment_method: row.payment_method,
+        fee_bearer: row.fee_bearer || 'MERCHANT',
+        status: row.status,
+        settled_at: row.settled_at,
+        utr: row.utr,
+        rrn: row.rrn,
+        acquirer_code: row.acquirer_code
+      }));
+    } catch (error) {
+      console.error('List settlement transactions error:', error);
       return null;
     }
   }

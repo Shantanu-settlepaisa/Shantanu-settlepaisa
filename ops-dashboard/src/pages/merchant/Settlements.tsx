@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { SettleNowAdvanced } from '@/components/SettleNowAdvanced'
 import SettlementCycleDrawer from '@/components/settlements/SettlementCycleDrawer'
@@ -58,6 +58,7 @@ export default function MerchantSettlements() {
   const [showInstantSettle, setShowInstantSettle] = useState(false)
   const [showTimeline, setShowTimeline] = useState<string | null>(null)
   const [showBreakup, setShowBreakup] = useState<string | null>(null)
+  const [showTransactions, setShowTransactions] = useState<string | null>(null)
   const [instantAmount, setInstantAmount] = useState('')
   const [isProcessing, setIsProcessing] = useState(false)
   const [showCycleDrawer, setShowCycleDrawer] = useState(false)
@@ -78,7 +79,13 @@ export default function MerchantSettlements() {
     queryFn: async () => {
       // Try to fetch from real API first
       try {
-        const response = await fetch('/v1/merchant/settlements')
+        // Use different endpoints based on activeTab
+        const endpoint = activeTab === 'on_demand' 
+          ? '/v1/merchant/settlements/on-demand'  // NEW: On-demand API endpoint
+          : '/v1/merchant/settlements'             // Regular settlements endpoint
+        
+        console.log(`Fetching ${activeTab} settlements from: ${endpoint}`)
+        const response = await fetch(endpoint)
         const apiData = await response.json()
         
         if (apiData.settlements && Array.isArray(apiData.settlements)) {
@@ -215,17 +222,17 @@ export default function MerchantSettlements() {
       const apiData = await response.json()
       
       const statsData = {
-        currentBalance: apiData.currentBalance ? apiData.currentBalance / 100 : 750000.00,
-        settlementDueToday: apiData.nextSettlementAmount ? apiData.nextSettlementAmount / 100 : 125000.00,
-        previousSettlement: apiData.lastSettlement?.amount ? apiData.lastSettlement.amount / 100 : 85000.00,
+        currentBalance: apiData.currentBalance / 100 || 0,
+        settlementDueToday: apiData.nextSettlementAmount / 100 || 0,
+        previousSettlement: apiData.lastSettlement?.amount / 100 || 0,
         previousStatus: apiData.lastSettlement?.status === 'COMPLETED' ? 'success' : 'failed',
-        upcomingSettlement: apiData.nextSettlementDue ? new Date(apiData.nextSettlementDue).toLocaleDateString('en-IN') : '15/9/2025',
+        upcomingSettlement: apiData.nextSettlementDue ? new Date(apiData.nextSettlementDue).toLocaleDateString('en-IN') : '-',
         instantSettlementAvailable: true,
         instantSettlementLimit: 500000.00,
         instantSettlementUsed: 125000.00,
         // Data consistency fields
-        credited: apiData.lastSettlement?.amount ? apiData.lastSettlement.amount / 100 : 85000.00,
-        sentToBank: apiData.lastSettlement?.amount ? apiData.lastSettlement.amount / 100 : 85000.00,
+        credited: apiData.lastSettlement?.amount / 100 || 0,
+        sentToBank: apiData.lastSettlement?.amount / 100 || 0,
       }
       
       // Validate data consistency (only if feature is enabled)
@@ -239,6 +246,51 @@ export default function MerchantSettlements() {
       }
     }
   })
+
+  // Fetch settlement transactions for transaction detail modal
+  const { data: settlementTransactions } = useQuery({
+    queryKey: ['settlement-transactions', showTransactions],
+    queryFn: async () => {
+      if (!showTransactions) return []
+      
+      try {
+        // Use the new real API endpoint that connects to V2 database
+        const response = await fetch(`/v1/merchant/settlements/${showTransactions}/transactions`)
+        
+        if (response.ok) {
+          const data = await response.json()
+          return data.transactions || []
+        }
+      } catch (error) {
+        console.error('Failed to fetch settlement transactions:', error)
+      }
+      
+      return []
+    },
+    enabled: !!showTransactions,
+    retry: 1
+  })
+
+  // Handle escape key to close modals
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        if (showTransactions) {
+          setShowTransactions(null)
+        } else if (showBreakup) {
+          setShowBreakup(null)
+        }
+      }
+    }
+
+    if (showBreakup || showTransactions) {
+      document.addEventListener('keydown', handleKeyDown)
+    }
+
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [showBreakup, showTransactions])
 
   const handleInstantSettle = () => {
     setShowInstantSettle(true)
@@ -541,7 +593,12 @@ export default function MerchantSettlements() {
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-2">
                             {getTypeIcon(settlement.type)}
-                            <span className="font-medium text-blue-600">{settlement.id}</span>
+                            <button 
+                              className="font-medium text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+                              onClick={() => setShowBreakup(settlement.id)}
+                            >
+                              {settlement.id}
+                            </button>
                           </div>
                         </td>
                         <td className="px-4 py-3">
@@ -744,14 +801,30 @@ export default function MerchantSettlements() {
         settlementStatus={settlements?.find(s => s.id === showTimeline)?.status.toUpperCase()}
       />
 
-      {/* Breakup Modal */}
+      {/* Settlement Breakup Modal */}
       {showBreakup && settlements && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <Card className="w-full max-w-md">
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
+          onClick={() => setShowBreakup(null)}
+        >
+          <Card 
+            className="w-full max-w-md"
+            onClick={(e) => e.stopPropagation()}
+          >
             <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <FileText className="w-5 h-5" />
-                Settlement Breakup
+              <CardTitle className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <FileText className="w-5 h-5" />
+                  Settlement Breakup
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowBreakup(null)}
+                  className="h-6 w-6 p-0"
+                >
+                  ✕
+                </Button>
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -811,13 +884,199 @@ export default function MerchantSettlements() {
                   </div>
                 )
               })()}
-              <Button 
-                variant="outline" 
-                className="w-full mt-4"
-                onClick={() => setShowBreakup(null)}
-              >
-                Close
-              </Button>
+              
+              <div className="flex gap-2 mt-4">
+                <Button 
+                  variant="outline" 
+                  className="flex-1"
+                  onClick={() => setShowBreakup(null)}
+                >
+                  Close
+                </Button>
+                <Button 
+                  variant="outline" 
+                  className="flex-1"
+                  onClick={() => {
+                    const settlement = settlements?.find(s => s.id === showBreakup)
+                    if (settlement) {
+                      // Close breakup modal and open transaction details modal
+                      const settlementId = showBreakup
+                      setShowBreakup(null)
+                      setShowTransactions(settlementId)
+                    }
+                  }}
+                >
+                  View Transactions
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* Transaction Details Modal */}
+      {showTransactions && settlements && (
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
+          onClick={() => setShowTransactions(null)}
+        >
+          <Card 
+            className="w-full max-w-7xl max-h-[90vh] overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <CardHeader>
+              <CardTitle className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <FileText className="w-5 h-5" />
+                  Settlement Transactions
+                </div>
+                <div className="flex items-center gap-4">
+                  <div className="text-sm text-gray-500">
+                    {settlementTransactions?.length || 0} transactions
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setShowTransactions(null)}
+                    className="h-6 w-6 p-0"
+                  >
+                    ✕
+                  </Button>
+                </div>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="overflow-auto max-h-[70vh]">
+              {settlementTransactions && settlementTransactions.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse">
+                    <thead className="bg-gray-50 sticky top-0">
+                      <tr>
+                        <th className="px-1 py-2 text-xs font-medium text-gray-700 border-b">Transaction ID</th>
+                        <th className="px-1 py-2 text-xs font-medium text-gray-700 border-b">Date</th>
+                        <th className="px-1 py-2 text-xs font-medium text-gray-700 border-b">Settled</th>
+                        <th className="px-1 py-2 text-xs font-medium text-gray-700 border-b text-right">Gross</th>
+                        <th className="px-1 py-2 text-xs font-medium text-gray-700 border-b text-right">Commission</th>
+                        <th className="px-1 py-2 text-xs font-medium text-gray-700 border-b text-right">GST</th>
+                        <th className="px-1 py-2 text-xs font-medium text-gray-700 border-b text-right">Reserve</th>
+                        <th className="px-1 py-2 text-xs font-medium text-gray-700 border-b text-right">Net</th>
+                        <th className="px-1 py-2 text-xs font-medium text-gray-700 border-b">Method</th>
+                        <th className="px-1 py-2 text-xs font-medium text-gray-700 border-b">Fee Bearer</th>
+                        <th className="px-1 py-2 text-xs font-medium text-gray-700 border-b">UTR</th>
+                        <th className="px-1 py-2 text-xs font-medium text-gray-700 border-b">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {settlementTransactions.map((txn: any, index: number) => (
+                        <tr key={index} className="hover:bg-gray-50">
+                          <td className="px-1 py-2 text-xs font-mono text-blue-600">
+                            {txn.transaction_id}
+                          </td>
+                          <td className="px-1 py-2 text-xs">
+                            {txn.transaction_timestamp ? new Date(txn.transaction_timestamp).toLocaleDateString('en-IN') : '-'}
+                          </td>
+                          <td className="px-1 py-2 text-xs">
+                            {txn.settled_at ? (
+                              <span className="text-green-600 font-medium">
+                                {new Date(txn.settled_at).toLocaleDateString('en-IN')}
+                              </span>
+                            ) : (
+                              <span className="text-orange-600 font-medium">Pending</span>
+                            )}
+                          </td>
+                          <td className="px-1 py-2 text-xs text-right font-medium">
+                            ₹{((txn.amount_paise || 0) / 100).toFixed(2)}
+                          </td>
+                          <td className="px-1 py-2 text-xs text-right font-medium text-red-600">
+                            -₹{((txn.commission_paise || 0) / 100).toFixed(2)}
+                            <div className="text-gray-500">{txn.commission_rate ? `${txn.commission_rate}%` : ''}</div>
+                          </td>
+                          <td className="px-1 py-2 text-xs text-right font-medium text-red-600">
+                            -₹{((txn.gst_paise || 0) / 100).toFixed(2)}
+                          </td>
+                          <td className="px-1 py-2 text-xs text-right font-medium text-orange-600">
+                            -₹{((txn.reserve_paise || 0) / 100).toFixed(2)}
+                          </td>
+                          <td className="px-1 py-2 text-xs text-right font-medium text-green-600">
+                            ₹{((txn.net_paise || txn.settlement_amount_paise || 0) / 100).toFixed(2)}
+                          </td>
+                          <td className="px-1 py-2 text-xs">
+                            <span className="px-2 py-1 bg-gray-100 rounded text-xs">
+                              {txn.payment_method || 'Unknown'}
+                            </span>
+                          </td>
+                          <td className="px-1 py-2 text-xs">
+                            <span className={`px-2 py-1 rounded text-xs ${
+                              txn.fee_bearer === 'MERCHANT' ? 'bg-red-100 text-red-800' :
+                              txn.fee_bearer === 'CUSTOMER' ? 'bg-blue-100 text-blue-800' :
+                              'bg-gray-100 text-gray-800'
+                            }`}>
+                              {txn.fee_bearer || 'N/A'}
+                            </span>
+                          </td>
+                          <td className="px-1 py-2 text-xs font-mono text-gray-600">
+                            {txn.utr || txn.rrn || '-'}
+                          </td>
+                          <td className="px-1 py-2 text-xs">
+                            <span className={`px-2 py-1 rounded text-xs ${
+                              txn.status === 'RECONCILED' ? 'bg-green-100 text-green-800' :
+                              txn.status === 'PENDING' ? 'bg-yellow-100 text-yellow-800' :
+                              'bg-red-100 text-red-800'
+                            }`}>
+                              {txn.status || 'Unknown'}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="text-center py-8 text-gray-500">
+                  No transaction data available for this settlement
+                </div>
+              )}
+              
+              <div className="flex gap-2 mt-4">
+                <Button 
+                  variant="outline" 
+                  className="flex-1"
+                  onClick={() => setShowTransactions(null)}
+                >
+                  Close
+                </Button>
+                <Button 
+                  variant="outline" 
+                  className="flex-1"
+                  onClick={() => {
+                    // Export individual transactions
+                    const settlement = settlements?.find(s => s.id === showTransactions)
+                    if (settlement && settlementTransactions) {
+                      const csv = [
+                        ['Transaction ID', 'Amount', 'Method', 'Status', 'Timestamp'].join(','),
+                        ...settlementTransactions.map((txn: any) => [
+                          txn.transaction_id,
+                          (txn.amount_paise / 100).toFixed(2),
+                          txn.payment_method,
+                          txn.status,
+                          txn.transaction_timestamp
+                        ].join(','))
+                      ].join('\n')
+                      
+                      const blob = new Blob([csv], { type: 'text/csv' })
+                      const url = window.URL.createObjectURL(blob)
+                      const a = document.createElement('a')
+                      a.href = url
+                      a.download = `settlement-${settlement.id}-transactions.csv`
+                      document.body.appendChild(a)
+                      a.click()
+                      document.body.removeChild(a)
+                      window.URL.revokeObjectURL(url)
+                    }
+                  }}
+                >
+                  Export Transactions
+                </Button>
+              </div>
             </CardContent>
           </Card>
         </div>
