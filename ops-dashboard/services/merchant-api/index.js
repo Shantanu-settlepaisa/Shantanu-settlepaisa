@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const db = require('./db');
+const v2Adapter = require('./db/v2Adapter');
 require('dotenv').config();
 
 const app = express();
@@ -113,12 +114,26 @@ app.get('/health/live', (req, res) => {
 });
 
 // Merchant settlement schedule APIs
-app.get('/merchant/settlement/schedule', (req, res) => {
+app.get('/merchant/settlement/schedule', async (req, res) => {
   console.log('GET /merchant/settlement/schedule');
-  res.json(mockSettlementSchedule);
+  
+  try {
+    // Try V2 adapter first
+    const v2Schedule = await v2Adapter.getSettlementSchedule(MERCHANT_ID);
+    
+    if (v2Schedule) {
+      return res.json(v2Schedule);
+    }
+    
+    // Fallback to mock data
+    res.json(mockSettlementSchedule);
+  } catch (error) {
+    console.error('Get settlement schedule error:', error);
+    res.json(mockSettlementSchedule);
+  }
 });
 
-app.put('/merchant/settlement/schedule', (req, res) => {
+app.put('/merchant/settlement/schedule', async (req, res) => {
   const { tPlusDays, cutoffMinutesIST, effectiveFrom } = req.body;
   const idempotencyKey = req.headers['x-idempotency-key'];
   
@@ -129,17 +144,33 @@ app.put('/merchant/settlement/schedule', (req, res) => {
     return res.status(400).json({ error: 'Missing required fields' });
   }
   
-  // Update mock data
-  mockSettlementSchedule.tPlusDays = tPlusDays;
-  mockSettlementSchedule.cutoffMinutesIST = cutoffMinutesIST;
-  mockSettlementSchedule.effectiveFrom = effectiveFrom || new Date().toISOString().split('T')[0];
-  mockSettlementSchedule.lastChangedAt = new Date().toISOString();
-  
-  res.json({
-    accepted: true,
-    appliedFrom: mockSettlementSchedule.effectiveFrom,
-    schedule: mockSettlementSchedule
-  });
+  try {
+    // Try V2 adapter first
+    const v2Result = await v2Adapter.updateSettlementSchedule(MERCHANT_ID, {
+      tPlusDays,
+      cutoffMinutesIST,
+      effectiveFrom
+    });
+    
+    if (v2Result) {
+      return res.json(v2Result);
+    }
+    
+    // Fallback to mock data update
+    mockSettlementSchedule.tPlusDays = tPlusDays;
+    mockSettlementSchedule.cutoffMinutesIST = cutoffMinutesIST;
+    mockSettlementSchedule.effectiveFrom = effectiveFrom || new Date().toISOString().split('T')[0];
+    mockSettlementSchedule.lastChangedAt = new Date().toISOString();
+    
+    res.json({
+      accepted: true,
+      appliedFrom: mockSettlementSchedule.effectiveFrom,
+      schedule: mockSettlementSchedule
+    });
+  } catch (error) {
+    console.error('Update settlement schedule error:', error);
+    res.status(500).json({ error: 'Failed to update settlement schedule' });
+  }
 });
 
 // Merchant dashboard APIs (matching SP-0010 specification)
@@ -147,7 +178,32 @@ app.get('/v1/merchant/dashboard/summary', async (req, res) => {
   console.log('GET /v1/merchant/dashboard/summary');
   
   try {
-    // Try to get data from database if enabled
+    // Try V2 adapter first
+    const [v2Summary, v2ETA] = await Promise.all([
+      v2Adapter.getMerchantSummary(MERCHANT_ID),
+      v2Adapter.getNextSettlementETA(MERCHANT_ID)
+    ]);
+    
+    if (v2Summary) {
+      // Combine summary with ETA data
+      const response = {
+        currentBalance: v2Summary.currentBalance,
+        nextSettlementDue: v2ETA?.nextSettlementDue || new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+        nextSettlementAmount: v2Summary.currentBalance, // Current balance is next settlement
+        lastSettlement: v2Summary.lastSettlement || {
+          date: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
+          amount: 0,
+          status: "PENDING"
+        },
+        awaitingBankFile: false,
+        pendingHolds: v2Summary.holds || 0,
+        unreconciled: v2Summary.unreconciled || 0
+      };
+      
+      return res.json(response);
+    }
+    
+    // Fallback to V1 adapter
     const dbData = await db.getDashboardSummary(MERCHANT_ID);
     
     if (dbData) {
@@ -170,7 +226,14 @@ app.get('/v1/merchant/settlements', async (req, res) => {
     const limit = parseInt(req.query.limit) || 25;
     const offset = parseInt(req.query.offset) || 0;
     
-    // Try to get data from database if enabled
+    // Try V2 adapter first
+    const v2Data = await v2Adapter.listSettlements(MERCHANT_ID, { limit, offset });
+    
+    if (v2Data) {
+      return res.json(v2Data);
+    }
+    
+    // Fallback to V1 adapter
     const dbData = await db.listSettlements(MERCHANT_ID, { limit, offset });
     
     if (dbData) {
@@ -247,7 +310,14 @@ app.get('/v1/merchant/settlements/:settlementId/timeline', async (req, res) => {
   console.log('GET /v1/merchant/settlements/:id/timeline', { settlementId });
   
   try {
-    // Try to get data from database if enabled
+    // Try V2 adapter first
+    const v2Timeline = await v2Adapter.getSettlementTimeline(settlementId);
+    
+    if (v2Timeline) {
+      return res.json({ events: v2Timeline });
+    }
+    
+    // Fallback to V1 adapter
     const dbData = await db.listTimelineEvents(settlementId);
     
     if (dbData) {
@@ -336,7 +406,14 @@ app.post('/v1/merchant/settlements/instant', async (req, res) => {
   }
   
   try {
-    // Try to create in database if enabled
+    // Try V2 adapter first
+    const v2Settlement = await v2Adapter.createInstantSettlement(MERCHANT_ID, { amount, bankAccountId });
+    
+    if (v2Settlement) {
+      return res.json(v2Settlement);
+    }
+    
+    // Fallback to V1 adapter
     const dbData = await db.createInstantSettlement(MERCHANT_ID, { amount, bankAccountId });
     
     if (dbData) {
@@ -375,7 +452,14 @@ app.get('/v1/merchant/insights/settlement-trend', async (req, res) => {
   try {
     const days = parseInt(req.query.days) || 30;
     
-    // Try to get data from database if enabled
+    // Try V2 adapter first
+    const v2Data = await v2Adapter.getInsights(MERCHANT_ID, days);
+    
+    if (v2Data) {
+      return res.json(v2Data);
+    }
+    
+    // Fallback to V1 adapter
     const dbData = await db.getSettlementTrend(MERCHANT_ID, days);
     
     if (dbData) {

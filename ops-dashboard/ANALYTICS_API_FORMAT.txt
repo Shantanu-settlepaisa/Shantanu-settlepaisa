@@ -1,0 +1,49 @@
+Settlement Analytics API - Data Format Summary
+
+ENDPOINT: GET /analytics/kpis
+RESPONSE:
+{
+  "settled": { "count": 569, "amountPaise": 295758102 },
+  "unsettled": { "count": 137, "amountPaise": 67477612 },
+  "settlementRate": 80.6,
+  "avgSettlementTimeHours": "190.9",
+  "paidOutCount": 0
+}
+
+ENDPOINT: GET /analytics/payment-modes
+RESPONSE:
+{
+  "breakdown": [
+    { "mode": "UPI", "count": 426, "amountPaise": 218706059 },
+    ...
+  ]
+}
+
+ENDPOINT: GET /analytics/gmv-trend?days=30
+RESPONSE:
+{
+  "trend": [
+    {
+      "date": "2025-09-24T18:30:00.000Z",
+      "capturedCount": 28,
+      "capturedAmountPaise": 14462510,
+      "settledCount": 25,
+      "settlementRate": 89.3
+    },
+    ...
+  ]
+}
+
+ENDPOINT: GET /analytics/funnel
+RESPONSE:
+{
+  "funnel": {
+    "captured": { "count": 706, "percentage": 100 },
+    "reconciled": { "count": 706, "percentage": "100.0" },
+    "settled": { "count": 199, "percentage": "28.2" },
+    "paid_out": { "count": 0, "percentage": "0.0" }
+  }
+}
+
+All endpoints return camelCase for frontend compatibility.
+
