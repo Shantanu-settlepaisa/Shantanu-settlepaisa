@@ -243,13 +243,19 @@ export default function AnalyticsV3() {
   const funnelChartOptions = useMemo(() => {
     if (!funnelData?.funnel) return {};
     
-    const stages = ['Captured', 'Reconciled', 'Settled', 'Paid Out'];
-    const values = [
-      parseFloat(funnelData.funnel.captured.percentage),
-      parseFloat(funnelData.funnel.reconciled.percentage),
-      parseFloat(funnelData.funnel.settled.percentage),
-      parseFloat(funnelData.funnel.paid_out.percentage)
+    // Build stages array with only meaningful distinct stages
+    const stageData = [
+      { name: 'Captured', value: parseFloat(funnelData.funnel.captured.percentage), color: CHART_COLORS.primary },
+      { name: 'Reconciled', value: parseFloat(funnelData.funnel.reconciled.percentage), color: CHART_COLORS.info },
+      { name: 'Settled', value: parseFloat(funnelData.funnel.settled.percentage), color: CHART_COLORS.success },
     ];
+    
+    // Only add "Paid Out" if it's different from "Settled" (has actual payout data)
+    const paidOutPct = parseFloat(funnelData.funnel.paid_out.percentage);
+    const settledPct = parseFloat(funnelData.funnel.settled.percentage);
+    if (paidOutPct > 0 && paidOutPct !== settledPct) {
+      stageData.push({ name: 'Paid Out', value: paidOutPct, color: CHART_COLORS.purple });
+    }
     
     return {
       tooltip: {
@@ -290,14 +296,11 @@ export default function AnalyticsV3() {
               fontSize: 20
             }
           },
-          data: stages.map((stage, idx) => ({
-            value: values[idx],
-            name: stage,
+          data: stageData.map(stage => ({
+            value: stage.value,
+            name: stage.name,
             itemStyle: {
-              color: idx === 0 ? CHART_COLORS.primary : 
-                    idx === 1 ? CHART_COLORS.info :
-                    idx === 2 ? CHART_COLORS.success :
-                    CHART_COLORS.purple
+              color: stage.color
             }
           }))
         }
