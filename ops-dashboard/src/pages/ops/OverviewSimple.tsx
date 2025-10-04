@@ -49,6 +49,8 @@ export default function OverviewSimple() {
     queryKey: ['overview-simple', from, to, dateRange],
     queryFn: () => fetchOverview({ from, to }),
     refetchInterval: live ? 30000 : false,
+    staleTime: 0,
+    cacheTime: 0,
   });
 
   if (error) {

@@ -186,14 +186,14 @@ function transformV2ToKpis(v2Data: any): Kpis {
       ],
     };
   } else {
-    // Provide consistent test data for demonstration
-    const totalTxns = 47;
-    const matchedTxns = 17; 
-    const unmatchedTxns = 30;
-    const exceptionTxns = 28;
-    const totalAmount = 330000; // ₹3.3K in paise
-    const reconciledAmount = 250000; // ₹2.5K in paise
-    const variance = totalAmount - reconciledAmount; // ₹750 in paise
+    // NO DATA - return zeros instead of fake demo data
+    const totalTxns = 0;
+    const matchedTxns = 0; 
+    const unmatchedTxns = 0;
+    const exceptionTxns = 0;
+    const totalAmount = 0;
+    const reconciledAmount = 0;
+    const variance = 0;
 
     return {
       timeRange: {
@@ -236,7 +236,7 @@ function transformV2ToTopReasons(v2Data: any): TopReason[] {
   const reconciliation = v2Data.reconciliation || {};
   const pipeline = v2Data.pipeline || {};
   const hasRealData = (pipeline.captured || pipeline.totalTransactions || 0) > 0;
-  const exceptionCount = hasRealData ? (reconciliation.exceptions || reconciliation.unmatched || 0) : 28;
+  const exceptionCount = hasRealData ? (reconciliation.exceptions || reconciliation.unmatched || 0) : 0;
   
   console.log('🎯 [V2 Hooks] TopReasons exception count:', exceptionCount);
   
@@ -285,13 +285,12 @@ function transformV2ToPipeline(v2Data: any): PipelineSummary {
       unsettled: unsettled,
     };
   } else {
-    // Consistent test data
     return {
-      ingested: 47,
-      reconciled: 17,
-      settled: 14, // 80% of reconciled
-      inSettlement: 3, // 20% of reconciled  
-      unsettled: 30,
+      ingested: 0,
+      reconciled: 0,
+      settled: 0,
+      inSettlement: 0,
+      unsettled: 0,
     };
   }
 }
@@ -357,35 +356,34 @@ function transformV2ToReconSources(v2Data: any): ReconSourceSummary {
       },
     };
   } else {
-    // Consistent test data
     return {
       timeRange: {
         fromISO: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(),
         toISO: new Date().toISOString(),
       },
       overall: {
-        matchedPct: 36.2, // 17/47
-        matchedCount: 17,
-        unmatchedPgCount: 15,
-        unmatchedBankCount: 15,
-        exceptionsCount: 28,
-        totalTransactions: 47,
+        matchedPct: 0,
+        matchedCount: 0,
+        unmatchedPgCount: 0,
+        unmatchedBankCount: 0,
+        exceptionsCount: 0,
+        totalTransactions: 0,
       },
       connectors: {
-        totalTransactions: 15, // Connectors portion
-        matchedCount: 5,
-        unmatchedPgCount: 10,
+        totalTransactions: 0,
+        matchedCount: 0,
+        unmatchedPgCount: 0,
         unmatchedBankCount: 0,
-        exceptionsCount: 10,
-        matchedPct: 33.3, // 5/15
+        exceptionsCount: 0,
+        matchedPct: 0,
       },
       manualUpload: {
-        totalTransactions: 32, // Manual upload portion  
-        matchedCount: 12,
-        unmatchedPgCount: 20,
+        totalTransactions: 0,
+        matchedCount: 0,
+        unmatchedPgCount: 0,
         unmatchedBankCount: 0,
-        exceptionsCount: 18,
-        matchedPct: 37.5, // 12/32
+        exceptionsCount: 0,
+        matchedPct: 0,
       },
     };
   }
@@ -431,7 +429,8 @@ export function useKpis(filters: KpiFilters) {
       return transformV2ToKpis(v2Data);
     },
     refetchInterval: 30000, // Poll every 30 seconds
-    staleTime: 20000, // Consider data stale after 20 seconds
+    staleTime: 0, // Always fetch fresh data
+    cacheTime: 0, // Don't cache
     retry: 2,
     retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000),
   });
@@ -448,7 +447,8 @@ export function useTopReasons(filters: KpiFilters) {
       return transformV2ToTopReasons(v2Data);
     },
     refetchInterval: 60000, // Poll every 60 seconds (less frequent)
-    staleTime: 30000,
+    staleTime: 0, // Always fetch fresh data
+    cacheTime: 0, // Don't cache
     retry: 2,
   });
 }
@@ -464,7 +464,8 @@ export function usePipelineSummary(filters: KpiFilters) {
       return transformV2ToPipeline(v2Data);
     },
     refetchInterval: 30000,
-    staleTime: 20000,
+    staleTime: 0,
+    cacheTime: 0,
     retry: 2,
   });
 }
@@ -480,7 +481,8 @@ export function useReconSourceSummary(filters: KpiFilters) {
       return transformV2ToReconSources(v2Data);
     },
     refetchInterval: 30000,
-    staleTime: 20000,
+    staleTime: 0,
+    cacheTime: 0,
     retry: 2,
   });
 }
