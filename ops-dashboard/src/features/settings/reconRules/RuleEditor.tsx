@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Edit2, Save, X, Copy, PlayCircle, FileText, Settings, AlertTriangle, Shield, Zap, Clock } from 'lucide-react';
+import { Edit2, Save, X, Copy, PlayCircle, FileText, Settings, AlertTriangle, Shield, Zap, Clock, Trash2 } from 'lucide-react';
 import { useRuleSettingsStore } from './useRuleSettingsStore';
 import { reconRulesApi } from './api';
 import { ReconRule } from './types';
@@ -55,8 +55,25 @@ export function RuleEditor() {
     try {
       const duplicated = await reconRulesApi.duplicateRule(currentRule.id);
       alert(`Rule duplicated as "${duplicated.name}"`);
+      window.location.reload();
     } catch (error) {
       console.error('Failed to duplicate rule:', error);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!currentRule) return;
+    
+    const confirmed = confirm(`Are you sure you want to delete "${currentRule.name}"? This action cannot be undone.`);
+    if (!confirmed) return;
+    
+    try {
+      await reconRulesApi.deleteRule(currentRule.id);
+      alert('Rule deleted successfully');
+      window.location.reload();
+    } catch (error) {
+      console.error('Failed to delete rule:', error);
+      alert('Failed to delete rule. Please try again.');
     }
   };
 
@@ -144,6 +161,13 @@ export function RuleEditor() {
                 >
                   <Copy className="w-4 h-4" />
                   Duplicate
+                </button>
+                <button
+                  onClick={handleDelete}
+                  className="px-3 py-1.5 text-sm border border-red-300 text-red-600 rounded-lg hover:bg-red-50 flex items-center gap-1"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  Delete
                 </button>
                 <button
                   onClick={handleSimulate}

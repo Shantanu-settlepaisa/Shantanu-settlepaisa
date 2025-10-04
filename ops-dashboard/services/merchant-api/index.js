@@ -271,6 +271,55 @@ app.get('/v1/merchant/settlements', async (req, res) => {
   }
 });
 
+// New: On-demand settlements API (must come before :settlementId route)
+app.get('/v1/merchant/settlements/on-demand', async (req, res) => {
+  console.log('GET /v1/merchant/settlements/on-demand', { query: req.query });
+  
+  try {
+    // Support pagination
+    const limit = parseInt(req.query.limit) || 25;
+    const offset = parseInt(req.query.offset) || 0;
+    
+    // Try V2 adapter first for on-demand settlements
+    const v2Data = await v2Adapter.listOnDemandSettlements(MERCHANT_ID, { limit, offset });
+    
+    if (v2Data) {
+      return res.json(v2Data);
+    }
+    
+    // Fallback to mock on-demand settlements (instant type only)
+    const onDemandMockSettlements = mockSettlements.filter(s => s.type === 'instant');
+    const paginatedSettlements = onDemandMockSettlements.slice(offset, offset + limit);
+    
+    res.json({
+      settlements: paginatedSettlements,
+      pagination: {
+        limit,
+        offset,
+        total: onDemandMockSettlements.length,
+        hasNext: offset + limit < onDemandMockSettlements.length
+      }
+    });
+  } catch (error) {
+    console.error('List on-demand settlements error:', error);
+    // Fallback to mock instant settlements
+    const onDemandMockSettlements = mockSettlements.filter(s => s.type === 'instant');
+    const limit = parseInt(req.query.limit) || 25;
+    const offset = parseInt(req.query.offset) || 0;
+    const paginatedSettlements = onDemandMockSettlements.slice(offset, offset + limit);
+    
+    res.json({
+      settlements: paginatedSettlements,
+      pagination: {
+        limit,
+        offset,
+        total: onDemandMockSettlements.length,
+        hasNext: offset + limit < onDemandMockSettlements.length
+      }
+    });
+  }
+});
+
 app.get('/v1/merchant/settlements/:settlementId', async (req, res) => {
   const { settlementId } = req.params;
   console.log('GET /v1/merchant/settlements/:id', { settlementId });
@@ -390,6 +439,78 @@ app.get('/v1/merchant/settlements/:settlementId/timeline', async (req, res) => {
   } catch (error) {
     console.error('Timeline events error:', error);
     res.status(500).json({ error: 'Failed to fetch timeline events' });
+  }
+});
+
+// New: Settlement transactions with financial breakdown
+app.get('/v1/merchant/settlements/:settlementId/transactions', async (req, res) => {
+  const { settlementId } = req.params;
+  console.log('GET /v1/merchant/settlements/:id/transactions', { settlementId });
+  
+  try {
+    // Try V2 adapter first for real database data
+    const v2Transactions = await v2Adapter.getSettlementTransactions(settlementId);
+    
+    if (v2Transactions) {
+      return res.json({ transactions: v2Transactions });
+    }
+    
+    // Fallback to V1 adapter
+    const dbData = await db.getSettlementTransactions(settlementId);
+    
+    if (dbData) {
+      res.json({ transactions: dbData });
+    } else {
+      // Generate realistic transaction data based on V2 schema
+      const transactionCount = Math.floor(Math.random() * 20) + 15; // 15-35 transactions
+      const transactions = [];
+      
+      const methods = ['CREDIT_CARD', 'DEBIT_CARD', 'UPI', 'NETBANKING'];
+      const acquirers = ['HDFC', 'ICICI', 'SBI', 'AXIS'];
+      const feeBearers = ['MERCHANT', 'CUSTOMER', 'PLATFORM'];
+      
+      for (let i = 1; i <= transactionCount; i++) {
+        const grossAmount = Math.floor(Math.random() * 50000) + 1000; // ₹10-₹500
+        const commissionRate = 2.5 + Math.random() * 1.5; // 2.5-4%
+        const commissionAmount = Math.floor(grossAmount * commissionRate / 100);
+        const gstAmount = Math.floor(commissionAmount * 0.18); // 18% GST on commission
+        const reserveAmount = Math.floor(grossAmount * 0.05); // 5% rolling reserve
+        const netAmount = grossAmount - commissionAmount - gstAmount - reserveAmount;
+        
+        const transactionDate = new Date(Date.now() - Math.random() * 7 * 24 * 60 * 60 * 1000);
+        const settlementDate = new Date(transactionDate.getTime() + (1 + Math.random() * 2) * 24 * 60 * 60 * 1000);
+        
+        transactions.push({
+          transaction_id: `TXN_DEMO_${i.toString().padStart(3, '0')}`,
+          amount_paise: grossAmount * 100,
+          payment_method: methods[Math.floor(Math.random() * methods.length)],
+          status: 'RECONCILED',
+          transaction_timestamp: transactionDate.toISOString(),
+          settled_at: settlementDate.toISOString(),
+          source_type: 'API_SYNC',
+          gateway_ref: `GW_${Math.random().toString(36).substring(2, 15)}`,
+          utr: `UTR${Math.floor(Math.random() * 1000000000)}`,
+          rrn: `RRN${Math.floor(Math.random() * 1000000000)}`,
+          acquirer_code: acquirers[Math.floor(Math.random() * acquirers.length)],
+          bank_fee_paise: 0, // Included in commission
+          settlement_amount_paise: netAmount * 100,
+          exception_reason: null,
+          // V2 Settlement Items data (financial breakdown)
+          commission_paise: commissionAmount * 100,
+          gst_paise: gstAmount * 100,
+          reserve_paise: reserveAmount * 100,
+          net_paise: netAmount * 100,
+          fee_bearer: feeBearers[Math.floor(Math.random() * feeBearers.length)],
+          commission_type: 'PERCENTAGE',
+          commission_rate: commissionRate.toFixed(2)
+        });
+      }
+      
+      res.json({ transactions });
+    }
+  } catch (error) {
+    console.error('Settlement transactions error:', error);
+    res.status(500).json({ error: 'Failed to fetch settlement transactions' });
   }
 });
 
@@ -546,7 +667,9 @@ app.listen(PORT, () => {
   console.log('  GET  /v1/merchant/dashboard/summary');
   console.log('  GET  /v1/merchant/settlements');
   console.log('  GET  /v1/merchant/settlements/:id');
+  console.log('  GET  /v1/merchant/settlements/on-demand [NEW]');
   console.log('  GET  /v1/merchant/settlements/:id/timeline [NEW]');
+  console.log('  GET  /v1/merchant/settlements/:id/transactions [NEW]');
   console.log('  POST /v1/merchant/settlements/instant [NEW]');
   console.log('  GET  /v1/merchant/insights/settlement-trend');
   console.log('  GET  /v1/merchant/insights/fees-breakdown');

@@ -17,11 +17,11 @@ export default defineConfig({
     proxy: {
       // API routes that should be proxied to V2 backend
       '^/merchant/settlement/.*': {
-        target: 'http://localhost:5106',
+        target: 'http://localhost:8080',
         changeOrigin: true,
       },
       '^/v1/merchant/.*': {
-        target: 'http://localhost:5106',
+        target: 'http://localhost:8080',
         changeOrigin: true,
       },
       '/api': {

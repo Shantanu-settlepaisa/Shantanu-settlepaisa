@@ -1,7 +1,7 @@
 import axios from 'axios';
 import { ReconRule, SimulationResult } from './types';
 
-const API_BASE = 'http://localhost:5105/api/recon-rules';
+const API_BASE = 'http://localhost:5109/api/recon-rules';
 
 export const reconRulesApi = {
   // List rules with filters
@@ -54,6 +54,12 @@ export const reconRulesApi = {
   // Publish rule (optional)
   async publishRule(id: string, status: ReconRule['status']) {
     const response = await axios.post<ReconRule>(`${API_BASE}/rules/${id}/publish`, { status });
+    return response.data;
+  },
+
+  // Delete rule
+  async deleteRule(id: string) {
+    const response = await axios.delete(`${API_BASE}/rules/${id}`);
     return response.data;
   }
 };

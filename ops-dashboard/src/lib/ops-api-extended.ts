@@ -721,8 +721,28 @@ export class OpsApiExtended {
       // Return a mock download URL
       return `/demo/exports/${jobId}_${tab}.csv`
     }
-    const response = await apiClient.get(`/ops/v1/recon/manual/job/${jobId}/export?tab=${tab}`)
-    return response.data.url
+    
+    // Call real backend on port 5110
+    const response = await fetch(`http://localhost:5110/api/ops/v1/recon/manual/job/${jobId}/export?tab=${tab}`)
+    
+    if (!response.ok) {
+      throw new Error(`Export failed: ${response.statusText}`)
+    }
+    
+    // Get file as blob and trigger download
+    const blob = await response.blob()
+    const url = URL.createObjectURL(blob)
+    const filename = `manual_recon_${jobId}_${tab}.csv`
+    
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+    
+    return url
   }
 
   // Mapping Template APIs
@@ -1496,13 +1516,44 @@ export class OpsApiExtended {
     cycleDate: string
     subset: 'all' | 'matched' | 'unmatched' | 'exceptions'
     columns?: string[]
+    format?: 'csv' | 'xlsx'
+    includeMetadata?: boolean
   }) {
     if (USE_MOCK_API) {
       // Return a mock signed URL
       return `https://mock-export.s3.amazonaws.com/recon-export-${params.cycleDate}-${params.subset}.csv?signature=abc123`
     }
-    const response = await apiClient.post('/ops/recon/export', params)
-    return response.data.url
+    
+    // Call real backend on port 5110
+    const response = await fetch('http://localhost:5110/api/ops/recon/export', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        cycleDate: params.cycleDate,
+        subset: params.subset,
+        format: params.format || 'csv',
+        includeMetadata: params.includeMetadata || false
+      })
+    })
+    
+    if (!response.ok) {
+      throw new Error(`Export failed: ${response.statusText}`)
+    }
+    
+    // Get file as blob and trigger download
+    const blob = await response.blob()
+    const url = URL.createObjectURL(blob)
+    const filename = `recon_${params.cycleDate}_${params.subset}.${params.format || 'csv'}`
+    
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+    
+    return url
   }
 
   // Helper methods for mock data
@@ -1907,8 +1958,37 @@ export class OpsApiExtended {
       }
     }
     
-    const response = await apiClient.post('/ops/exceptions/export', request)
-    return response.data
+    // Call real backend on port 5110
+    const response = await fetch('http://localhost:5110/api/ops/exceptions/export', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(request)
+    })
+    
+    if (!response.ok) {
+      throw new Error(`Export failed: ${response.statusText}`)
+    }
+    
+    // Get file as blob and create download URL
+    const blob = await response.blob()
+    const url = URL.createObjectURL(blob)
+    const filename = `exceptions_export_${new Date().toISOString().split('T')[0]}.${request.format}`
+    
+    // Trigger download
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+    
+    return {
+      url,
+      fileName: filename,
+      expiresAt: new Date(Date.now() + 3600000).toISOString(),
+      rowCount: 'unknown'
+    }
   }
 
   async getExceptionRules(): Promise<any[]> {

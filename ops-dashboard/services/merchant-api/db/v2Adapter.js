@@ -147,7 +147,7 @@ const v2Adapter = {
         SELECT 
           b.id, 
           CASE 
-            WHEN b.id LIKE '%instant%' THEN 'instant'
+            WHEN b.id::text LIKE '%instant%' THEN 'instant'
             ELSE 'regular'
           END as type,
           b.created_at, 
@@ -217,99 +217,172 @@ const v2Adapter = {
     }
 
     try {
-      // First check if settlement exists and get its status
-      const settlementQuery = `
-        SELECT status FROM sp_v2_settlement_batches WHERE id = $1;
+      console.log('🔍 Reconstructing timeline for settlement:', settlementId);
+
+      // Get settlement batch data with all relevant timestamps
+      const batchQuery = `
+        SELECT 
+          id, created_at, updated_at, approved_at, settlement_completed_at, settled_at,
+          status, approval_status, transfer_status, bank_reference_number,
+          merchant_name, net_amount_paise, total_transactions
+        FROM sp_v2_settlement_batches
+        WHERE id = $1;
       `;
-      const settlementResult = await pool.query(settlementQuery, [settlementId]);
+
+      const batchResult = await pool.query(batchQuery, [settlementId]);
       
-      if (settlementResult.rows.length === 0) {
+      if (batchResult.rows.length === 0) {
+        console.log('❌ No settlement batch found for ID:', settlementId);
         return null;
       }
-      
-      const settlementStatus = settlementResult.rows[0].status;
-      
-      // Get timeline events (if they exist)
-      const timelineQuery = `
-        SELECT event_type, reason, detail, occurred_at, meta
-        FROM sp_v2_settlement_timeline_events
-        WHERE settlement_id = $1
-        ORDER BY occurred_at ASC;
-      `;
-      
-      const timelineResult = await pool.query(timelineQuery, [settlementId]);
-      
-      if (timelineResult.rows.length > 0) {
-        return timelineResult.rows.map(row => ({
-          type: row.event_type,
-          reason: row.reason,
-          detail: row.detail,
-          at: row.occurred_at,
-          meta: row.meta
-        }));
+
+      const batch = batchResult.rows[0];
+      console.log('✅ Found settlement batch:', {
+        status: batch.status,
+        created_at: batch.created_at,
+        approved_at: batch.approved_at,
+        settlement_completed_at: batch.settlement_completed_at,
+        settled_at: batch.settled_at
+      });
+
+      const timeline = [];
+
+      // 1. INITIATED - Always present when settlement is created
+      timeline.push({
+        type: 'INITIATED',
+        at: batch.created_at,
+        detail: 'Settlement request initiated'
+      });
+
+      // 2. BATCHED - When transactions are grouped for processing
+      if (batch.approved_at || batch.status !== 'DRAFT') {
+        timeline.push({
+          type: 'BATCHED', 
+          at: batch.approved_at || new Date(new Date(batch.created_at).getTime() + 30000), // +30 seconds if no approval timestamp
+          detail: 'Added to settlement batch'
+        });
       }
-      
-      // Synthesize timeline from settlement and transfer status
+
+      // 3. Check for bank transfers to determine file dispatch status
       const transferQuery = `
-        SELECT status, queued_at, sent_at, completed_at, utr_number
-        FROM sp_v2_bank_transfer_queue
-        WHERE batch_id = $1;
+        SELECT created_at, status, utr_number, failure_reason
+        FROM sp_v2_settlement_bank_transfers 
+        WHERE settlement_batch_id = $1
+        ORDER BY created_at ASC
+        LIMIT 1;
       `;
       
       const transferResult = await pool.query(transferQuery, [settlementId]);
-      const transfer = transferResult.rows[0];
       
-      const timeline = [];
-      const baseTime = new Date(Date.now() - 5 * 60 * 60 * 1000); // 5 hours ago
-      
-      // Always show INITIATED
-      timeline.push({
-        type: 'INITIATED',
-        at: new Date(baseTime.getTime()).toISOString(),
-        detail: 'Settlement request initiated'
-      });
-      
-      // BATCHED
-      timeline.push({
-        type: 'BATCHED',
-        at: new Date(baseTime.getTime() + 60 * 1000).toISOString(),
-        detail: 'Added to settlement batch'
-      });
-      
-      if (settlementStatus === 'PROCESSING') {
-        // For processing settlements, stop at BANK_FILE_AWAITED
-        timeline.push({
-          type: 'BANK_FILE_AWAITED',
-          reason: 'AWAITING_BANK_FILE',
-          at: new Date(baseTime.getTime() + 2 * 60 * 1000).toISOString(),
-          detail: 'Awaiting confirmation from the bank',
-          meta: {
-            expectedByIST: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(),
-            bank: 'HDFC Bank'
-          }
-        });
-      } else if (settlementStatus === 'SETTLED') {
-        // For completed settlements, show full timeline
-        timeline.push({
-          type: 'BANK_FILE_RECEIVED',
-          at: new Date(baseTime.getTime() + 3 * 60 * 1000).toISOString(),
-          detail: 'Bank confirmation file received'
-        });
+      if (transferResult.rows.length > 0) {
+        const transfer = transferResult.rows[0];
         
         timeline.push({
-          type: 'UTR_ASSIGNED',
-          at: new Date(baseTime.getTime() + 4 * 60 * 1000).toISOString(),
-          detail: `Bank UTR: ${transfer?.utr_number || 'HDFC24091501234567'}`
+          type: 'FILE_DISPATCHED',
+          at: transfer.created_at,
+          detail: 'Payment file sent to bank'
         });
-        
+
+        if (transfer.utr_number) {
+          timeline.push({
+            type: 'UTR_ASSIGNED',
+            at: transfer.created_at,
+            detail: 'UTR assigned by bank',
+            meta: { utr: transfer.utr_number }
+          });
+        }
+
+        if (transfer.status === 'FAILED' && transfer.failure_reason) {
+          timeline.push({
+            type: 'FAILED',
+            at: transfer.created_at,
+            detail: transfer.failure_reason
+          });
+        }
+      } else {
+        // No bank transfer record, determine state from batch status
+        if (batch.status === 'PROCESSING') {
+          timeline.push({
+            type: 'BANK_FILE_AWAITED',
+            reason: 'AWAITING_BANK_FILE',
+            at: new Date(new Date(batch.created_at).getTime() + 60000), // +1 minute
+            detail: 'Awaiting confirmation from the bank',
+            meta: {
+              expectedByIST: new Date(new Date(batch.created_at).getTime() + 24 * 60 * 60 * 1000).toISOString(),
+              bank: 'HDFC Bank'
+            }
+          });
+        }
+      }
+
+      // 4. Check for approval events
+      const approvalQuery = `
+        SELECT decision_at, decision, approver_name, rejection_reason
+        FROM sp_v2_settlement_approvals 
+        WHERE batch_id = $1
+        ORDER BY decision_at ASC;
+      `;
+      
+      const approvalResult = await pool.query(approvalQuery, [settlementId]);
+      
+      for (const approval of approvalResult.rows) {
+        if (approval.decision === 'APPROVED') {
+          timeline.push({
+            type: 'APPROVED',
+            at: approval.decision_at,
+            detail: `Approved by ${approval.approver_name}`
+          });
+        } else if (approval.decision === 'REJECTED') {
+          timeline.push({
+            type: 'FAILED',
+            at: approval.decision_at,
+            detail: approval.rejection_reason || 'Settlement rejected'
+          });
+        }
+      }
+
+      // 5. RECONCILED - When settlement is processed
+      if (batch.settlement_completed_at) {
         timeline.push({
-          type: 'SETTLED',
-          at: new Date(baseTime.getTime() + 5 * 60 * 1000).toISOString(),
-          detail: 'Amount credited to bank account'
+          type: 'RECONCILED',
+          at: batch.settlement_completed_at,
+          detail: 'Settlement reconciled with bank'
         });
       }
+
+      // 6. SETTLED - Final completion
+      if (batch.settled_at) {
+        timeline.push({
+          type: 'SETTLED',
+          at: batch.settled_at,
+          detail: 'Settlement completed successfully'
+        });
+      }
+
+      // 7. Check for any errors
+      const errorQuery = `
+        SELECT created_at, error_message, error_type, is_resolved, resolved_at
+        FROM sp_v2_settlement_errors 
+        WHERE batch_id = $1
+        ORDER BY created_at ASC;
+      `;
       
+      const errorResult = await pool.query(errorQuery, [settlementId]);
+      
+      for (const error of errorResult.rows) {
+        timeline.push({
+          type: error.is_resolved ? 'RESOLVED' : 'FAILED',
+          at: error.is_resolved ? error.resolved_at : error.created_at,
+          detail: error.error_message || `${error.error_type} error occurred`
+        });
+      }
+
+      // Sort timeline by timestamp
+      timeline.sort((a, b) => new Date(a.at) - new Date(b.at));
+
+      console.log('✅ Reconstructed timeline with', timeline.length, 'events');
       return timeline;
+
     } catch (error) {
       console.error('❌ getSettlementTimeline error:', error);
       return null;
@@ -516,6 +589,281 @@ const v2Adapter = {
       };
     } catch (error) {
       console.error('❌ getInsights error:', error);
+      return null;
+    }
+  },
+
+  // Get settlement transactions with financial breakdown
+  async getSettlementTransactions(settlementId) {
+    if (!USE_DB || !pool) {
+      return null;
+    }
+
+    try {
+      const query = `
+        SELECT 
+          t.transaction_id,
+          t.amount_paise,
+          t.payment_method,
+          t.status,
+          t.transaction_timestamp,
+          t.settled_at,
+          t.source_type,
+          t.gateway_ref,
+          t.utr,
+          t.rrn,
+          t.acquirer_code,
+          t.bank_fee_paise,
+          t.settlement_amount_paise,
+          t.exception_reason,
+          si.commission_paise,
+          si.gst_paise,
+          si.reserve_paise,
+          si.net_paise,
+          si.fee_bearer,
+          si.commission_type,
+          si.commission_rate
+        FROM sp_v2_transactions t
+        LEFT JOIN sp_v2_settlement_items si ON t.transaction_id = si.transaction_id
+        WHERE t.settlement_batch_id = $1
+        ORDER BY t.transaction_timestamp DESC;
+      `;
+
+      const result = await pool.query(query, [settlementId]);
+
+      return result.rows.map(row => ({
+        transaction_id: row.transaction_id,
+        amount_paise: parseInt(row.amount_paise || 0),
+        payment_method: row.payment_method,
+        status: row.status,
+        transaction_timestamp: row.transaction_timestamp,
+        settled_at: row.settled_at,
+        source_type: row.source_type,
+        gateway_ref: row.gateway_ref,
+        utr: row.utr,
+        rrn: row.rrn,
+        acquirer_code: row.acquirer_code,
+        bank_fee_paise: parseInt(row.bank_fee_paise || 0),
+        settlement_amount_paise: parseInt(row.settlement_amount_paise || 0),
+        exception_reason: row.exception_reason,
+        // Settlement items (financial breakdown)
+        commission_paise: parseInt(row.commission_paise || 0),
+        gst_paise: parseInt(row.gst_paise || 0),
+        reserve_paise: parseInt(row.reserve_paise || 0),
+        net_paise: parseInt(row.net_paise || 0),
+        fee_bearer: row.fee_bearer,
+        commission_type: row.commission_type,
+        commission_rate: parseFloat(row.commission_rate || 0)
+      }));
+    } catch (error) {
+      console.error('❌ getSettlementTransactions error:', error);
+      return null;
+    }
+  },
+
+  // Settlement Schedule Management
+  async getSettlementSchedule(merchantId) {
+    if (!USE_DB || !pool) {
+      return null;
+    }
+
+    try {
+      console.log('🔍 Getting settlement schedule for merchant:', merchantId);
+
+      const query = `
+        SELECT 
+          settlement_time,
+          settlement_frequency,
+          auto_settle,
+          min_settlement_amount_paise,
+          updated_at
+        FROM sp_v2_merchant_settlement_config
+        WHERE merchant_id = $1 AND is_active = true
+        LIMIT 1;
+      `;
+
+      const result = await pool.query(query, [merchantId]);
+      
+      if (result.rows.length === 0) {
+        console.log('❌ No settlement config found for merchant:', merchantId);
+        return null;
+      }
+
+      const config = result.rows[0];
+      
+      // Convert settlement_time (HH:MM:SS) to minutes from start of day in IST
+      const timeParts = config.settlement_time.split(':');
+      const cutoffMinutesIST = (parseInt(timeParts[0]) * 60) + parseInt(timeParts[1]);
+      
+      // Convert to frontend format
+      const schedule = {
+        tPlusDays: 1, // Default T+1 for daily settlements
+        cutoffMinutesIST: cutoffMinutesIST,
+        effectiveFrom: new Date().toISOString().split('T')[0],
+        lastChangedAt: config.updated_at ? config.updated_at.toISOString() : new Date().toISOString()
+      };
+
+      console.log('✅ Settlement schedule retrieved:', schedule);
+      return schedule;
+
+    } catch (error) {
+      console.error('❌ getSettlementSchedule error:', error);
+      return null;
+    }
+  },
+
+  async updateSettlementSchedule(merchantId, scheduleData) {
+    if (!USE_DB || !pool) {
+      return null;
+    }
+
+    try {
+      console.log('🔧 Updating settlement schedule for merchant:', merchantId, scheduleData);
+
+      const { tPlusDays, cutoffMinutesIST, effectiveFrom } = scheduleData;
+      
+      // Convert cutoffMinutesIST back to time format (HH:MM:SS)
+      const hours = Math.floor(cutoffMinutesIST / 60);
+      const minutes = cutoffMinutesIST % 60;
+      const settlementTime = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:00`;
+
+      const updateQuery = `
+        UPDATE sp_v2_merchant_settlement_config
+        SET 
+          settlement_time = $2,
+          updated_at = NOW()
+        WHERE merchant_id = $1 AND is_active = true
+        RETURNING *;
+      `;
+
+      const result = await pool.query(updateQuery, [merchantId, settlementTime]);
+      
+      if (result.rows.length === 0) {
+        console.log('❌ No settlement config found to update for merchant:', merchantId);
+        return null;
+      }
+
+      const updatedConfig = result.rows[0];
+      
+      // Return in the expected format
+      const response = {
+        accepted: true,
+        appliedFrom: effectiveFrom || new Date().toISOString().split('T')[0],
+        schedule: {
+          tPlusDays: tPlusDays,
+          cutoffMinutesIST: cutoffMinutesIST,
+          effectiveFrom: effectiveFrom || new Date().toISOString().split('T')[0],
+          lastChangedAt: updatedConfig.updated_at.toISOString()
+        }
+      };
+
+      console.log('✅ Settlement schedule updated successfully:', response);
+      return response;
+
+    } catch (error) {
+      console.error('❌ updateSettlementSchedule error:', error);
+      return null;
+    }
+  },
+
+  // On-Demand Settlements (manual/instant settlements)
+  async listOnDemandSettlements(merchantId = DEFAULT_MERCHANT_ID, { limit = 25, offset = 0 } = {}) {
+    if (!USE_DB || !pool) {
+      return null;
+    }
+
+    try {
+      console.log('🔍 Fetching on-demand settlements for merchant:', merchantId);
+
+      // Query for on-demand settlements (manual triggers OR single transactions)
+      const query = `
+        SELECT 
+          sb.id,
+          sb.merchant_id,
+          sb.merchant_name,
+          sb.cycle_date,
+          sb.total_transactions,
+          sb.gross_amount_paise,
+          sb.total_commission_paise,
+          sb.total_gst_paise,
+          sb.total_reserve_paise,
+          sb.net_amount_paise,
+          sb.status,
+          sb.created_at,
+          sb.updated_at,
+          sb.approved_at,
+          sb.settled_at,
+          sb.bank_reference_number,
+          sr.trigger_type,
+          sr.triggered_by,
+          bt.utr_number,
+          bt.transfer_mode
+        FROM sp_v2_settlement_batches sb
+        LEFT JOIN sp_v2_settlement_schedule_runs sr ON sb.settlement_run_id = sr.id
+        LEFT JOIN sp_v2_settlement_bank_transfers bt ON bt.settlement_batch_id = sb.id
+        WHERE sb.merchant_id = $1
+        AND (
+          sr.trigger_type = 'manual' 
+          OR sb.total_transactions <= 5
+          OR (sb.created_at = sb.updated_at AND sb.total_transactions <= 10)
+        )
+        ORDER BY sb.created_at DESC
+        LIMIT $2 OFFSET $3;
+      `;
+
+      const countQuery = `
+        SELECT COUNT(*) as total
+        FROM sp_v2_settlement_batches sb
+        LEFT JOIN sp_v2_settlement_schedule_runs sr ON sb.settlement_run_id = sr.id
+        WHERE sb.merchant_id = $1
+        AND (
+          sr.trigger_type = 'manual' 
+          OR sb.total_transactions <= 5
+          OR (sb.created_at = sb.updated_at AND sb.total_transactions <= 10)
+        );
+      `;
+
+      const [dataResult, countResult] = await Promise.all([
+        pool.query(query, [merchantId, limit, offset]),
+        pool.query(countQuery, [merchantId])
+      ]);
+
+      const settlements = dataResult.rows.map(row => ({
+        id: row.id,
+        type: row.trigger_type === 'manual' ? 'instant' : 'on-demand',
+        date: row.created_at.toISOString(),
+        amount: parseInt(row.gross_amount_paise || 0),
+        fees: parseInt(row.total_commission_paise || 0),
+        taxes: parseInt(row.total_gst_paise || 0),
+        netAmount: parseInt(row.net_amount_paise || 0),
+        status: this.mapStatus(row.status),
+        utr: row.utr_number || null,
+        rrn: row.bank_reference_number || null,
+        createdAt: row.created_at.toISOString(),
+        settledAt: row.settled_at ? row.settled_at.toISOString() : null,
+        bankAccount: row.transfer_mode || "Manual Transfer",
+        transactionCount: row.total_transactions,
+        tPlusDays: 0, // Instant/on-demand = T+0
+        triggerType: row.trigger_type || 'on-demand',
+        triggeredBy: row.triggered_by || 'merchant'
+      }));
+
+      const total = parseInt(countResult.rows[0].total);
+
+      console.log(`✅ Found ${settlements.length} on-demand settlements (${total} total)`);
+
+      return {
+        settlements,
+        pagination: {
+          limit,
+          offset,
+          total,
+          hasNext: offset + limit < total
+        }
+      };
+
+    } catch (error) {
+      console.error('❌ listOnDemandSettlements error:', error);
       return null;
     }
   }
