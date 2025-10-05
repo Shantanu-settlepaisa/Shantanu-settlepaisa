@@ -125,7 +125,8 @@ function transformV2ToKpis(v2Data: any): Kpis {
   const pipeline = v2Data.pipeline || {};
   const reconciliation = v2Data.reconciliation || {};
   const financial = v2Data.financial || {};
-  const hasRealData = (pipeline.captured || pipeline.totalTransactions || 0) > 0;
+  // Check if we have real API data (even if 0 transactions) by checking for source field
+  const hasRealData = v2Data.source === 'V2_DATABASE' || v2Data.pipeline !== undefined;
   
   if (hasRealData) {
     // CORRECT FORMULAS:
@@ -235,7 +236,7 @@ function transformV2ToTopReasons(v2Data: any): TopReason[] {
   // Extract data from actual V2 API structure
   const reconciliation = v2Data.reconciliation || {};
   const pipeline = v2Data.pipeline || {};
-  const hasRealData = (pipeline.captured || pipeline.totalTransactions || 0) > 0;
+  const hasRealData = v2Data.source === 'V2_DATABASE' || v2Data.pipeline !== undefined;
   const exceptionCount = hasRealData ? (reconciliation.exceptions || reconciliation.unmatched || 0) : 28;
   
   console.log('🎯 [V2 Hooks] TopReasons exception count:', exceptionCount);
@@ -255,7 +256,7 @@ function transformV2ToPipeline(v2Data: any): PipelineSummary {
   const pipeline = v2Data.pipeline || {};
   const reconciliation = v2Data.reconciliation || {};
   const settlements = v2Data.settlements || {};
-  const hasRealData = (pipeline.captured || pipeline.totalTransactions || 0) > 0;
+  const hasRealData = v2Data.source === 'V2_DATABASE' || v2Data.pipeline !== undefined;
   
   if (hasRealData) {
     // Use pipeline data directly from V2 API - no fallback to avoid 0 being treated as falsy
@@ -301,7 +302,7 @@ function transformV2ToReconSources(v2Data: any): ReconSourceSummary {
   
   // Extract data from actual V2 API structure
   const reconciliation = v2Data.reconciliation || {};
-  const hasRealData = reconciliation.total > 0;
+  const hasRealData = v2Data.source === 'V2_DATABASE' || v2Data.reconciliation !== undefined;
   
   if (hasRealData) {
     // CORRECT RECONCILIATION SOURCE FORMULAS:

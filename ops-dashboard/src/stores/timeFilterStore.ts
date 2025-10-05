@@ -21,9 +21,9 @@ const getDateString = (daysAgo: number) => {
 };
 
 const defaultFilter: TimeFilter = {
-  from: getDateString(7),
+  from: getDateString(0),
   to: getDateString(0),
-  label: 'Last 7 Days'
+  label: 'Today'
 };
 
 export const useTimeFilterStore = create<TimeFilterStore>()(
@@ -35,6 +35,7 @@ export const useTimeFilterStore = create<TimeFilterStore>()(
     }),
     {
       name: 'time-filter-storage',
+      version: 2, // Increment version to clear old cache
       // Custom merge to recalculate dates on hydration
       merge: (persistedState, currentState) => {
         const persisted = persistedState as TimeFilterStore;

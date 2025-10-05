@@ -1,9 +1,118 @@
 # SettlePaisa Ops Dashboard - Version History
 
-## Current Version: 2.24.0
+## Current Version: 2.25.0
 **Release Date**: October 5, 2025  
-**Status**: Production-Ready (Enhanced V1→V2 Normalization)  
+**Status**: Production-Ready (Critical Dashboard Cache Fixes)  
 **Environment**: Development
+
+---
+
+## Version 2.25.0 - Critical Dashboard Cache and Mock Data Fixes
+**Date**: October 5, 2025  
+**Implementation Time**: 3 hours  
+**Breaking Change**: None (Bug fixes only)  
+**Priority**: CRITICAL - Fixes incorrect data display
+
+### 🐛 Critical Bug Fixes
+
+#### 1. **React Query Aggressive Caching Issue**
+**Problem**: Dashboard showing stale cached data even after hard refresh  
+**Root Cause**: Global QueryClient had 5-minute cache (`gcTime: 5 * 60 * 1000`) and `refetchOnWindowFocus: false`  
+**Impact**: Users saw old data (e.g., 47 transactions from Oct 3) when viewing "Today" (Oct 5)
+
+**Files Changed:**
+- `src/main.tsx` - Updated global QueryClient configuration
+  - Changed `staleTime: 30000` → `staleTime: 0` (data stale immediately)
+  - Changed `gcTime: 5 * 60 * 1000` → `gcTime: 30 * 1000` (30 seconds only)
+  - Changed `refetchOnWindowFocus: false` → `refetchOnWindowFocus: true`
+  - Added `refetchOnMount: 'always'`
+  
+- `src/pages/ops/OverviewSimple.tsx` - Added aggressive no-cache settings
+  - Added `staleTime: 0`
+  - Added `gcTime: 0`
+  - Added `refetchOnMount: 'always'`
+  - Added `refetchOnWindowFocus: true`
+
+**Result**: ✅ Dashboard now always shows fresh data, no stale cache
+
+---
+
+#### 2. **Default Date Filter Showing "Last 7 Days" Instead of "Today"**
+**Problem**: Dashboard defaulting to "Last 7 Days" on every page load  
+**Root Cause**: Global time filter store (`timeFilterStore.ts`) had default set to "Last 7 Days" with localStorage persistence  
+**Impact**: Users had to manually select "Today" every time, saw 7 days of data instead of current day
+
+**Files Changed:**
+- `src/stores/timeFilterStore.ts`
+  - Changed default filter from `{ label: 'Last 7 Days', from: getDateString(7), to: getDateString(0) }`
+  - To `{ label: 'Today', from: getDateString(0), to: getDateString(0) }`
+  - Added `version: 2` to localStorage persistence to invalidate old cache
+
+**Result**: ✅ Dashboard now defaults to "Today" on every page load
+
+---
+
+#### 3. **Mock Data Fallback When API Returns 0 Transactions**
+**Problem**: Dashboard showing hardcoded 47 transactions instead of real 0 transactions  
+**Root Cause**: Flawed `hasRealData` logic checked if `captured > 0`, falling back to mock data when API returned 0  
+**Impact**: Users saw fake data (47 txns, ₹3.30K, 28 exceptions) even when API was working correctly with 0 real data
+
+**Files Changed:**
+- `src/hooks/opsOverview.ts` - Fixed in 4 transformation functions
+  - `transformV2ToKpis()` - Line 129
+  - `transformV2ToTopReasons()` - Line 239
+  - `transformV2ToPipeline()` - Line 259
+  - `transformV2ToReconSources()` - Line 305
+  
+**Before (Broken):**
+```typescript
+const hasRealData = (pipeline.captured || pipeline.totalTransactions || 0) > 0;
+// Returns false when captured = 0, falls back to mock data
+```
+
+**After (Fixed):**
+```typescript
+const hasRealData = v2Data.source === 'V2_DATABASE' || v2Data.pipeline !== undefined;
+// Returns true as long as we have API data (even if 0 transactions)
+```
+
+**Result**: ✅ Dashboard correctly shows 0 transactions when there's no data for selected date
+
+---
+
+### 📋 Documentation Added
+
+Created comprehensive documentation for all fixes:
+- `CACHE_FIX_SUMMARY.md` - React Query caching issue details
+- `DEFAULT_DATE_FILTER_FIX.md` - Time filter store default change
+- `MOCK_DATA_FALLBACK_FIX.md` - Mock data fallback logic fix
+
+---
+
+### ✅ Impact Summary
+
+**Before Fixes:**
+- ❌ Dashboard showed 47 transactions when 0 expected
+- ❌ Hard refresh didn't clear stale data
+- ❌ Defaulted to "Last 7 Days" every time
+- ❌ Mock data shown even when API was working
+
+**After Fixes:**
+- ✅ Dashboard shows accurate real-time data
+- ✅ No stale cache across refreshes
+- ✅ Defaults to "Today" for daily operations
+- ✅ Mock data only when API truly fails
+
+---
+
+### 🎯 Testing Verification
+
+All fixes verified with:
+1. Database query showing 0 transactions for Oct 5, 2025
+2. API endpoint returning correct 0 count
+3. Browser displaying 0 transactions after fixes
+4. Date filter defaulting to "Today"
+5. No localStorage cache interference
 
 ---
 

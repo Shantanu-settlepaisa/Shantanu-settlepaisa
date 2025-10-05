@@ -30,9 +30,10 @@ if (import.meta.env.VITE_DEMO_MODE === 'true') {
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      staleTime: 30 * 1000, // 30 seconds
-      gcTime: 5 * 60 * 1000, // 5 minutes
-      refetchOnWindowFocus: false,
+      staleTime: 0, // Data is stale immediately - always refetch
+      gcTime: 30 * 1000, // Keep in cache for 30 seconds only
+      refetchOnWindowFocus: true, // Refetch when window regains focus
+      refetchOnMount: 'always', // Always refetch on component mount
       retry: 1,
     },
   },
