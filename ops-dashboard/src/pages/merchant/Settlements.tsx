@@ -373,15 +373,14 @@ export default function MerchantSettlements() {
   const handleExport = () => {
     const formatAmount = (paise: number) => (paise / 100).toFixed(2)
     const formatDate = (dateStr: string | null) => {
-      if (!dateStr) return '-'
-      return new Date(dateStr).toLocaleString('en-IN', {
-        day: '2-digit',
-        month: '2-digit',
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: true
-      })
+      if (!dateStr || dateStr === null) return '-'
+      const date = new Date(dateStr)
+      const day = String(date.getDate()).padStart(2, '0')
+      const month = String(date.getMonth() + 1).padStart(2, '0')
+      const year = date.getFullYear()
+      const hours = String(date.getHours()).padStart(2, '0')
+      const minutes = String(date.getMinutes()).padStart(2, '0')
+      return `${day}/${month}/${year} ${hours}:${minutes}`
     }
     
     const csv = [
@@ -395,7 +394,7 @@ export default function MerchantSettlements() {
         s.utr || s.rrn || '-',
         s.status,
         formatDate(s.createdAt),
-        formatDate(s.settledAt),
+        s.settledAt ? formatDate(s.settledAt) : '-',
         `"${s.bankAccount || '-'}"`,
         s.transactionCount || 0
       ].join(','))
