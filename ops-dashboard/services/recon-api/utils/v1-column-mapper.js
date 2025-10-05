@@ -1,3 +1,62 @@
+function parseCardNetwork(paymentMode) {
+  if (!paymentMode) return null;
+  
+  const mode = String(paymentMode).toLowerCase();
+  
+  if (mode.includes('rupay')) return 'RUPAY';
+  if (mode.includes('visa')) return 'VISA';
+  if (mode.includes('master')) return 'MASTERCARD';
+  if (mode.includes('amex')) return 'AMEX';
+  if (mode.includes('diners')) return 'DINERS';
+  if (mode.includes('upi') || mode.includes('bhim')) return 'UPI';
+  
+  return null;
+}
+
+function parsePaymentMethod(paymentMode) {
+  if (!paymentMode) return null;
+  
+  const mode = String(paymentMode).toLowerCase();
+  
+  if (mode.includes('upi') || mode.includes('bhim')) return 'UPI';
+  if (mode.includes('banking') || mode.includes('netbanking') || mode.includes('net banking')) return 'NETBANKING';
+  if (mode.includes('card')) return 'CARD';
+  if (mode.includes('wallet')) return 'WALLET';
+  
+  return String(paymentMode).toUpperCase();
+}
+
+function normalizeAcquirerCode(pgPayMode) {
+  if (!pgPayMode) return null;
+  
+  const mode = String(pgPayMode).toUpperCase();
+  
+  if (mode.includes('HDFC')) return 'HDFC';
+  if (mode.includes('ICICI')) return 'ICICI';
+  if (mode.includes('AXIS')) return 'AXIS';
+  if (mode.includes('SBI') || mode.includes('STATE BANK')) return 'SBI';
+  if (mode === 'BOB' || mode.includes('BARODA')) return 'BOB';
+  if (mode.includes('KOTAK')) return 'KOTAK';
+  if (mode.includes('INDUSIND')) return 'INDUSIND';
+  if (mode.includes('YES BANK') || mode.includes('YES_BANK')) return 'YES_BANK';
+  if (mode.includes('PUNJAB') || mode.includes('PNB')) return 'PNB';
+  if (mode.includes('AIRTEL')) return 'AIRTEL';
+  if (mode.includes('PHONEPE')) return 'PHONEPE';
+  if (mode.includes('PAYTM')) return 'PAYTM';
+  if (mode.includes('GOOGLE PAY') || mode.includes('GPAY')) return 'GOOGLEPAY';
+  if (mode.includes('IDFC')) return 'IDFC';
+  if (mode.includes('FEDERAL')) return 'FEDERAL';
+  if (mode.includes('RBL')) return 'RBL';
+  if (mode.includes('CANARA')) return 'CANARA';
+  
+  return pgPayMode;
+}
+
+function generateGatewayRef(pgName, transactionId) {
+  if (!pgName || !transactionId) return null;
+  return `${pgName}-${transactionId}`;
+}
+
 const V1_TO_V2_COLUMN_MAPPING = {
   pg_transactions: {
     'transaction_id': 'transaction_id',
@@ -16,7 +75,8 @@ const V1_TO_V2_COLUMN_MAPPING = {
     'approval_code': 'approval_code',
     'transaction_status': 'status',
     'pg_name': 'source_name',
-    'pg_pay_mode': 'payment_method'
+    'pg_pay_mode': 'acquirer_code',
+    'client_name': 'merchant_name'
   },
   bank_statements: {
     'utr': 'utr',
@@ -139,6 +199,34 @@ function mapV1ToV2(v1Row, type = 'pg_transactions') {
     
     if (!v2Row.currency) {
       v2Row.currency = 'INR'
+    }
+    
+    // Enhanced: Parse payment_method correctly (not just copy payment_mode)
+    if (v1Row.payment_mode) {
+      v2Row.payment_method = parsePaymentMethod(v1Row.payment_mode)
+    }
+    
+    // Enhanced: Extract card_network from payment_mode
+    if (v1Row.payment_mode) {
+      const cardNetwork = parseCardNetwork(v1Row.payment_mode)
+      if (cardNetwork) {
+        v2Row.card_network = cardNetwork
+      }
+    }
+    
+    // Enhanced: Normalize acquirer_code from pg_pay_mode
+    if (v1Row.pg_pay_mode) {
+      v2Row.acquirer_code = normalizeAcquirerCode(v1Row.pg_pay_mode)
+    }
+    
+    // Enhanced: Generate gateway_ref
+    if (v1Row.pg_name && v1Row.transaction_id) {
+      v2Row.gateway_ref = generateGatewayRef(v1Row.pg_name, v1Row.transaction_id)
+    }
+    
+    // Enhanced: Add merchant_name from client_name
+    if (v1Row.client_name) {
+      v2Row.merchant_name = v1Row.client_name
     }
   }
   

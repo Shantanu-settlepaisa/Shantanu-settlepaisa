@@ -1,9 +1,114 @@
 # SettlePaisa Ops Dashboard - Version History
 
-## Current Version: 2.11.0
-**Release Date**: October 2, 2025  
-**Status**: Production-Ready (V1 Exception Persistence Fixed)  
+## Current Version: 2.24.0
+**Release Date**: October 5, 2025  
+**Status**: Production-Ready (Enhanced V1→V2 Normalization)  
 **Environment**: Development
+
+---
+
+## Version 2.24.0 - Enhanced V1→V2 Normalization with Intelligent Parsing
+**Date**: October 5, 2025  
+**Implementation Time**: 4 hours  
+**Breaking Change**: None (Enhancement only)
+
+### 🎯 Major Enhancement: Intelligent Field Enrichment in Normalization
+
+Enhanced the V1→V2 normalization layer to automatically extract and enrich payment gateway data with card networks, acquirer codes, and gateway references during file uploads and API sync.
+
+### ✨ New Features
+
+#### 1. **Card Network Extraction**
+- Automatically parses `card_network` from V1 `payment_mode` field
+- Supports: RUPAY, VISA, MASTERCARD, AMEX, DINERS, UPI
+- Example: "Rupay Card" → `card_network: "RUPAY"`, `payment_method: "CARD"`
+
+#### 2. **Acquirer Code Normalization**
+- Standardizes bank names to acquirer codes
+- Extracts from V1 `pg_pay_mode` field
+- Example: "Punjab National Bank Retail" → `acquirer_code: "PNB"`
+- Supported: HDFC, ICICI, AXIS, SBI, BOB, PNB, KOTAK, INDUSIND, YES_BANK, etc.
+
+#### 3. **Gateway Reference Generation**
+- Creates composite gateway reference from `pg_name` + `transaction_id`
+- Example: `pg_name: "SabPaisa"` + `transaction_id: "661581..."` → `gateway_ref: "SabPaisa-661581..."`
+
+#### 4. **Payment Method Parsing**
+- Intelligently categorizes payment modes
+- "Rupay Card" → `payment_method: "CARD"`
+- "Net Banking" → `payment_method: "NETBANKING"`
+- "UPI" → `payment_method: "UPI"`
+
+### 🔧 Technical Implementation
+
+**File Modified**: `services/recon-api/utils/v1-column-mapper.js`
+
+**New Functions Added:**
+```javascript
+parseCardNetwork(paymentMode)      // Extract card network
+parsePaymentMethod(paymentMode)    // Normalize payment method
+normalizeAcquirerCode(pgPayMode)   // Standardize bank codes
+generateGatewayRef(pgName, txnId)  // Create gateway reference
+```
+
+**Enhanced Mapping:**
+```javascript
+V1 Input:
+  payment_mode: "Rupay Card"
+  pg_pay_mode: "BOB"
+  pg_name: "SabPaisa"
+
+V2 Output (enriched):
+  payment_method: "CARD"
+  card_network: "RUPAY"
+  acquirer_code: "BOB"
+  gateway_ref: "SabPaisa-661581002251176056"
+```
+
+### 🚀 Impact on All Data Sources
+
+This enhancement automatically applies to:
+- ✅ Bank file uploads (Layer 1 → Layer 2)
+- ✅ PG file uploads (Layer 2 directly)
+- ✅ API sync from SabPaisa (Layer 2 directly)
+- ✅ Manual V1 CSV uploads (Layer 2 directly)
+
+### 📊 Enrichment Coverage
+
+| V2 Column | V1 Source | Status |
+|-----------|-----------|--------|
+| `card_network` | `payment_mode` (parsed) | ✅ NEW |
+| `acquirer_code` | `pg_pay_mode` (normalized) | ✅ NEW |
+| `gateway_ref` | `pg_name` + `transaction_id` | ✅ NEW |
+| `payment_method` | `payment_mode` (parsed) | ✅ ENHANCED |
+| `merchant_name` | `client_name` | ✅ NEW |
+
+### 🧪 Testing
+
+- Created comprehensive test suite: `test-enhanced-normalization.cjs`
+- Tested 3 payment types: Card (Rupay), Net Banking, UPI
+- All tests passed ✅
+- Validates parsing logic, normalization, and enrichment
+
+### 📝 Files Changed
+
+1. **services/recon-api/utils/v1-column-mapper.js** - Enhanced normalization logic
+2. **test-enhanced-normalization.cjs** - Test suite for validation
+3. **ENHANCED_NORMALIZATION_SUMMARY.md** - Complete documentation
+
+### 🔄 Backward Compatibility
+
+- ✅ No breaking changes
+- ✅ Existing functionality preserved
+- ✅ Only adds new enriched fields
+- ✅ Works seamlessly with existing data flow
+
+### 🎯 Benefits
+
+1. **Automatic Enrichment** - No manual data entry for card networks/acquirers
+2. **Better Analytics** - Can filter/group by card network and acquirer
+3. **Consistent Data** - Standardized payment methods across all sources
+4. **Future-Proof** - Easy to add new card networks or banks
 
 ---
 
