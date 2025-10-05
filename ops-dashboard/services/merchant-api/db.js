@@ -184,13 +184,13 @@ const db = {
       // Date range filter
       if (startDate) {
         params.push(startDate);
-        conditions.push(`created_at >= $${paramIndex}::timestamp`);
+        conditions.push(`created_at >= $${paramIndex}::date`);
         paramIndex++;
       }
 
       if (endDate) {
         params.push(endDate);
-        conditions.push(`created_at <= $${paramIndex}::timestamp`);
+        conditions.push(`created_at < ($${paramIndex}::date + interval '1 day')`);
         paramIndex++;
       }
 
