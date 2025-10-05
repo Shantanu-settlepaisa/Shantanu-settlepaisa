@@ -371,19 +371,33 @@ export default function MerchantSettlements() {
   }
 
   const handleExport = () => {
-    // Generate CSV export
+    const formatAmount = (paise: number) => (paise / 100).toFixed(2)
+    const formatDate = (dateStr: string | null) => {
+      if (!dateStr) return '-'
+      return new Date(dateStr).toLocaleString('en-IN', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: true
+      })
+    }
+    
     const csv = [
-      ['Settlement ID', 'Type', 'Amount', 'Fees', 'Tax', 'UTR', 'Status', 'Created At', 'Settled At'].join(','),
+      ['Settlement ID', 'Type', 'Amount (₹)', 'Fees (₹)', 'Tax (₹)', 'UTR/RRN', 'Status', 'Created At', 'Settled At', 'Bank Account', 'Transaction Count'].join(','),
       ...(settlements || []).map(s => [
         s.id,
         s.type,
-        s.amount,
-        s.fees,
-        s.tax,
-        s.utr,
+        formatAmount(s.amount),
+        formatAmount(s.fees),
+        formatAmount(s.tax),
+        s.utr || s.rrn || '-',
         s.status,
-        s.createdAt,
-        s.settledAt || '-'
+        formatDate(s.createdAt),
+        formatDate(s.settledAt),
+        `"${s.bankAccount || '-'}"`,
+        s.transactionCount || 0
       ].join(','))
     ].join('\n')
     
