@@ -1,5 +1,5 @@
 import { IndianRupee, TrendingDown, TrendingUp } from 'lucide-react';
-import { formatINR } from '@/lib/currency';
+import { paiseToCompactINR } from '@/lib/currency';
 
 interface FinancialImpactTileProps {
   disputedPaise: string;
@@ -65,7 +65,7 @@ export function FinancialImpactTile({
         >
           <span className="text-xs text-slate-600">Disputed</span>
           <span className="text-sm font-semibold text-slate-900">
-            {formatINR(disputedPaise, { compact: true })}
+            {paiseToCompactINR(disputedPaise)}
           </span>
         </button>
         
@@ -76,7 +76,7 @@ export function FinancialImpactTile({
         >
           <span className="text-xs text-slate-600">Recovered</span>
           <span className="text-sm font-semibold text-green-700">
-            {formatINR(recoveredPaise, { compact: true })}
+            {paiseToCompactINR(recoveredPaise)}
           </span>
         </button>
         
@@ -87,7 +87,7 @@ export function FinancialImpactTile({
         >
           <span className="text-xs text-slate-600">Written-off</span>
           <span className="text-sm font-semibold text-red-700">
-            {formatINR(writtenOffPaise, { compact: true })}
+            {paiseToCompactINR(writtenOffPaise)}
           </span>
         </button>
         
@@ -107,7 +107,7 @@ export function FinancialImpactTile({
             </div>
             <div className="flex items-center gap-2">
               <span className={`text-sm font-semibold ${isPositive ? 'text-green-700' : 'text-red-700'}`}>
-                {formatINR(net.toString(), { compact: true })}
+                {paiseToCompactINR(net.toString())}
               </span>
               <span className={`text-xs ${isPositive ? 'text-green-600' : 'text-red-600'}`}>
                 ({netPercentage.toFixed(1)}%)

@@ -11,7 +11,7 @@ interface ReconRuleSettingsProps {
 
 export function ReconRuleSettings({ isAdmin }: ReconRuleSettingsProps) {
   const [creating, setCreating] = useState(false);
-  const { clearSelection } = useRuleSettingsStore();
+  const { setSelectedRuleId, triggerRefresh } = useRuleSettingsStore();
 
   // Check feature flag (would come from env/config in production)
   const FEATURE_RECON_RULE_SETTINGS = true; // Default false in production
@@ -31,9 +31,12 @@ export function ReconRuleSettings({ isAdmin }: ReconRuleSettingsProps) {
         status: 'draft',
         updatedBy: 'current-user@settlepaisa.com'
       });
-      alert(`Created new rule: ${newRule.name}`);
-      // Refresh list
-      window.location.reload();
+      
+      // Trigger refresh of the rules list
+      triggerRefresh();
+      
+      // Auto-select the newly created rule
+      setSelectedRuleId(newRule.id);
     } catch (error) {
       console.error('Failed to create rule:', error);
       alert('Failed to create rule. Please try again.');

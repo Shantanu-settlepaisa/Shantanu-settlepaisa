@@ -11,6 +11,7 @@ const {
 const { registerAnalyticsV3Endpoints } = require('./analytics-v3-endpoints');
 const { getSettlementPipeline, initializeDatabase } = require('./settlement-pipeline');
 const analyticsV2DB = require('./analytics-v2-db-adapter');
+const disputesV2DB = require('./disputes-v2-db-adapter');
 
 const app = express();
 const PORT = process.env.PORT || 5105;
@@ -988,47 +989,19 @@ function getMetricDefinitions() {
   };
 }
 
-// Disputes and Chargebacks endpoints
+// Disputes and Chargebacks endpoints - V2 Database Powered
 app.get('/api/disputes/kpis', async (req, res) => {
   const { from, to, merchantId, acquirerId } = req.query;
   
   try {
-    // Generate mock disputes data based on date range
-    const dayCount = Math.max(1, Math.floor((new Date(to) - new Date(from)) / (1000 * 60 * 60 * 24))) + 1;
-    const baseDisputesPerDay = 5;
-    const totalDisputes = Math.floor(baseDisputesPerDay * dayCount);
+    console.log('[Disputes API V2] KPIs request:', { from, to, merchantId, acquirerId });
     
-    // Distribution of dispute statuses
-    const openCount = Math.floor(totalDisputes * 0.25);
-    const evidenceRequiredCount = Math.floor(totalDisputes * 0.15);
-    const pendingCount = Math.floor(totalDisputes * 0.20);
-    const wonCount = Math.floor(totalDisputes * 0.25);
-    const lostCount = Math.floor(totalDisputes * 0.15);
+    const kpis = await disputesV2DB.getDisputesKpis({ from, to, merchantId, acquirerId });
     
-    // Financial impact (in paise)
-    const avgDisputeAmountPaise = 150000; // ₹1,500 average
-    const disputedPaise = BigInt(totalDisputes * avgDisputeAmountPaise);
-    const recoveredPaise = BigInt(wonCount * avgDisputeAmountPaise);
-    const writtenOffPaise = BigInt(lostCount * avgDisputeAmountPaise);
-    
-    const response = {
-      openCount,
-      evidenceRequiredCount,
-      pendingCount,
-      wonCount,
-      lostCount,
-      disputedPaise: disputedPaise.toString(),
-      recoveredPaise: recoveredPaise.toString(),
-      writtenOffPaise: writtenOffPaise.toString(),
-      totalCount: totalDisputes,
-      avgResolutionDays: 12,
-      winRatePct: wonCount > 0 ? Math.round((wonCount / (wonCount + lostCount)) * 100) : 0
-    };
-    
-    console.log('[Disputes API] KPIs request:', { from, to, merchantId, acquirerId });
-    res.json(response);
+    console.log('[Disputes API V2] KPIs response:', kpis);
+    res.json(kpis);
   } catch (error) {
-    console.error('[Disputes API] Error:', error);
+    console.error('[Disputes API V2] Error:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -1037,25 +1010,14 @@ app.get('/api/disputes/outcome-summary', async (req, res) => {
   const { window, merchantId, acquirerId } = req.query;
   
   try {
-    // Calculate based on window (7d, 30d, 90d)
-    const days = window === '90d' ? 90 : window === '30d' ? 30 : 7;
-    const multiplier = days / 7;
+    console.log('[Disputes API V2] Outcome summary request:', { window, merchantId, acquirerId });
     
-    const wonCount = Math.floor(8 * multiplier);
-    const lostCount = Math.floor(3 * multiplier);
-    const totalResolved = wonCount + lostCount;
+    const outcome = await disputesV2DB.getOutcomeSummary({ window, merchantId, acquirerId });
     
-    const response = {
-      wonCount,
-      lostCount,
-      totalResolved,
-      winRatePct: totalResolved > 0 ? Math.round((wonCount / totalResolved) * 100) : 0,
-      avgResolutionDays: 12
-    };
-    
-    res.json(response);
+    console.log('[Disputes API V2] Outcome summary response:', outcome);
+    res.json(outcome);
   } catch (error) {
-    console.error('[Disputes API] Outcome error:', error);
+    console.error('[Disputes API V2] Outcome error:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -1064,70 +1026,39 @@ app.get('/api/disputes/sla-buckets', async (req, res) => {
   const { from, to, merchantId, acquirerId } = req.query;
   
   try {
-    const response = {
-      overdue: {
-        count: 3,
-        amountPaise: '450000'
-      },
-      today: {
-        count: 5,
-        amountPaise: '750000'
-      },
-      twoToThree: {
-        count: 8,
-        amountPaise: '1200000'
-      }
-    };
+    console.log('[Disputes API V2] SLA buckets request:', { from, to, merchantId, acquirerId });
     
-    res.json(response);
+    const slaBuckets = await disputesV2DB.getSlaBuckets({ from, to, merchantId, acquirerId });
+    
+    console.log('[Disputes API V2] SLA buckets response:', slaBuckets);
+    res.json(slaBuckets);
   } catch (error) {
-    console.error('[Disputes API] SLA error:', error);
+    console.error('[Disputes API V2] SLA error:', error);
     res.status(500).json({ error: error.message });
   }
 });
 
 app.get('/api/chargebacks', async (req, res) => {
-  const { status, searchQuery, acquirer, slaBucket, limit = 50 } = req.query;
+  const { status, searchQuery, acquirer, slaBucket, limit = 50, offset = 0, from, to } = req.query;
   
   try {
-    // Generate mock chargeback data
-    const chargebacks = [];
-    const count = parseInt(limit) || 50;
+    console.log('[Chargebacks API V2] List request:', { status, searchQuery, acquirer, slaBucket, limit, offset, from, to });
     
-    for (let i = 0; i < count; i++) {
-      const statuses = status || ['OPEN', 'EVIDENCE_REQUIRED', 'REPRESENTMENT_SUBMITTED', 'PENDING_BANK', 'WON', 'LOST'];
-      const randomStatus = Array.isArray(statuses) ? statuses[i % statuses.length] : statuses;
-      
-      chargebacks.push({
-        id: `CB${String(i + 1).padStart(6, '0')}`,
-        caseRef: `AXIS-CB-${String(i + 1).padStart(5, '0')}`,
-        merchantId: `MERCHANT_${(i % 3) + 1}`,
-        merchantName: `Test Merchant ${(i % 3) + 1}`,
-        transactionId: `TXN${String(i + 100).padStart(8, '0')}`,
-        rrn: `RRN${String(i + 1000).padStart(10, '0')}`,
-        amountPaise: BigInt(100000 + (i * 10000)).toString(),
-        currency: 'INR',
-        status: randomStatus,
-        reason: ['Fraud', 'Service not received', 'Product not received', 'Duplicate charge'][i % 4],
-        acquirer: acquirer || 'AXIS',
-        evidenceDueDate: new Date(Date.now() + (3 - (i % 5)) * 24 * 60 * 60 * 1000).toISOString(),
-        createdAt: new Date(Date.now() - i * 24 * 60 * 60 * 1000).toISOString(),
-        updatedAt: new Date(Date.now() - i * 12 * 60 * 60 * 1000).toISOString()
-      });
-    }
+    const result = await disputesV2DB.getChargebacksList({ 
+      status, 
+      searchQuery, 
+      acquirer, 
+      slaBucket, 
+      limit, 
+      offset,
+      from,
+      to
+    });
     
-    const response = {
-      chargebacks,
-      pagination: {
-        total: chargebacks.length,
-        limit: parseInt(limit),
-        offset: 0
-      }
-    };
-    
-    res.json(response);
+    console.log('[Chargebacks API V2] List response:', { count: result.chargebacks.length, total: result.pagination.total });
+    res.json(result);
   } catch (error) {
-    console.error('[Chargebacks API] Error:', error);
+    console.error('[Chargebacks API V2] Error:', error);
     res.status(500).json({ error: error.message });
   }
 });

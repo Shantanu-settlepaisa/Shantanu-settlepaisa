@@ -14,12 +14,12 @@ export function RuleList() {
   const [totalPages, setTotalPages] = useState(1);
   const [total, setTotal] = useState(0);
   
-  const { selectedRuleId, selectRule } = useRuleSettingsStore();
+  const { selectedRuleId, selectRule, refreshTrigger } = useRuleSettingsStore();
 
   // Fetch rules
   useEffect(() => {
     fetchRules();
-  }, [page, scopeFilter, statusFilter, searchQuery]);
+  }, [page, scopeFilter, statusFilter, searchQuery, refreshTrigger]);
 
   const fetchRules = async () => {
     try {

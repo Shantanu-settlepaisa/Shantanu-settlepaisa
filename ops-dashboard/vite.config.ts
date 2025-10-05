@@ -11,17 +11,17 @@ export default defineConfig({
     },
   },
   server: {
-    port: 5174,
+    port: 5173,
     strictPort: true, // Fail if port is already in use
     host: true,
     proxy: {
       // API routes that should be proxied to V2 backend
       '^/merchant/settlement/.*': {
-        target: 'http://localhost:5106',
+        target: 'http://localhost:8080',
         changeOrigin: true,
       },
       '^/v1/merchant/.*': {
-        target: 'http://localhost:5106',
+        target: 'http://localhost:8080',
         changeOrigin: true,
       },
       '/api': {

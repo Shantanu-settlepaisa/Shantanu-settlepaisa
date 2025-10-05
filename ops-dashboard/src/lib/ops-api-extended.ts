@@ -2699,63 +2699,45 @@ export class OpsApiExtended {
     sortBy?: string
     sortOrder?: string
   }): Promise<any> {
-    if (USE_MOCK_API) {
-      const { chargebackService } = await import('@/services/chargeback-service')
-      const chargebacks = await chargebackService.getChargebacks({
-        status: params?.status as any,
-        merchantId: params?.merchantId,
-        acquirer: params?.acquirer
-      })
-      
-      // Apply search filter
-      let filtered = chargebacks
-      if (params?.searchQuery) {
-        const query = params.searchQuery.toLowerCase()
-        filtered = chargebacks.filter(cb => 
-          cb.caseRef.toLowerCase().includes(query) ||
-          cb.txnId.toLowerCase().includes(query) ||
-          cb.rrn?.toLowerCase().includes(query) ||
-          cb.utr?.toLowerCase().includes(query)
-        )
-      }
-      
-      // Apply SLA bucket filter
-      if (params?.slaBucket) {
-        const now = new Date()
-        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-        const tomorrow = new Date(today)
-        tomorrow.setDate(tomorrow.getDate() + 1)
-        const threeDaysFromNow = new Date(today)
-        threeDaysFromNow.setDate(threeDaysFromNow.getDate() + 3)
-        
-        filtered = filtered.filter(cb => {
-          if (!cb.evidenceDueAt) return false
-          const due = new Date(cb.evidenceDueAt)
-          
-          if (params.slaBucket === 'overdue') {
-            return due < today
-          } else if (params.slaBucket === 'today') {
-            return due >= today && due < tomorrow
-          } else if (params.slaBucket === 'twoToThree') {
-            return due >= tomorrow && due <= threeDaysFromNow
-          }
-          return true
-        })
-      }
-      
-      // Paginate
-      const start = params?.cursor ? parseInt(params.cursor) : 0
-      const limit = params?.limit || 50
-      const paginated = filtered.slice(start, start + limit)
-      
-      return {
-        chargebacks: paginated,
-        total: filtered.length,
-        cursor: start + limit < filtered.length ? String(start + limit) : undefined,
-        hasMore: start + limit < filtered.length
-      }
+    // Always use V2 database endpoint (port 5105)
+    const queryParams = new URLSearchParams();
+    
+    if (params?.status && params.status.length > 0) {
+      queryParams.append('status', params.status[0]); // Take first status
     }
-    return apiClient.get('/v1/chargebacks', { params })
+    if (params?.searchQuery) {
+      queryParams.append('searchQuery', params.searchQuery);
+    }
+    if (params?.acquirer) {
+      queryParams.append('acquirer', params.acquirer);
+    }
+    if (params?.slaBucket) {
+      queryParams.append('slaBucket', params.slaBucket);
+    }
+    if (params?.dateFrom) {
+      queryParams.append('from', params.dateFrom);
+    }
+    if (params?.dateTo) {
+      queryParams.append('to', params.dateTo);
+    }
+    if (params?.limit) {
+      queryParams.append('limit', params.limit.toString());
+    }
+    if (params?.cursor) {
+      queryParams.append('offset', params.cursor);
+    }
+    
+    const response = await fetch(`http://localhost:5105/api/chargebacks?${queryParams.toString()}`);
+    const data = await response.json();
+    
+    return {
+      chargebacks: data.chargebacks || [],
+      total: data.pagination?.total || 0,
+      cursor: data.pagination?.offset + data.pagination?.limit < data.pagination?.total 
+        ? String(data.pagination.offset + data.pagination.limit) 
+        : undefined,
+      hasMore: data.pagination?.offset + data.pagination?.limit < data.pagination?.total
+    };
   }
 
   async getChargebackById(id: string): Promise<any> {

@@ -55,5 +55,11 @@ export const reconRulesApi = {
   async publishRule(id: string, status: ReconRule['status']) {
     const response = await axios.post<ReconRule>(`${API_BASE}/rules/${id}/publish`, { status });
     return response.data;
+  },
+
+  // Delete rule
+  async deleteRule(id: string) {
+    const response = await axios.delete(`${API_BASE}/rules/${id}`);
+    return response.data;
   }
 };

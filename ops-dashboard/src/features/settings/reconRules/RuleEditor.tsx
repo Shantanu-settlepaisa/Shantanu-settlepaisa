@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Edit2, Save, X, Copy, PlayCircle, FileText, Settings, AlertTriangle, Shield, Zap, Clock } from 'lucide-react';
+import { Edit2, Save, X, Copy, PlayCircle, FileText, Settings, AlertTriangle, Shield, Zap, Clock, Trash2 } from 'lucide-react';
 import { useRuleSettingsStore } from './useRuleSettingsStore';
 import { reconRulesApi } from './api';
 import { ReconRule } from './types';
@@ -10,6 +10,7 @@ export function RuleEditor() {
   const [activeTab, setActiveTab] = useState<TabType>('definition');
   const [saving, setSaving] = useState(false);
   const [simulating, setSimulating] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   
   const {
     selectedRule,
@@ -20,7 +21,9 @@ export function RuleEditor() {
     updateEditBuffer,
     cancelEditing,
     saveEditing,
-    setSimulationResult
+    setSimulationResult,
+    clearSelection,
+    triggerRefresh
   } = useRuleSettingsStore();
 
   const currentRule = isEditing ? editBuffer : selectedRule;
@@ -76,6 +79,24 @@ export function RuleEditor() {
       });
     } finally {
       setSimulating(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!confirm(`Are you sure you want to delete "${currentRule.name}"? This action cannot be undone.`)) {
+      return;
+    }
+    
+    try {
+      setDeleting(true);
+      await reconRulesApi.deleteRule(currentRule.id);
+      clearSelection();
+      triggerRefresh();
+    } catch (error) {
+      console.error('Failed to delete rule:', error);
+      alert('Failed to delete rule. Please try again.');
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -152,6 +173,14 @@ export function RuleEditor() {
                 >
                   <PlayCircle className="w-4 h-4" />
                   {simulating ? 'Simulating...' : 'Simulate'}
+                </button>
+                <button
+                  onClick={handleDelete}
+                  disabled={deleting}
+                  className="px-3 py-1.5 text-sm border border-red-300 text-red-600 rounded-lg hover:bg-red-50 disabled:opacity-50 flex items-center gap-1"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  {deleting ? 'Deleting...' : 'Delete'}
                 </button>
               </>
             )}

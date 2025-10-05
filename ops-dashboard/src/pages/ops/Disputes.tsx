@@ -29,18 +29,20 @@ import { SlaStrip } from '@/components/chargebacks/SlaStrip'
 import { TimeRangePicker, TimeRange, getTimeRangeBounds } from '@/components/TimeRangePicker'
 
 // Status badge component
-const StatusBadge: React.FC<{ status: ChargebackStatus }> = ({ status }) => {
-  const variants: Record<ChargebackStatus, { variant: 'default' | 'secondary' | 'destructive' | 'outline', icon?: any }> = {
+const StatusBadge: React.FC<{ status: ChargebackStatus | string }> = ({ status }) => {
+  const variants: Record<string, { variant: 'default' | 'secondary' | 'destructive' | 'outline', icon?: any }> = {
     'OPEN': { variant: 'secondary', icon: AlertCircle },
     'EVIDENCE_REQUIRED': { variant: 'destructive', icon: AlertTriangle },
     'REPRESENTMENT_SUBMITTED': { variant: 'default', icon: Send },
     'PENDING_BANK': { variant: 'outline', icon: Clock },
     'WON': { variant: 'default', icon: CheckCircle },
+    'RECOVERED': { variant: 'default', icon: CheckCircle }, // V2 DB status
     'LOST': { variant: 'destructive', icon: XCircle },
+    'WRITEOFF': { variant: 'destructive', icon: XCircle }, // V2 DB status
     'CANCELLED': { variant: 'secondary', icon: XCircle }
   }
   
-  const config = variants[status]
+  const config = variants[status] || { variant: 'outline' as const, icon: AlertCircle }
   const Icon = config.icon
   
   return (
@@ -521,18 +523,20 @@ export default function Disputes() {
     'open': ['OPEN'],
     'evidence': ['EVIDENCE_REQUIRED'],
     'pending': ['REPRESENTMENT_SUBMITTED', 'PENDING_BANK'],
-    'won': ['WON'],
-    'lost': ['LOST'],
+    'won': ['RECOVERED'],
+    'lost': ['WRITEOFF'],
     'cancelled': ['CANCELLED']
   }
   
   const { data: chargebacksData, isLoading } = useQuery({
-    queryKey: ['chargebacks', selectedTab, searchQuery, filterAcquirer, slaBucketFilter],
+    queryKey: ['chargebacks', selectedTab, searchQuery, filterAcquirer, slaBucketFilter, filters.from, filters.to],
     queryFn: () => opsApi.getChargebacks({
       status: statusMap[selectedTab],
       searchQuery: searchQuery || undefined,
       acquirer: filterAcquirer === 'all' ? undefined : filterAcquirer,
       slaBucket: slaBucketFilter || undefined,
+      dateFrom: filters.from,
+      dateTo: filters.to,
       limit: 50
     })
   })
@@ -542,6 +546,81 @@ export default function Disputes() {
   const formatCurrency = (paise: bigint) => {
     const rupees = Number(paise) / 100
     return `₹${rupees.toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`
+  }
+  
+  const handleExportCSV = () => {
+    if (!chargebacks || chargebacks.length === 0) {
+      toast.error('No data to export')
+      return
+    }
+    
+    const headers = [
+      'Network Case ID',
+      'Merchant',
+      'Acquirer',
+      'Transaction Ref',
+      'Amount',
+      'Status',
+      'Reason',
+      'Received Date',
+      'Evidence Due',
+      'Resolved Date'
+    ]
+    
+    const rows = chargebacks.map(cb => [
+      cb.networkCaseId || '',
+      cb.merchantName || '',
+      cb.acquirer || '',
+      cb.txnRef || '',
+      (Number(cb.chargebackPaise || 0) / 100).toFixed(2),
+      cb.status || '',
+      cb.reasonDescription || '',
+      cb.receivedAt ? format(new Date(cb.receivedAt), 'yyyy-MM-dd') : '',
+      cb.evidenceDueAt ? format(new Date(cb.evidenceDueAt), 'yyyy-MM-dd') : '',
+      cb.closedAt ? format(new Date(cb.closedAt), 'yyyy-MM-dd') : ''
+    ])
+    
+    const csvContent = [
+      headers.join(','),
+      ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
+    ].join('\n')
+    
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.setAttribute('download', `chargebacks_${format(new Date(), 'yyyy-MM-dd')}.csv`)
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+    
+    toast.success(`Exported ${chargebacks.length} chargebacks to CSV`)
+  }
+  
+  const handleImportCSV = () => {
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.accept = '.csv'
+    input.onchange = async (e: any) => {
+      const file = e.target.files?.[0]
+      if (!file) return
+      
+      const reader = new FileReader()
+      reader.onload = async (event) => {
+        try {
+          const csv = event.target?.result as string
+          const lines = csv.split('\n')
+          const headers = lines[0].split(',').map(h => h.replace(/"/g, '').trim())
+          
+          toast.success(`CSV uploaded: ${lines.length - 1} rows found. Import functionality coming soon.`)
+        } catch (error) {
+          toast.error('Failed to parse CSV file')
+        }
+      }
+      reader.readAsText(file)
+    }
+    input.click()
   }
   
   return (
@@ -559,11 +638,11 @@ export default function Disputes() {
             value={timeRange}
             onChange={setTimeRange}
           />
-          <Button variant="outline">
+          <Button variant="outline" onClick={handleImportCSV}>
             <Upload className="h-4 w-4 mr-2" />
             Import CSV
           </Button>
-          <Button variant="outline">
+          <Button variant="outline" onClick={handleExportCSV}>
             <Download className="h-4 w-4 mr-2" />
             Export
           </Button>

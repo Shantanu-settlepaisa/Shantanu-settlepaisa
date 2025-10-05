@@ -8,15 +8,18 @@ interface RuleSettingsStore {
   editBuffer: ReconRule | null;
   isEditing: boolean;
   simulationResult: SimulationResult | null;
+  refreshTrigger: number;
   
   // Actions
   selectRule: (rule: ReconRule) => void;
+  setSelectedRuleId: (id: string) => void;
   clearSelection: () => void;
   startEditing: () => void;
   updateEditBuffer: (updates: Partial<ReconRule>) => void;
   cancelEditing: () => void;
   saveEditing: (savedRule: ReconRule) => void;
   setSimulationResult: (result: SimulationResult | null) => void;
+  triggerRefresh: () => void;
 }
 
 export const useRuleSettingsStore = create<RuleSettingsStore>((set) => ({
@@ -26,6 +29,7 @@ export const useRuleSettingsStore = create<RuleSettingsStore>((set) => ({
   editBuffer: null,
   isEditing: false,
   simulationResult: null,
+  refreshTrigger: 0,
 
   // Actions
   selectRule: (rule) => set({
@@ -34,6 +38,10 @@ export const useRuleSettingsStore = create<RuleSettingsStore>((set) => ({
     editBuffer: null,
     isEditing: false,
     simulationResult: null
+  }),
+
+  setSelectedRuleId: (id) => set({
+    selectedRuleId: id
   }),
 
   clearSelection: () => set({
@@ -64,5 +72,7 @@ export const useRuleSettingsStore = create<RuleSettingsStore>((set) => ({
     isEditing: false
   }),
 
-  setSimulationResult: (result) => set({ simulationResult: result })
+  setSimulationResult: (result) => set({ simulationResult: result }),
+
+  triggerRefresh: () => set((state) => ({ refreshTrigger: state.refreshTrigger + 1 }))
 }));

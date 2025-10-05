@@ -15,7 +15,7 @@ services:
       - ops-network
     restart: unless-stopped
 
-  # PostgreSQL Database
+  # PostgreSQL Database (Main)
   postgres:
     image: postgres:15-alpine
     container_name: ops-postgres
@@ -33,6 +33,28 @@ services:
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ops_user -d ops_dashboard"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # PostgreSQL V2 Database (Settlement System)
+  postgres-v2:
+    image: postgres:15-alpine
+    container_name: ops-postgres-v2
+    ports:
+      - "5434:5432"
+    environment:
+      POSTGRES_DB: settlepaisa_v2
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: settlepaisa123
+    volumes:
+      - postgres-v2-data:/var/lib/postgresql/data
+      - ./db/migrations:/docker-entrypoint-initdb.d:ro
+    networks:
+      - ops-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d settlepaisa_v2"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -164,6 +186,7 @@ networks:
 
 volumes:
   postgres-data:
+  postgres-v2-data:
   redis-data:
   minio-data:
   localstack-data:

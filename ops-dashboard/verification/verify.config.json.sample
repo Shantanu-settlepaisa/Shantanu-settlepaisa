@@ -1,0 +1,10 @@
+{
+  "PG_URL": "postgres://<user>:<pass>@<host>:<port>/<db>",
+  "API_BASE": "http://localhost:8080",
+  "MERCHANT_ID": "11111111-1111-1111-1111-111111111111",
+  "TZ": "Asia/Kolkata",
+  "CSV_DOWNLOAD_DIR": "verification/artifacts",
+  "IDEMPOTENCY_HEADER": "X-Idempotency-Key",
+  "TOLERANCE_PAISE": 5000,
+  "INSTANT_AMOUNT_PAISE": 9500000
+}
