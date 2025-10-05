@@ -1,9 +1,48 @@
 # SettlePaisa Ops Dashboard - Version History
 
-## Current Version: 2.25.0
+## Current Version: 2.25.1
 **Release Date**: October 5, 2025  
-**Status**: Production-Ready (Critical Dashboard Cache Fixes)  
+**Status**: Production-Ready (Exception Count Fix)  
 **Environment**: Development
+
+---
+
+## Version 2.25.1 - Reconciliation Sources Exception Count Fix
+**Date**: October 5, 2025  
+**Implementation Time**: 30 minutes  
+**Breaking Change**: None (Bug fix only)  
+**Priority**: HIGH - Fixes incorrect exception count display
+
+### 🐛 Bug Fix
+
+#### **Reconciliation Sources Exception Count Inconsistency**
+**Problem**: Reconciliation Sources tile showed 177 exceptions while top Exceptions tile showed 0  
+**Root Cause**: `transformV2ToReconSources()` was incorrectly setting `exceptionsCount = totalTransactions` for both manual and connector sources  
+**Impact**: Users saw misleading exception counts - all transactions appeared as exceptions
+
+**Files Changed:**
+- `src/hooks/opsOverview.ts:330-370`
+  - Added proportional exception count calculation:
+    ```typescript
+    const manualExceptions = totalTxns > 0 ? Math.round((manualTxns / totalTxns) * exceptionTxns) : 0;
+    const connectorExceptions = exceptionTxns - manualExceptions;
+    ```
+  - Added proportional matched/unmatched calculation based on overall ratio
+  - Fixed `exceptionsCount` to use calculated values instead of total transactions
+  - Fixed `matchedCount` to use calculated values instead of hardcoded 0
+  - Fixed `unmatchedPgCount` to use calculated values instead of total transactions
+
+**Before:**
+- Manual Upload: 177 transactions, 177 exceptions ❌
+- Connectors: 50 transactions, 50 exceptions ❌
+- Top tile: 0 exceptions ✅
+
+**After:**
+- Manual Upload: 177 transactions, 0 exceptions ✅
+- Connectors: 50 transactions, 0 exceptions ✅
+- Top tile: 0 exceptions ✅
+
+**Result**: ✅ Exception counts now consistent across all tiles
 
 ---
 

@@ -327,6 +327,18 @@ function transformV2ToReconSources(v2Data: any): ReconSourceSummary {
       bySource: { manualTxns, connectorTxns, apiTxns }
     });
     
+    // Calculate per-source exception counts (proportional to total)
+    // Exceptions are separate from unmatched - they are actual errors/conflicts
+    const manualExceptions = totalTxns > 0 ? Math.round((manualTxns / totalTxns) * exceptionTxns) : 0;
+    const connectorExceptions = exceptionTxns - manualExceptions;
+    
+    // Calculate matched/unmatched per source based on overall ratio
+    const matchRatio = totalTxns > 0 ? matchedTxns / totalTxns : 0;
+    const manualMatched = Math.round(manualTxns * matchRatio);
+    const connectorMatched = Math.round(connectorTxns * matchRatio);
+    const manualUnmatched = manualTxns - manualMatched - manualExceptions;
+    const connectorUnmatched = connectorTxns - connectorMatched - connectorExceptions;
+    
     return {
       timeRange: {
         fromISO: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(),
@@ -342,19 +354,19 @@ function transformV2ToReconSources(v2Data: any): ReconSourceSummary {
       },
       connectors: {
         totalTransactions: connectorTxns,
-        matchedCount: 0, // All connector transactions are unmatched in this dataset
-        unmatchedPgCount: connectorTxns,
+        matchedCount: connectorMatched,
+        unmatchedPgCount: Math.max(0, connectorUnmatched),
         unmatchedBankCount: 0,
-        exceptionsCount: connectorTxns,
-        matchedPct: connectorTxns > 0 ? 0 : 0,
+        exceptionsCount: connectorExceptions,
+        matchedPct: connectorTxns > 0 ? Math.round((connectorMatched / connectorTxns) * 100) : 0,
       },
       manualUpload: {
         totalTransactions: manualTxns,
-        matchedCount: 0, // All manual transactions are unmatched in this dataset
-        unmatchedPgCount: manualTxns,
+        matchedCount: manualMatched,
+        unmatchedPgCount: Math.max(0, manualUnmatched),
         unmatchedBankCount: 0,
-        exceptionsCount: manualTxns,
-        matchedPct: manualTxns > 0 ? 0 : 0,
+        exceptionsCount: manualExceptions,
+        matchedPct: manualTxns > 0 ? Math.round((manualMatched / manualTxns) * 100) : 0,
       },
     };
   } else {
