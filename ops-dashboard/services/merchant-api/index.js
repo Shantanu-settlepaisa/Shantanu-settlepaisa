@@ -166,45 +166,69 @@ app.get('/v1/merchant/settlements', async (req, res) => {
   console.log('GET /v1/merchant/settlements', { query: req.query });
   
   try {
-    // Support pagination
+    // Support pagination and filters
     const limit = parseInt(req.query.limit) || 25;
     const offset = parseInt(req.query.offset) || 0;
+    const search = req.query.search || '';
+    const status = req.query.status || 'all';
+    const settlementType = req.query.type || 'all';
+    const startDate = req.query.startDate || null;
+    const endDate = req.query.endDate || null;
     
     // Try to get data from database if enabled
-    const dbData = await db.listSettlements(MERCHANT_ID, { limit, offset });
+    const dbData = await db.listSettlements(MERCHANT_ID, { 
+      limit, 
+      offset, 
+      search,
+      status,
+      settlementType,
+      startDate,
+      endDate
+    });
     
     if (dbData) {
       res.json(dbData);
     } else {
-      // Fallback to mock data
-      const paginatedSettlements = mockSettlements.slice(offset, offset + limit);
+      // Fallback to mock data with basic filtering
+      let filteredSettlements = mockSettlements;
+      
+      // Apply search filter
+      if (search) {
+        filteredSettlements = filteredSettlements.filter(s => 
+          s.id.toLowerCase().includes(search.toLowerCase()) ||
+          s.utr.toLowerCase().includes(search.toLowerCase())
+        );
+      }
+      
+      // Apply status filter
+      if (status && status !== 'all') {
+        filteredSettlements = filteredSettlements.filter(s => 
+          s.status.toLowerCase() === status.toLowerCase()
+        );
+      }
+      
+      // Apply type filter
+      if (settlementType && settlementType !== 'all') {
+        filteredSettlements = filteredSettlements.filter(s => 
+          s.type === settlementType
+        );
+      }
+      
+      const paginatedSettlements = filteredSettlements.slice(offset, offset + limit);
       
       res.json({
         settlements: paginatedSettlements,
         pagination: {
           limit,
           offset,
-          total: mockSettlements.length,
-          hasNext: offset + limit < mockSettlements.length
+          total: filteredSettlements.length,
+          hasNext: offset + limit < filteredSettlements.length
         }
       });
     }
   } catch (error) {
     console.error('List settlements error:', error);
-    // Fallback to mock data
-    const limit = parseInt(req.query.limit) || 25;
-    const offset = parseInt(req.query.offset) || 0;
-    const paginatedSettlements = mockSettlements.slice(offset, offset + limit);
-    
-    res.json({
-      settlements: paginatedSettlements,
-      pagination: {
-        limit,
-        offset,
-        total: mockSettlements.length,
-        hasNext: offset + limit < mockSettlements.length
-      }
-    });
+    res.status(500).json({ error: 'Failed to fetch settlements' });
   }
 });
 
@@ -320,6 +344,27 @@ app.get('/v1/merchant/settlements/:settlementId/timeline', async (req, res) => {
   } catch (error) {
     console.error('Timeline events error:', error);
     res.status(500).json({ error: 'Failed to fetch timeline events' });
+  }
+});
+
+// New: Settlement transactions API
+app.get('/v1/merchant/settlements/:settlementId/transactions', async (req, res) => {
+  const { settlementId } = req.params;
+  console.log('GET /v1/merchant/settlements/:id/transactions', { settlementId });
+  
+  try {
+    // Try to get data from database if enabled
+    const dbData = await db.listSettlementTransactions(settlementId);
+    
+    if (dbData) {
+      res.json({ transactions: dbData });
+    } else {
+      // Fallback to mock transactions
+      res.json({ transactions: [] });
+    }
+  } catch (error) {
+    console.error('Settlement transactions error:', error);
+    res.status(500).json({ error: 'Failed to fetch settlement transactions' });
   }
 });
 

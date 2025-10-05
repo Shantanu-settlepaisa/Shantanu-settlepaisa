@@ -149,13 +149,53 @@ const db = {
     }
   },
 
-  // List settlements with pagination
-  async listSettlements(merchantId = MERCHANT_ID, { limit = 25, offset = 0 } = {}) {
+  // List settlements with pagination and filters
+  async listSettlements(merchantId = MERCHANT_ID, { limit = 25, offset = 0, search = '', status = 'all', settlementType = 'all', startDate = null, endDate = null } = {}) {
     if (!USE_DB || !pool) {
       return null;
     }
 
     try {
+      // Build WHERE clause dynamically
+      const conditions = ['merchant_id = $1'];
+      const params = [merchantId];
+      let paramIndex = 2;
+
+      // Search filter (by settlement ID or UTR)
+      if (search && search.trim()) {
+        params.push(`%${search.trim()}%`);
+        conditions.push(`(id::text ILIKE $${paramIndex} OR bank_reference_number ILIKE $${paramIndex})`);
+        paramIndex++;
+      }
+
+      // Status filter
+      if (status && status !== 'all') {
+        params.push(status.toUpperCase());
+        conditions.push(`status = $${paramIndex}`);
+        paramIndex++;
+      }
+
+      // Settlement type filter (instant vs regular)
+      if (settlementType && settlementType !== 'all') {
+        // For now we only have 'regular' in db, instant would need a type column
+        // Skip this filter for now as db doesn't have settlement_type column
+      }
+
+      // Date range filter
+      if (startDate) {
+        params.push(startDate);
+        conditions.push(`created_at >= $${paramIndex}::timestamp`);
+        paramIndex++;
+      }
+
+      if (endDate) {
+        params.push(endDate);
+        conditions.push(`created_at <= $${paramIndex}::timestamp`);
+        paramIndex++;
+      }
+
+      const whereClause = conditions.join(' AND ');
+
       const query = `
         SELECT 
           id, merchant_id, gross_amount_paise, total_commission_paise, total_gst_paise, net_amount_paise,
@@ -163,18 +203,20 @@ const db = {
           created_at, settled_at, updated_at, total_transactions,
           merchant_name || ' ****1234' as bank_account
         FROM sp_v2_settlement_batches
-        WHERE merchant_id = $1
+        WHERE ${whereClause}
         ORDER BY created_at DESC
-        LIMIT $2 OFFSET $3
+        LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
       `;
 
+      params.push(limit, offset);
+
       const countQuery = `
-        SELECT COUNT(*) as total FROM sp_v2_settlement_batches WHERE merchant_id = $1
+        SELECT COUNT(*) as total FROM sp_v2_settlement_batches WHERE ${whereClause}
       `;
 
       const [settlements, count] = await Promise.all([
-        pool.query(query, [merchantId, limit, offset]),
-        pool.query(countQuery, [merchantId])
+        pool.query(query, params),
+        pool.query(countQuery, params.slice(0, -2)) // Exclude limit and offset for count
       ]);
 
       return {

@@ -53,8 +53,10 @@ export default function MerchantSettlements() {
   const queryClient = useQueryClient()
   const [searchTerm, setSearchTerm] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
-  const [dateRange, setDateRange] = useState('today')
-  const [activeTab, setActiveTab] = useState('regular') // Add tab state
+  const [dateRange, setDateRange] = useState('all')
+  const [startDate, setStartDate] = useState('')
+  const [endDate, setEndDate] = useState('')
+  const [activeTab, setActiveTab] = useState('regular') // regular or instant
   const [showInstantSettle, setShowInstantSettle] = useState(false)
   const [showTimeline, setShowTimeline] = useState<string | null>(null)
   const [showBreakup, setShowBreakup] = useState<string | null>(null)
@@ -75,16 +77,21 @@ export default function MerchantSettlements() {
 
   // Fetch settlements data
   const { data: settlements, isLoading } = useQuery({
-    queryKey: ['merchant-settlements', statusFilter, dateRange, activeTab],
+    queryKey: ['merchant-settlements', searchTerm, statusFilter, activeTab, startDate, endDate],
     queryFn: async () => {
       // Try to fetch from real API first
       try {
-        // Use different endpoints based on activeTab
-        const endpoint = activeTab === 'on_demand' 
-          ? '/v1/merchant/settlements/on-demand'  // NEW: On-demand API endpoint
-          : '/v1/merchant/settlements'             // Regular settlements endpoint
+        // Build query parameters
+        const params = new URLSearchParams();
+        if (searchTerm) params.append('search', searchTerm);
+        if (statusFilter && statusFilter !== 'all') params.append('status', statusFilter);
+        if (activeTab && activeTab !== 'all') params.append('type', activeTab);
+        if (startDate) params.append('startDate', startDate);
+        if (endDate) params.append('endDate', endDate);
         
-        console.log(`Fetching ${activeTab} settlements from: ${endpoint}`)
+        const endpoint = `/v1/merchant/settlements${params.toString() ? '?' + params.toString() : ''}`;
+        
+        console.log(`Fetching settlements from: ${endpoint}`)
         const response = await fetch(endpoint)
         const apiData = await response.json()
         
@@ -517,9 +524,13 @@ export default function MerchantSettlements() {
             />
           </div>
           
-          <Button variant="outline" size="sm">
+          <Button 
+            variant={activeTab === 'instant' ? 'default' : 'outline'} 
+            size="sm"
+            onClick={() => setActiveTab(activeTab === 'instant' ? 'regular' : 'instant')}
+          >
             <Filter className="w-4 h-4 mr-2" />
-            Instant only
+            {activeTab === 'instant' ? 'Showing Instant' : 'Instant only'}
           </Button>
 
           <Select value={statusFilter} onValueChange={setStatusFilter}>
@@ -530,14 +541,26 @@ export default function MerchantSettlements() {
               <SelectItem value="all">All Status</SelectItem>
               <SelectItem value="completed">Completed</SelectItem>
               <SelectItem value="processing">Processing</SelectItem>
-              <SelectItem value="pending">Pending</SelectItem>
-              <SelectItem value="failed">Failed</SelectItem>
+              <SelectItem value="approved">Approved</SelectItem>
+              <SelectItem value="settled">Settled</SelectItem>
             </SelectContent>
           </Select>
 
-          <Input type="date" className="w-40" />
+          <Input 
+            type="date" 
+            className="w-40" 
+            value={startDate}
+            onChange={(e) => setStartDate(e.target.value)}
+            placeholder="Start date"
+          />
           <span className="text-sm text-gray-500">to</span>
-          <Input type="date" className="w-40" />
+          <Input 
+            type="date" 
+            className="w-40" 
+            value={endDate}
+            onChange={(e) => setEndDate(e.target.value)}
+            placeholder="End date"
+          />
 
           <Select defaultValue="25">
             <SelectTrigger className="w-24">
