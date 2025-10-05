@@ -4,6 +4,7 @@ const db = require('./db');
 const reportsRouter = require('./reports');
 const disputesRouter = require('./disputes');
 const reportScheduler = require('./reportScheduler');
+const payoutScheduler = require('./banking/payoutScheduler');
 require('dotenv').config();
 
 const app = express();
@@ -162,6 +163,23 @@ app.get('/v1/merchant/dashboard/summary', async (req, res) => {
   } catch (error) {
     console.error('Dashboard summary error:', error);
     res.json(mockDashboardSummary);
+  }
+});
+
+app.get('/v1/merchant/available-balance', async (req, res) => {
+  console.log('GET /v1/merchant/available-balance');
+  
+  try {
+    const dbData = await db.getAvailableBalance(MERCHANT_ID);
+    
+    if (dbData) {
+      res.json(dbData);
+    } else {
+      res.status(500).json({ error: 'Failed to fetch available balance' });
+    }
+  } catch (error) {
+    console.error('Available balance error:', error);
+    res.status(500).json({ error: 'Failed to fetch available balance' });
   }
 });
 
@@ -469,13 +487,11 @@ app.get('/v1/merchant/insights/fees-breakdown', async (req, res) => {
   console.log('GET /v1/merchant/insights/fees-breakdown', { query: req.query });
   
   try {
-    // Try to get data from database if enabled
     const dbData = await db.getFeesBreakdown(MERCHANT_ID);
     
     if (dbData) {
       res.json(dbData);
     } else {
-      // Fallback to mock data
       res.json({
         breakdown: {
           commission: { rate: 0.021, amount: 15750000 }, // 2.1%, ₹15,750
@@ -513,11 +529,21 @@ app.listen(PORT, () => {
   // Start report scheduler
   reportScheduler.start();
   
+  // Start payout scheduler (V1-style banking integration)
+  const enablePayoutScheduler = process.env.ENABLE_PAYOUT_SCHEDULER === 'true';
+  if (enablePayoutScheduler) {
+    payoutScheduler.start();
+    console.log('💳 Banking Integration: ENABLED');
+  } else {
+    console.log('💳 Banking Integration: DISABLED (set ENABLE_PAYOUT_SCHEDULER=true to enable)');
+  }
+  
   console.log('📋 Available endpoints:');
   console.log('  GET  /health/live');
   console.log('  GET  /merchant/settlement/schedule');
   console.log('  PUT  /merchant/settlement/schedule');
   console.log('  GET  /v1/merchant/dashboard/summary');
+  console.log('  GET  /v1/merchant/available-balance [NEW]');
   console.log('  GET  /v1/merchant/settlements');
   console.log('  GET  /v1/merchant/settlements/:id');
   console.log('  GET  /v1/merchant/settlements/:id/timeline [NEW]');
@@ -529,4 +555,5 @@ app.listen(PORT, () => {
   console.log(`🏪 Default Merchant ID: ${MERCHANT_ID}`);
   console.log('');
   console.log('💡 This server provides realistic settlement data with timeline tracking');
+  console.log('🏦 V1-style Banking Integration: NEFT/IMPS/RTGS file generation and SFTP transmission');
 });

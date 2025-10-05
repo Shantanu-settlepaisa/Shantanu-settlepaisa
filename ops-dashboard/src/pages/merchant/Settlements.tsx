@@ -17,7 +17,6 @@ import {
   CreditCard,
   AlertCircle,
   ChevronRight,
-  Filter,
   ArrowUpRight,
   ArrowDownRight,
   CheckCircle,
@@ -56,7 +55,7 @@ export default function MerchantSettlements() {
   const [dateRange, setDateRange] = useState('all')
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
-  const [activeTab, setActiveTab] = useState('regular') // regular or instant
+  const [activeTab, setActiveTab] = useState('regular') // regular or on_demand
   const [showInstantSettle, setShowInstantSettle] = useState(false)
   const [showTimeline, setShowTimeline] = useState<string | null>(null)
   const [showBreakup, setShowBreakup] = useState<string | null>(null)
@@ -537,15 +536,6 @@ export default function MerchantSettlements() {
             />
           </div>
           
-          <Button 
-            variant={activeTab === 'instant' ? 'default' : 'outline'} 
-            size="sm"
-            onClick={() => setActiveTab(activeTab === 'instant' ? 'regular' : 'instant')}
-          >
-            <Filter className="w-4 h-4 mr-2" />
-            {activeTab === 'instant' ? 'Showing Instant' : 'Instant only'}
-          </Button>
-
           <Select value={statusFilter} onValueChange={setStatusFilter}>
             <SelectTrigger className="w-40">
               <SelectValue placeholder="All Status" />

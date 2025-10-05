@@ -54,6 +54,25 @@ interface TransactionGroup {
   selected: boolean
 }
 
+interface AvailableBalanceData {
+  availableBalance: number
+  dailyLimit: number
+  usedToday: number
+  remainingToday: number
+  breakdown: Array<{
+    method: string
+    transactions: number
+    amount: number
+  }>
+  merchantBankAccount: {
+    accountNumber: string
+    ifscCode: string
+    bankName: string
+    accountHolder: string
+    minAmount: number
+  }
+}
+
 export function SettleNowAdvanced({
   isOpen,
   onClose,
@@ -70,14 +89,34 @@ export function SettleNowAdvanced({
   const [isProcessing, setIsProcessing] = useState(false)
   const [progress, setProgress] = useState(0)
   const [settlementId, setSettlementId] = useState<string | null>(null)
+  const [balanceData, setBalanceData] = useState<AvailableBalanceData | null>(null)
+  const [isLoadingBalance, setIsLoadingBalance] = useState(false)
 
-  // Mock transaction groups
-  const transactionGroups: TransactionGroup[] = [
-    { paymentMethod: 'UPI', count: 234, amount: 345678.90, selected: true },
-    { paymentMethod: 'Cards', count: 156, amount: 234567.80, selected: true },
-    { paymentMethod: 'Net Banking', count: 89, amount: 123456.70, selected: true },
-    { paymentMethod: 'Wallets', count: 45, amount: 45678.60, selected: false }
-  ]
+  useEffect(() => {
+    if (isOpen) {
+      fetchAvailableBalance()
+    }
+  }, [isOpen])
+
+  const fetchAvailableBalance = async () => {
+    setIsLoadingBalance(true)
+    try {
+      const response = await fetch('http://localhost:8080/v1/merchant/available-balance')
+      const data = await response.json()
+      setBalanceData(data)
+    } catch (error) {
+      console.error('Failed to fetch available balance:', error)
+    } finally {
+      setIsLoadingBalance(false)
+    }
+  }
+
+  const transactionGroups: TransactionGroup[] = balanceData?.breakdown.map(item => ({
+    paymentMethod: item.method,
+    count: item.transactions,
+    amount: item.amount,
+    selected: true
+  })) || []
 
   const totalSelected = transactionGroups
     .filter(g => g.selected)
@@ -177,26 +216,32 @@ export function SettleNowAdvanced({
           {step === 1 && (
             <div className="p-6 space-y-6">
               {/* Balance Overview */}
-              <div className="grid grid-cols-3 gap-4">
-                <Card>
-                  <CardContent className="p-4">
-                    <p className="text-sm text-gray-500">Available Balance</p>
-                    <p className="text-xl font-bold">₹{availableBalance.toLocaleString('en-IN')}</p>
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardContent className="p-4">
-                    <p className="text-sm text-gray-500">Daily Limit</p>
-                    <p className="text-xl font-bold">₹{dailyLimit.toLocaleString('en-IN')}</p>
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardContent className="p-4">
-                    <p className="text-sm text-gray-500">Remaining Today</p>
-                    <p className="text-xl font-bold">₹{(dailyLimit - dailyUsed).toLocaleString('en-IN')}</p>
-                  </CardContent>
-                </Card>
-              </div>
+              {isLoadingBalance ? (
+                <div className="flex justify-center py-8">
+                  <Loader2 className="w-6 h-6 animate-spin text-gray-400" />
+                </div>
+              ) : (
+                <div className="grid grid-cols-3 gap-4">
+                  <Card>
+                    <CardContent className="p-4">
+                      <p className="text-sm text-gray-500">Available Balance</p>
+                      <p className="text-xl font-bold">₹{(balanceData?.availableBalance || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</p>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardContent className="p-4">
+                      <p className="text-sm text-gray-500">Daily Limit</p>
+                      <p className="text-xl font-bold">₹{(balanceData?.dailyLimit || 0).toLocaleString('en-IN')}</p>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardContent className="p-4">
+                      <p className="text-sm text-gray-500">Remaining Today</p>
+                      <p className="text-xl font-bold">₹{(balanceData?.remainingToday || 0).toLocaleString('en-IN')}</p>
+                    </CardContent>
+                  </Card>
+                </div>
+              )}
 
               {/* Transaction Selection */}
               <div>
