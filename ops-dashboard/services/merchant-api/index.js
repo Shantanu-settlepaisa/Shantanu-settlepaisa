@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const db = require('./db');
 const reportsRouter = require('./reports');
+const disputesRouter = require('./disputes');
 const reportScheduler = require('./reportScheduler');
 require('dotenv').config();
 
@@ -500,6 +501,9 @@ app.get('/v1/merchant/insights/fees-breakdown', async (req, res) => {
 
 // Mount reports router
 app.use('/v1/merchant', reportsRouter);
+
+// Mount disputes router
+app.use('/v1/merchant', disputesRouter);
 
 const PORT = process.env.PORT || 8080;
 
