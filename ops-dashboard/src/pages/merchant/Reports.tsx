@@ -47,14 +47,21 @@ import { toast } from 'sonner'
 type ReportType = 'TRANSACTION' | 'SETTLEMENT' | 'DISPUTE' | 'TAX' | 'INVOICE'
 
 interface ReportData {
-  id: string
-  type: ReportType
-  name: string
-  description: string
+  id?: string
+  report_id?: string
+  type?: ReportType
+  report_type?: string
+  name?: string
+  report_name?: string
+  description?: string
+  report_description?: string
   generatedAt?: string
+  generated_at?: string
   size?: string
-  status: 'ready' | 'generating' | 'scheduled' | 'failed'
+  status: 'ready' | 'generating' | 'scheduled' | 'failed' | 'READY' | 'GENERATING'
   downloadUrl?: string
+  format?: string
+  row_count?: number
 }
 
 export default function MerchantReports() {
@@ -67,13 +74,23 @@ export default function MerchantReports() {
   const [showScheduleDialog, setShowScheduleDialog] = useState(false)
   const [emailRecipients, setEmailRecipients] = useState('')
   const [isGenerating, setIsGenerating] = useState(false)
+  const [selectedFrequency, setSelectedFrequency] = useState<'DAILY' | 'WEEKLY' | 'MONTHLY'>('DAILY')
+  const [selectedTime, setSelectedTime] = useState('09:00')
 
-  // Fetch available reports
+  // Fetch available reports from real API
   const { data: reports, isLoading, refetch } = useQuery({
     queryKey: ['merchant-reports', activeTab],
     queryFn: async () => {
-      // Mock data for different report types
-      const mockReports: Record<ReportType, ReportData[]> = {
+      const res = await fetch(`http://localhost:8080/v1/merchant/reports?merchant_id=MERCH001&report_type=${activeTab}`);
+      const data = await res.json();
+      return data.reports || [];
+    },
+    refetchInterval: 30000
+  });
+
+  // Mock data kept for reference (not used)
+  const _getMockReports = (): Record<ReportType, ReportData[]> => {
+    return {
         TRANSACTION: [
           {
             id: 'tr-001',
@@ -201,18 +218,33 @@ export default function MerchantReports() {
             downloadUrl: '#'
           }
         ]
-      }
-      
-      return mockReports[activeTab] || []
+      };
+  };
+
+  // Fetch stats from real API
+  const { data: stats } = useQuery({
+    queryKey: ['merchant-reports-stats'],
+    queryFn: async () => {
+      const res = await fetch('http://localhost:8080/v1/merchant/reports/stats?merchant_id=MERCH001');
+      const data = await res.json();
+      return data;
     },
     refetchInterval: 30000
-  })
+  });
 
-  // Scheduled reports
+  // Scheduled reports from real API
   const { data: scheduledReports } = useQuery({
     queryKey: ['merchant-scheduled-reports'],
     queryFn: async () => {
-      return [
+      const res = await fetch('http://localhost:8080/v1/merchant/reports/scheduled?merchant_id=MERCH001');
+      const data = await res.json();
+      return data.scheduledReports || [];
+    },
+    refetchInterval: 60000
+  });
+
+  // Mock data (not used)
+  const _scheduledMock = [
         {
           id: 'sch-001',
           reportType: 'Daily Transaction Report',
@@ -246,22 +278,40 @@ export default function MerchantReports() {
           nextRun: '2025-10-01T00:00:00Z',
           status: 'active'
         }
-      ]
-    }
-  })
+      ];
 
   const generateReport = async () => {
-    setIsGenerating(true)
-    // Simulate report generation
-    await new Promise(resolve => setTimeout(resolve, 3000))
+    setIsGenerating(true);
     
-    // Create download based on format
-    const reportContent = generateReportContent()
-    downloadReport(reportContent, selectedFormat)
-    
-    setIsGenerating(false)
-    toast.success('Report generated and downloaded successfully')
-    refetch()
+    try {
+      const res = await fetch('http://localhost:8080/v1/merchant/reports/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          merchant_id: 'MERCH001',
+          report_type: activeTab,
+          date_from: dateRange.from,
+          date_to: dateRange.to,
+          format: selectedFormat
+        })
+      });
+      
+      const data = await res.json();
+      
+      if (data.success) {
+        // Download the report immediately
+        window.location.href = `http://localhost:8080${data.download_url}?merchant_id=MERCH001`;
+        toast.success(`Report generated with ${data.row_count} rows`);
+        refetch();
+      } else {
+        toast.error('Failed to generate report');
+      }
+    } catch (error) {
+      console.error('Generate report error:', error);
+      toast.error('Failed to generate report');
+    } finally {
+      setIsGenerating(false);
+    }
   }
 
   const generateReportContent = () => {
@@ -367,10 +417,45 @@ export default function MerchantReports() {
     window.URL.revokeObjectURL(url)
   }
 
-  const scheduleReport = () => {
-    // Handle report scheduling
-    toast.success('Report scheduled successfully')
-    setShowScheduleDialog(false)
+  const scheduleReport = async () => {
+    if (!emailRecipients.trim()) {
+      toast.error('Please enter at least one email recipient');
+      return;
+    }
+
+    try {
+      const res = await fetch('http://localhost:8080/v1/merchant/reports/scheduled', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          merchant_id: 'MERCH001',
+          report_type: activeTab,
+          frequency: selectedFrequency,
+          time: selectedTime,
+          format: selectedFormat,
+          email_recipients: emailRecipients.split(',').map(e => e.trim())
+        })
+      });
+
+      const data = await res.json();
+
+      if (data.success) {
+        toast.success(`Report scheduled successfully! Next run: ${new Date(data.next_run_at).toLocaleString('en-IN')}`);
+        // Refetch scheduled reports to update the table
+        const scheduledQuery = document.querySelector('[data-query="merchant-scheduled-reports"]');
+        if (scheduledQuery) {
+          window.location.reload(); // Simple reload to refresh scheduled reports list
+        }
+      } else {
+        toast.error('Failed to schedule report');
+      }
+    } catch (error) {
+      console.error('Schedule report error:', error);
+      toast.error('Failed to schedule report');
+    }
+    
+    setShowScheduleDialog(false);
+    setEmailRecipients('');
   }
 
   const getReportIcon = (type: ReportType) => {
@@ -400,14 +485,14 @@ export default function MerchantReports() {
         </div>
       </div>
 
-      {/* Quick Stats */}
+      {/* Quick Stats - Real Data from API */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <Card>
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-gray-500">Reports Generated</p>
-                <p className="text-2xl font-bold">47</p>
+                <p className="text-2xl font-bold">{stats?.reportsGenerated || 0}</p>
                 <p className="text-xs text-green-600 mt-1">This month</p>
               </div>
               <FileText className="w-8 h-8 text-blue-500" />
@@ -420,7 +505,7 @@ export default function MerchantReports() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-gray-500">Scheduled Reports</p>
-                <p className="text-2xl font-bold">3</p>
+                <p className="text-2xl font-bold">{stats?.scheduledReports || 0}</p>
                 <p className="text-xs text-gray-500 mt-1">Active</p>
               </div>
               <Clock className="w-8 h-8 text-purple-500" />
@@ -433,8 +518,10 @@ export default function MerchantReports() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-gray-500">Last Generated</p>
-                <p className="text-lg font-bold">2 hours ago</p>
-                <p className="text-xs text-gray-500 mt-1">Transaction Report</p>
+                <p className="text-lg font-bold">
+                  {stats?.lastGenerated ? new Date(stats.lastGenerated.generated_at).toLocaleTimeString('en-IN', {hour: '2-digit', minute: '2-digit'}) : 'N/A'}
+                </p>
+                <p className="text-xs text-gray-500 mt-1">{stats?.lastGenerated?.report_name || 'No reports yet'}</p>
               </div>
               <CheckCircle className="w-8 h-8 text-green-500" />
             </div>
@@ -446,7 +533,7 @@ export default function MerchantReports() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-gray-500">Email Recipients</p>
-                <p className="text-2xl font-bold">5</p>
+                <p className="text-2xl font-bold">{stats?.emailRecipients || 0}</p>
                 <p className="text-xs text-gray-500 mt-1">Configured</p>
               </div>
               <Mail className="w-8 h-8 text-orange-500" />
@@ -559,19 +646,26 @@ export default function MerchantReports() {
                   </div>
                 ) : (
                   reports?.map((report) => {
-                    const Icon = getReportIcon(report.type)
+                    const reportType = (report.report_type || report.type) as ReportType
+                    const Icon = getReportIcon(reportType)
+                    const reportName = report.report_name || report.name || ''
+                    const reportDesc = report.report_description || report.description || ''
+                    const reportId = report.report_id || report.id || ''
+                    const reportStatus = (report.status || 'ready').toLowerCase()
+                    const generatedAt = report.generated_at || report.generatedAt
+                    
                     return (
-                      <div key={report.id} className="flex items-center justify-between p-3 border rounded-lg hover:bg-gray-50">
+                      <div key={reportId} className="flex items-center justify-between p-3 border rounded-lg hover:bg-gray-50">
                         <div className="flex items-start gap-3">
                           <div className="w-10 h-10 bg-blue-50 rounded-lg flex items-center justify-center">
                             <Icon className="w-5 h-5 text-blue-600" />
                           </div>
                           <div>
-                            <p className="font-medium">{report.name}</p>
-                            <p className="text-sm text-gray-500">{report.description}</p>
-                            {report.generatedAt && (
+                            <p className="font-medium">{reportName}</p>
+                            <p className="text-sm text-gray-500">{reportDesc}</p>
+                            {generatedAt && (
                               <p className="text-xs text-gray-400 mt-1">
-                                Generated {new Date(report.generatedAt).toLocaleString('en-IN')}
+                                Generated {new Date(generatedAt).toLocaleString('en-IN')}
                               </p>
                             )}
                           </div>
@@ -581,23 +675,24 @@ export default function MerchantReports() {
                             <span className="text-sm text-gray-500">{report.size}</span>
                           )}
                           <Badge className={
-                            report.status === 'ready' ? 'bg-green-100 text-green-800' :
-                            report.status === 'generating' ? 'bg-yellow-100 text-yellow-800' :
-                            report.status === 'scheduled' ? 'bg-blue-100 text-blue-800' :
+                            reportStatus === 'ready' ? 'bg-green-100 text-green-800' :
+                            reportStatus === 'generating' ? 'bg-yellow-100 text-yellow-800' :
+                            reportStatus === 'scheduled' ? 'bg-blue-100 text-blue-800' :
                             'bg-red-100 text-red-800'
                           }>
-                            {report.status === 'generating' && (
+                            {reportStatus === 'generating' && (
                               <Loader2 className="w-3 h-3 mr-1 animate-spin" />
                             )}
-                            {report.status}
+                            {reportStatus}
                           </Badge>
-                          {report.status === 'ready' && (
+                          {reportStatus === 'ready' && (
                             <Button 
                               size="sm" 
                               variant="outline"
                               onClick={() => {
-                                // Download the report
-                                toast.success(`Downloading ${report.name}`)
+                                // Download the report using real API
+                                window.location.href = `http://localhost:8080/v1/merchant/reports/${reportId}/download?merchant_id=MERCH001`;
+                                toast.success(`Downloading ${reportName}`);
                               }}
                             >
                               <Download className="w-4 h-4" />
@@ -698,22 +793,21 @@ export default function MerchantReports() {
             
             <div>
               <Label>Frequency</Label>
-              <Select defaultValue="daily">
+              <Select value={selectedFrequency} onValueChange={(v: any) => setSelectedFrequency(v)}>
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="daily">Daily</SelectItem>
-                  <SelectItem value="weekly">Weekly</SelectItem>
-                  <SelectItem value="monthly">Monthly</SelectItem>
-                  <SelectItem value="custom">Custom</SelectItem>
+                  <SelectItem value="DAILY">Daily</SelectItem>
+                  <SelectItem value="WEEKLY">Weekly</SelectItem>
+                  <SelectItem value="MONTHLY">Monthly</SelectItem>
                 </SelectContent>
               </Select>
             </div>
             
             <div>
-              <Label>Time</Label>
-              <Input type="time" defaultValue="09:00" />
+              <Label>Time (IST)</Label>
+              <Input type="time" value={selectedTime} onChange={(e) => setSelectedTime(e.target.value)} />
             </div>
             
             <div>

@@ -1,6 +1,8 @@
 const express = require('express');
 const cors = require('cors');
 const db = require('./db');
+const reportsRouter = require('./reports');
+const reportScheduler = require('./reportScheduler');
 require('dotenv').config();
 
 const app = express();
@@ -496,10 +498,17 @@ app.get('/v1/merchant/insights/fees-breakdown', async (req, res) => {
   }
 });
 
+// Mount reports router
+app.use('/v1/merchant', reportsRouter);
+
 const PORT = process.env.PORT || 8080;
 
 app.listen(PORT, () => {
   console.log(`🚀 SettlePaisa Merchant API Server running on http://localhost:${PORT}`);
+  
+  // Start report scheduler
+  reportScheduler.start();
+  
   console.log('📋 Available endpoints:');
   console.log('  GET  /health/live');
   console.log('  GET  /merchant/settlement/schedule');
