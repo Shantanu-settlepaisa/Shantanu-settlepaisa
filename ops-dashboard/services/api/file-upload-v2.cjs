@@ -13,11 +13,11 @@ const PORT = process.env.PORT || 5107;
 
 // Database connection
 const pool = new Pool({
-  user: 'postgres',
-  host: 'localhost',
-  database: 'settlepaisa_v2',
-  password: 'settlepaisa123',
-  port: 5433,
+  user: process.env.DATABASE_USER || 'postgres',
+  host: process.env.DATABASE_HOST || 'localhost',
+  database: process.env.DATABASE_NAME || 'settlepaisa_v2',
+  password: process.env.DATABASE_PASSWORD || 'settlepaisa123',
+  port: parseInt(process.env.DATABASE_PORT || '5433'),
 });
 
 // Middleware

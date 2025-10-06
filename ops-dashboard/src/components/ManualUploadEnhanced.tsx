@@ -530,7 +530,8 @@ export function ManualUploadEnhanced() {
       });
       formData.append('fileType', 'transactions');
       
-      const response = await fetch('http://localhost:5107/api/upload/multiple', {
+      const uploadApiUrl = import.meta.env.VITE_UPLOAD_API_URL || 'http://localhost:5107';
+      const response = await fetch(`${uploadApiUrl}/api/upload/multiple`, {
         method: 'POST',
         body: formData
       });
@@ -705,7 +706,8 @@ export function ManualUploadEnhanced() {
       });
       formData.append('fileType', 'bank_statements');
       
-      const response = await fetch('http://localhost:5107/api/upload/multiple', {
+      const uploadApiUrl = import.meta.env.VITE_UPLOAD_API_URL || 'http://localhost:5107';
+      const response = await fetch(`${uploadApiUrl}/api/upload/multiple`, {
         method: 'POST',
         body: formData
       });

@@ -163,19 +163,44 @@ services:
       - ops-network
     restart: unless-stopped
 
+  # File Upload API service
+  upload-api:
+    build: ./services/api
+    container_name: upload-api
+    ports:
+      - "5107:5107"
+    depends_on:
+      - postgres-v2
+    environment:
+      - PORT=5107
+      - NODE_ENV=production
+      - DATABASE_HOST=postgres-v2
+      - DATABASE_PORT=5432
+      - DATABASE_USER=postgres
+      - DATABASE_PASSWORD=settlepaisa123
+      - DATABASE_NAME=settlepaisa_v2
+    volumes:
+      - upload-data:/app/uploads
+    networks:
+      - ops-network
+    restart: unless-stopped
+
   # Overview API service for consistent metrics
   overview-api:
     build: ./services/overview-api
-    container_name: overview-api
+    container_name: overview-api-v2
     ports:
-      - "5104:5104"
+      - "5108:5108"
     depends_on:
-      - recon-api
-      - mock-pg-api
-      - mock-bank-api
+      - postgres-v2
     environment:
-      - PORT=5104
-      - NODE_ENV=development
+      - PORT=5108
+      - NODE_ENV=production
+      - DATABASE_HOST=postgres-v2
+      - DATABASE_PORT=5432
+      - DATABASE_USER=postgres
+      - DATABASE_PASSWORD=settlepaisa123
+      - DATABASE_NAME=settlepaisa_v2
     networks:
       - ops-network
     restart: unless-stopped
@@ -190,3 +215,4 @@ volumes:
   redis-data:
   minio-data:
   localstack-data:
+  upload-data:
