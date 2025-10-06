@@ -26,11 +26,11 @@ class SettlementCalculator {
       // Calculate merchant's 30-day volume ending at effectiveDate
       const volumeQuery = `
         SELECT COALESCE(SUM(amount_paise), 0) as total_volume_paise
-        FROM sp_v2_transactions_v1 
+        FROM sp_v2_transactions 
         WHERE merchant_id = $1 
-        AND status = 'SUCCESS'
-        AND created_at >= $2::date - INTERVAL '30 days'
-        AND created_at <= $2::date
+        AND status IN ('RECONCILED', 'PENDING')
+        AND transaction_date >= $2::date - INTERVAL '30 days'
+        AND transaction_date <= $2::date
       `;
       
       const volumeResult = await client.query(volumeQuery, [merchantId, effectiveDate]);
@@ -200,9 +200,9 @@ class SettlementCalculator {
     const client = await this.pool.connect();
     try {
       let query = `
-        SELECT id, merchant_id, amount_paise, utr, status, created_at
-        FROM sp_v2_transactions_v1 
-        WHERE status = 'SUCCESS'
+        SELECT id, merchant_id, amount_paise, utr, status, transaction_date as created_at
+        FROM sp_v2_transactions 
+        WHERE status IN ('RECONCILED', 'SUCCESS')
         AND id NOT IN (
           SELECT DISTINCT transaction_id 
           FROM sp_v2_settlement_transaction_map 

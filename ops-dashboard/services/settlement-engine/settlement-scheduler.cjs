@@ -188,7 +188,7 @@ class SettlementScheduler {
         status
       FROM sp_v2_transactions
       WHERE merchant_id = $1
-        AND status = 'RECONCILED'
+        AND status IN ('RECONCILED', 'SUCCESS')
         AND settlement_batch_id IS NULL
         ${fromDate ? 'AND transaction_date >= $2' : ''}
         ${toDate ? `AND transaction_date <= $${fromDate ? 3 : 2}` : ''}
