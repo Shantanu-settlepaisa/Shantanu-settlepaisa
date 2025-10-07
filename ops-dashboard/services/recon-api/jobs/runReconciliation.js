@@ -1054,11 +1054,11 @@ async function persistResults(results, jobId = 'UNKNOWN', job = {}, params = {})
   
   const { Pool } = require('pg');
   const pool = new Pool({
-    host: 'localhost',
-    port: 5433,
-    database: 'settlepaisa_v2',
-    user: 'postgres',
-    password: 'settlepaisa123'
+    host: process.env.DB_HOST || 'localhost',
+    port: parseInt(process.env.DB_PORT || '5433'),
+    database: process.env.DB_NAME || 'settlepaisa_v2',
+    user: process.env.DB_USER || 'postgres',
+    password: process.env.DB_PASSWORD || 'settlepaisa123'
   });
   
   try {
