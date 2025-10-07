@@ -171,58 +171,142 @@ router.get('/jobs/:jobId/results', async (req, res) => {
   const { status, reason_code, page = 1, limit = 50 } = req.query;
   
   try {
+    const { Pool } = require('pg');
+    const pool = new Pool({
+      host: 'localhost',
+      port: 5433,
+      database: 'settlepaisa_v2',
+      user: 'postgres',
+      password: 'settlepaisa123'
+    });
+    
+    const client = await pool.connect();
+    
+    try {
+      console.log(`[Results API] Fetching results from database for job: ${jobId}, status: ${status}`);
+      
+      let whereClause = 'WHERE job_id = $1';
+      const queryParams = [jobId];
+      
+      if (status === 'matched') {
+        whereClause += ' AND match_status = $2';
+        queryParams.push('MATCHED');
+      } else if (status === 'unmatchedPg') {
+        whereClause += ' AND match_status = $2';
+        queryParams.push('UNMATCHED_PG');
+      } else if (status === 'unmatchedBank') {
+        whereClause += ' AND match_status = $2';
+        queryParams.push('UNMATCHED_BANK');
+      } else if (status === 'exceptions') {
+        whereClause += ' AND match_status = $2';
+        queryParams.push('EXCEPTION');
+      } else if (status === 'unmatched') {
+        whereClause += ' AND match_status IN ($2, $3)';
+        queryParams.push('UNMATCHED_PG', 'UNMATCHED_BANK');
+      }
+      
+      if (reason_code) {
+        whereClause += ` AND exception_reason_code = $${queryParams.length + 1}`;
+        queryParams.push(reason_code);
+      }
+      
+      const countResult = await client.query(
+        `SELECT COUNT(*) as total FROM sp_v2_reconciliation_results ${whereClause}`,
+        queryParams
+      );
+      
+      const total = parseInt(countResult.rows[0].total);
+      
+      const offset = (parseInt(page) - 1) * parseInt(limit);
+      const dataQuery = `
+        SELECT 
+          id,
+          job_id,
+          pg_transaction_id,
+          bank_statement_id,
+          match_status,
+          match_score,
+          exception_reason_code,
+          exception_severity,
+          exception_message,
+          pg_amount_paise,
+          bank_amount_paise,
+          variance_paise,
+          created_at
+        FROM sp_v2_reconciliation_results
+        ${whereClause}
+        ORDER BY created_at DESC
+        LIMIT $${queryParams.length + 1} OFFSET $${queryParams.length + 2}
+      `;
+      
+      queryParams.push(parseInt(limit), offset);
+      
+      const dataResult = await client.query(dataQuery, queryParams);
+      
+      const results = dataResult.rows.map(row => ({
+        id: row.id.toString(),
+        txnId: row.pg_transaction_id || 'N/A',
+        utr: row.pg_transaction_id || row.bank_statement_id || 'N/A',
+        rrn: null,
+        pgAmount: row.pg_amount_paise || 0,
+        bankAmount: row.bank_amount_paise,
+        delta: row.variance_paise,
+        pgDate: row.created_at ? new Date(row.created_at).toISOString().split('T')[0] : null,
+        bankDate: row.created_at ? new Date(row.created_at).toISOString().split('T')[0] : null,
+        status: row.match_status,
+        reasonCode: row.exception_reason_code,
+        reasonLabel: row.exception_message
+      }));
+      
+      console.log(`[Results API] Found ${results.length} results in database (total: ${total})`);
+      
+      res.json({
+        jobId,
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total,
+        results
+      });
+      
+    } finally {
+      client.release();
+      await pool.end();
+    }
+  } catch (error) {
+    console.error('Error fetching job results from database:', error);
+    
     const { getJob } = require('../jobs/runReconciliation');
     const job = getJob(jobId);
     
-    // If no job found or no results, return empty
-    if (!job || !job.results) {
-      console.log(`[Results API] No results found for job: ${jobId}`);
+    if (job && job.results) {
+      console.log(`[Results API] Falling back to in-memory results`);
+      let results = [];
+      
+      if (status === 'matched') {
+        results = (job.results.matched || []).map(m => formatMatchedResult(m, jobId));
+      } else if (status === 'unmatchedPg') {
+        results = (job.results.unmatchedPg || []).map(u => formatUnmatchedPgResult(u, jobId));
+      } else if (status === 'unmatchedBank') {
+        results = (job.results.unmatchedBank || []).map(u => formatUnmatchedBankResult(u, jobId));
+      } else if (status === 'exceptions') {
+        results = (job.results.exceptions || []).map(e => formatExceptionResult(e, jobId));
+      } else {
+        const matched = (job.results.matched || []).map(m => formatMatchedResult(m, jobId));
+        const unmatchedPg = (job.results.unmatchedPg || []).map(u => formatUnmatchedPgResult(u, jobId));
+        const unmatchedBank = (job.results.unmatchedBank || []).map(u => formatUnmatchedBankResult(u, jobId));
+        const exceptions = (job.results.exceptions || []).map(e => formatExceptionResult(e, jobId));
+        results = [...matched, ...unmatchedPg, ...unmatchedBank, ...exceptions];
+      }
+      
       return res.json({
         jobId,
         page: parseInt(page),
         limit: parseInt(limit),
-        total: 0,
-        results: []
+        total: results.length,
+        results: results.slice(0, parseInt(limit))
       });
     }
     
-    console.log(`[Results API] Fetching results for job: ${jobId}, status: ${status}`);
-    
-    // Get actual results from job
-    let results = [];
-    
-    if (status === 'matched') {
-      results = (job.results.matched || []).map(m => formatMatchedResult(m, jobId));
-    } else if (status === 'unmatchedPg') {
-      results = (job.results.unmatchedPg || []).map(u => formatUnmatchedPgResult(u, jobId));
-    } else if (status === 'unmatchedBank') {
-      results = (job.results.unmatchedBank || []).map(u => formatUnmatchedBankResult(u, jobId));
-    } else if (status === 'exceptions') {
-      results = (job.results.exceptions || []).map(e => formatExceptionResult(e, jobId));
-    } else if (status === 'unmatched') {
-      const pgResults = (job.results.unmatchedPg || []).map(u => formatUnmatchedPgResult(u, jobId));
-      const bankResults = (job.results.unmatchedBank || []).map(u => formatUnmatchedBankResult(u, jobId));
-      results = [...pgResults, ...bankResults];
-    } else {
-      // Return all results
-      const matched = (job.results.matched || []).map(m => formatMatchedResult(m, jobId));
-      const unmatchedPg = (job.results.unmatchedPg || []).map(u => formatUnmatchedPgResult(u, jobId));
-      const unmatchedBank = (job.results.unmatchedBank || []).map(u => formatUnmatchedBankResult(u, jobId));
-      const exceptions = (job.results.exceptions || []).map(e => formatExceptionResult(e, jobId));
-      results = [...matched, ...unmatchedPg, ...unmatchedBank, ...exceptions];
-    }
-    
-    console.log(`[Results API] Returning ${results.length} results for status: ${status}`);
-    
-    res.json({
-      jobId,
-      page: parseInt(page),
-      limit: parseInt(limit),
-      total: results.length,
-      results: results.slice(0, parseInt(limit))
-    });
-  } catch (error) {
-    console.error('Error fetching job results:', error);
     res.status(500).json({ error: 'Failed to fetch job results' });
   }
 });

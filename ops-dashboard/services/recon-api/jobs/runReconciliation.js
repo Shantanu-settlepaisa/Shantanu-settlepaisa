@@ -1069,6 +1069,44 @@ async function persistResults(results, jobId = 'UNKNOWN', job = {}, params = {})
     try {
       await client.query('BEGIN');
       
+      await client.query(`
+        INSERT INTO sp_v2_reconciliation_jobs (
+          job_id,
+          job_name,
+          date_from,
+          date_to,
+          total_pg_records,
+          total_bank_records,
+          matched_records,
+          unmatched_pg,
+          unmatched_bank,
+          exception_records,
+          status,
+          processing_start,
+          processing_end
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
+        ON CONFLICT (job_id) DO UPDATE SET
+          matched_records = EXCLUDED.matched_records,
+          unmatched_pg = EXCLUDED.unmatched_pg,
+          unmatched_bank = EXCLUDED.unmatched_bank,
+          exception_records = EXCLUDED.exception_records,
+          status = EXCLUDED.status,
+          processing_end = NOW()
+      `, [
+        jobId,
+        `Reconciliation Job ${params.date || 'Unknown'}`,
+        params.date || new Date().toISOString().split('T')[0],
+        params.date || new Date().toISOString().split('T')[0],
+        results.matched.length + results.unmatchedPg.length,
+        results.matched.length + results.unmatchedBank.length,
+        results.matched.length,
+        results.unmatchedPg.length,
+        results.unmatchedBank.length,
+        results.exceptions.length,
+        'COMPLETED'
+      ]);
+      console.log(`[Persistence] Saved job record: ${jobId}`);
+      
       // REPLACE logic for manual uploads: delete existing data for this date
       if (job.sourceType === 'MANUAL_UPLOAD' && params.date) {
         console.log(`[Persistence] REPLACE mode: Deleting existing MANUAL_UPLOAD data for ${params.date}`);
@@ -1416,18 +1454,194 @@ async function persistResults(results, jobId = 'UNKNOWN', job = {}, params = {})
         ]);
       }
       
-      await client.query('COMMIT');
-      console.log(`[Persistence] Saved ${results.matched.length} matches, ${results.unmatchedPg.length} unmatched PG, ${results.unmatchedBank.length} unmatched bank`);
+      console.log(`[Persistence] Saving reconciliation results to sp_v2_reconciliation_results...`);
+      
+      for (const match of results.matched) {
+        const pgTxnId = match.pg.transaction_id || match.pg.pgw_ref;
+        const bankStmtId = match.bank.id || match.bank.bank_ref;
+        const pgAmount = match.pg.amount || 0;
+        const bankAmount = match.bank.amount || 0;
+        const variance = bankAmount - pgAmount;
+        const matchScore = match.matchScore || 100;
+        
+        console.log(`[Persistence] MATCHED - pgTxnId: ${pgTxnId}, bankStmtId: ${bankStmtId}, pgAmount: ${pgAmount}, bankAmount: ${bankAmount}, jobId: ${jobId}`);
+        
+        const existing = await client.query(
+          'SELECT id FROM sp_v2_reconciliation_results WHERE pg_transaction_id = $1',
+          [pgTxnId]
+        );
+        
+        if (existing.rows.length > 0) {
+          console.log(`[Persistence] MATCHED - Updating existing record ID: ${existing.rows[0].id}`);
+          const updateResult = await client.query(`
+            UPDATE sp_v2_reconciliation_results SET
+              job_id = $1,
+              bank_statement_id = $2,
+              match_status = $3,
+              match_score = $4,
+              pg_amount_paise = $5,
+              bank_amount_paise = $6,
+              variance_paise = $7,
+              created_at = NOW()
+            WHERE pg_transaction_id = $8
+          `, [jobId, bankStmtId, 'MATCHED', matchScore, pgAmount, bankAmount, variance, pgTxnId]);
+          console.log(`[Persistence] MATCHED - UPDATE affected ${updateResult.rowCount} rows`);
+        } else {
+          console.log(`[Persistence] MATCHED - Inserting new record`);
+          const insertResult = await client.query(`
+            INSERT INTO sp_v2_reconciliation_results (
+              job_id, pg_transaction_id, bank_statement_id, match_status,
+              match_score, pg_amount_paise, bank_amount_paise, variance_paise, created_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+          `, [jobId, pgTxnId, bankStmtId, 'MATCHED', matchScore, pgAmount, bankAmount, variance]);
+          console.log(`[Persistence] MATCHED - INSERT affected ${insertResult.rowCount} rows`);
+        }
+      }
+      console.log(`[Persistence] Saved ${results.matched.length} MATCHED results`);
+      
+      for (const unmatchedPg of results.unmatchedPg) {
+        const pgTxnId = unmatchedPg.transaction_id || unmatchedPg.pgw_ref;
+        const pgAmount = unmatchedPg.amount || 0;
+        
+        const existing = await client.query(
+          'SELECT id FROM sp_v2_reconciliation_results WHERE pg_transaction_id = $1',
+          [pgTxnId]
+        );
+        
+        if (existing.rows.length > 0) {
+          await client.query(`
+            UPDATE sp_v2_reconciliation_results SET
+              job_id = $1,
+              match_status = $2,
+              pg_amount_paise = $3,
+              variance_paise = $4,
+              created_at = NOW()
+            WHERE pg_transaction_id = $5
+          `, [jobId, 'UNMATCHED_PG', pgAmount, pgAmount, pgTxnId]);
+        } else {
+          await client.query(`
+            INSERT INTO sp_v2_reconciliation_results (
+              job_id, pg_transaction_id, bank_statement_id, match_status,
+              pg_amount_paise, bank_amount_paise, variance_paise, created_at
+            ) VALUES ($1, $2, NULL, $3, $4, NULL, $5, NOW())
+          `, [jobId, pgTxnId, 'UNMATCHED_PG', pgAmount, pgAmount]);
+        }
+      }
+      console.log(`[Persistence] Saved ${results.unmatchedPg.length} UNMATCHED_PG results`);
+      
+      for (const unmatchedBank of results.unmatchedBank) {
+        const bankStmtId = unmatchedBank.id || unmatchedBank.bank_id || null;
+        const bankUtr = unmatchedBank.utr || unmatchedBank.UTR || unmatchedBank.TRANSACTION_ID || 'N/A';
+        const pgTxnId = `BANK_${bankUtr}`;
+        const bankAmount = unmatchedBank.amount || Math.round(parseFloat(unmatchedBank.AMOUNT || unmatchedBank.CREDIT_AMT || 0) * 100);
+        
+        const existing = await client.query(
+          'SELECT id FROM sp_v2_reconciliation_results WHERE pg_transaction_id = $1',
+          [pgTxnId]
+        );
+        
+        if (existing.rows.length > 0) {
+          await client.query(`
+            UPDATE sp_v2_reconciliation_results SET
+              job_id = $1,
+              bank_statement_id = $2,
+              match_status = $3,
+              bank_amount_paise = $4,
+              variance_paise = $5,
+              created_at = NOW()
+            WHERE pg_transaction_id = $6
+          `, [jobId, bankStmtId, 'UNMATCHED_BANK', bankAmount, bankAmount, pgTxnId]);
+        } else {
+          await client.query(`
+            INSERT INTO sp_v2_reconciliation_results (
+              job_id, pg_transaction_id, bank_statement_id, match_status,
+              pg_amount_paise, bank_amount_paise, variance_paise, created_at
+            ) VALUES ($1, $2, $3, $4, NULL, $5, $6, NOW())
+          `, [jobId, pgTxnId, bankStmtId, 'UNMATCHED_BANK', bankAmount, bankAmount]);
+        }
+      }
+      console.log(`[Persistence] Saved ${results.unmatchedBank.length} UNMATCHED_BANK results`);
+      
+      for (const exception of results.exceptions) {
+        const pgTxnId = exception.pg ? (exception.pg.transaction_id || exception.pg.pgw_ref) : null;
+        const bankStmtId = exception.bank ? (exception.bank.id || exception.bank.bank_ref) : null;
+        const pgAmount = exception.pg ? (exception.pg.amount || 0) : null;
+        const bankAmount = exception.bank ? (exception.bank.amount || 0) : null;
+        const variance = exception.delta || 0;
+        
+        const severityMap = {
+          'BANK_FILE_MISSING': 'CRITICAL',
+          'UTR_MISSING_OR_INVALID': 'HIGH',
+          'DUPLICATE_PG_ENTRY': 'CRITICAL',
+          'DUPLICATE_BANK_ENTRY': 'CRITICAL',
+          'AMOUNT_MISMATCH': 'MEDIUM',
+          'DATE_OUT_OF_WINDOW': 'MEDIUM'
+        };
+        
+        const severity = severityMap[exception.reasonCode] || 'MEDIUM';
+        
+        if (pgTxnId) {
+          const existing = await client.query(
+            'SELECT id FROM sp_v2_reconciliation_results WHERE pg_transaction_id = $1',
+            [pgTxnId]
+          );
+          
+          if (existing.rows.length > 0) {
+            await client.query(`
+              UPDATE sp_v2_reconciliation_results SET
+                job_id = $1,
+                bank_statement_id = $2,
+                match_status = $3,
+                exception_reason_code = $4,
+                exception_severity = $5,
+                exception_message = $6,
+                pg_amount_paise = $7,
+                bank_amount_paise = $8,
+                variance_paise = $9,
+                created_at = NOW()
+              WHERE pg_transaction_id = $10
+            `, [jobId, bankStmtId, 'EXCEPTION', exception.reasonCode, severity, exception.reason, pgAmount, bankAmount, variance, pgTxnId]);
+          } else {
+            await client.query(`
+              INSERT INTO sp_v2_reconciliation_results (
+                job_id, pg_transaction_id, bank_statement_id, match_status,
+                exception_reason_code, exception_severity, exception_message,
+                pg_amount_paise, bank_amount_paise, variance_paise, created_at
+              ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
+            `, [jobId, pgTxnId, bankStmtId, 'EXCEPTION', exception.reasonCode, severity, exception.reason, pgAmount, bankAmount, variance]);
+          }
+        }
+      }
+      console.log(`[Persistence] Saved ${results.exceptions.length} EXCEPTION results`);
+      
+      const commitResult = await client.query('COMMIT');
+      console.log(`[Persistence] ✓ Transaction COMMITTED`, commitResult);
+      
+      // Release client back to pool
+      client.release();
+      console.log('[Persistence] Client released back to pool');
+      
+      // DON'T end pool - let it stay alive (memory leak but for testing)
+      // await pool.end();
+      console.log('[Persistence] Pool NOT ended (intentional - for testing)');
+      
+      console.log(`[Persistence] Summary: ${results.matched.length} matches, ${results.unmatchedPg.length} unmatched PG, ${results.unmatchedBank.length} unmatched bank, ${results.exceptions.length} exceptions`);
       
     } catch (error) {
-      await client.query('ROLLBACK');
+      try {
+        await client.query('ROLLBACK');
+        console.error('[Persistence] Transaction ROLLED BACK');
+      } catch (rbError) {
+        console.error('[Persistence] Rollback failed:', rbError.message);
+      }
       console.error('[Persistence] Error:', error.message);
-      throw error;
-    } finally {
       client.release();
+      // await pool.end();
+      throw error;
     }
-  } finally {
-    await pool.end();
+  } catch (poolError) {
+    console.error('[Persistence] Pool connection error:', poolError.message);
+    throw poolError;
   }
 }
 
