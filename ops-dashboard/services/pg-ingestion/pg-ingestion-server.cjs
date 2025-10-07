@@ -23,11 +23,11 @@ const webhookLimiter = rateLimit({
 
 // PostgreSQL V2 Database connection
 const pool = new Pool({
-  user: 'postgres',
-  host: 'localhost',
-  database: 'settlepaisa_v2',
-  password: 'settlepaisa123',
-  port: 5433,
+  user: process.env.DB_USER || 'postgres',
+  host: process.env.DB_HOST || 'localhost',
+  database: process.env.DB_NAME || 'settlepaisa_v2',
+  password: process.env.DB_PASSWORD || 'settlepaisa123',
+  port: parseInt(process.env.DB_PORT || '5433'),
 });
 
 // V1 SettlePaisa Production API Configuration
@@ -74,29 +74,38 @@ async function insertTransaction(transaction) {
       return { success: false, reason: 'duplicate' };
     }
 
-    // Insert into sp_v2_transactions_v1 table
+    // Insert into unified sp_v2_transactions table
     const query = `
-      INSERT INTO sp_v2_transactions_v1 
-      (merchant_id, pgw_ref, amount_paise, utr, payment_mode, status, gateway, gateway_txn_id, created_at, updated_at)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-      ON CONFLICT (pgw_ref) DO UPDATE SET
+      INSERT INTO sp_v2_transactions 
+      (transaction_id, merchant_id, amount_paise, utr, payment_method, payment_mode, 
+       status, gateway_ref, source_type, source_name, transaction_date, 
+       transaction_timestamp, created_at, updated_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+      ON CONFLICT (transaction_id) DO UPDATE SET
         status = EXCLUDED.status,
         utr = EXCLUDED.utr,
         updated_at = EXCLUDED.updated_at
       RETURNING id
     `;
 
+    const timestamp = transaction.created_at || new Date().toISOString();
+    const txnDate = new Date(timestamp).toISOString().split('T')[0];
+    
     const values = [
-      transaction.merchant_id,
-      transaction.pgw_ref,
-      transaction.amount_paise,
-      transaction.utr || null,
-      transaction.payment_mode,
-      transaction.status,
-      transaction.gateway,
-      transaction.gateway_txn_id,
-      transaction.created_at || new Date().toISOString(),
-      new Date().toISOString()
+      transaction.pgw_ref,                    // transaction_id (pgw_ref is unique identifier)
+      transaction.merchant_id,                // merchant_id (VARCHAR format)
+      transaction.amount_paise,               // amount_paise
+      transaction.utr || null,                // utr
+      transaction.payment_mode,               // payment_method
+      transaction.payment_mode,               // payment_mode (keep both for compatibility)
+      transaction.status,                     // status
+      transaction.gateway_txn_id,             // gateway_ref
+      'WEBHOOK',                              // source_type
+      transaction.gateway.toUpperCase(),      // source_name (gateway name)
+      txnDate,                                // transaction_date
+      timestamp,                              // transaction_timestamp
+      timestamp,                              // created_at
+      new Date().toISOString()                // updated_at
     ];
 
     const result = await pool.query(query, values);
@@ -350,19 +359,19 @@ app.get('/api/stats', async (req, res) => {
   try {
     const stats = await pool.query(`
       SELECT 
-        gateway,
+        source_name as gateway,
         COUNT(*) as total_transactions,
         COUNT(CASE WHEN status = 'SUCCESS' THEN 1 END) as successful_transactions,
         SUM(amount_paise) as total_amount_paise,
         MAX(updated_at) as last_transaction
-      FROM sp_v2_transactions_v1 
-      WHERE gateway IS NOT NULL
-      GROUP BY gateway
+      FROM sp_v2_transactions 
+      WHERE source_type = 'WEBHOOK'
+      GROUP BY source_name
       ORDER BY total_transactions DESC
     `);
     
     res.json({
-      by_gateway: stats.rows,
+      by_source: stats.rows,
       cache_size: processedTransactions.size,
       uptime: process.uptime()
     });
