@@ -139,7 +139,8 @@ export async function fetchOverview(window: OverviewWindow): Promise<OverviewRes
     if (window.from) params.append('from', window.from);
     if (window.to) params.append('to', window.to);
     
-    const v2ApiUrl = `http://localhost:5108/api/overview${params.toString() ? '?' + params.toString() : ''}`;
+    const overviewApiUrl = import.meta.env.VITE_OVERVIEW_API_URL || 'http://localhost:5108';
+    const v2ApiUrl = `${overviewApiUrl}/api/overview${params.toString() ? '?' + params.toString() : ''}`;
     console.log('📡 [V2] Calling V2 API:', v2ApiUrl);
     
     const response = await fetch(v2ApiUrl, {
@@ -348,7 +349,8 @@ async function transformV2DatabaseResponse(v2Data: any, window: OverviewWindow):
   // Fetch real connectors health from V2 API
   let connectorsHealth: ConnectorsHealthItem[] = [];
   try {
-    const connectorsResponse = await fetch('http://localhost:5108/api/connectors/health');
+    const overviewApiUrl = import.meta.env.VITE_OVERVIEW_API_URL || 'http://localhost:5108';
+    const connectorsResponse = await fetch(`${overviewApiUrl}/api/connectors/health`);
     if (connectorsResponse.ok) {
       const connectorsData = await connectorsResponse.json();
       connectorsHealth = connectorsData.connectors || [];
@@ -646,7 +648,8 @@ export async function fetchOverviewFallback(window: OverviewWindow): Promise<Ove
   // Fetch real connectors health from V2 API (fallback data)
   let connectorsHealth: ConnectorsHealthItem[] = [];
   try {
-    const connectorsResponse = await fetch('http://localhost:5108/api/connectors/health');
+    const overviewApiUrl = import.meta.env.VITE_OVERVIEW_API_URL || 'http://localhost:5108';
+    const connectorsResponse = await fetch(`${overviewApiUrl}/api/connectors/health`);
     if (connectorsResponse.ok) {
       const connectorsData = await connectorsResponse.json();
       connectorsHealth = connectorsData.connectors || [];
