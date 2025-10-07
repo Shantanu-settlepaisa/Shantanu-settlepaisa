@@ -6,7 +6,6 @@ import {
   FileText, 
   AlertTriangle, 
   Cable,
-  Database, 
   BarChart3, 
   Settings,
   LogOut,
@@ -23,7 +22,6 @@ const navigation = [
   { name: 'Disputes', href: '/ops/disputes', icon: Shield },
   { name: 'Connectors', href: '/ops/connectors', icon: Cable },
   { name: 'Reports', href: '/ops/reports', icon: FileText },
-  { name: 'Data Sources', href: '/ops/data-sources', icon: Database },
   { name: 'Analytics', href: '/ops/analytics', icon: BarChart3 },
   { name: 'Settings', href: '/ops/settings', icon: Settings },
 ]

@@ -10,8 +10,8 @@ import { RouteErrorBoundary } from './components/ErrorBoundary'
 import { lazy } from 'react'
 
 // Feature flags
-const ENABLE_OPS_DASHBOARD = import.meta.env.VITE_ENABLE_OPS_DASHBOARD !== 'false'
-const ENABLE_MERCHANT_DASHBOARD = import.meta.env.VITE_ENABLE_MERCHANT_DASHBOARD !== 'false'
+const ENABLE_OPS_DASHBOARD = import.meta.env.VITE_ENABLE_OPS_DASHBOARD === 'true'
+const ENABLE_MERCHANT_DASHBOARD = import.meta.env.VITE_ENABLE_MERCHANT_DASHBOARD === 'true'
 
 // Ops Pages
 const Overview = lazy(() => import('./pages/Overview'))
@@ -23,7 +23,6 @@ const ManualUpload = lazy(() => import('./components/ManualUploadUnified'))
 const ConnectorsUnified = lazy(() => import('./components/ConnectorsUnified'))
 const SettlementDetails = lazy(() => import('./pages/ops/SettlementDetails'))
 const Exceptions = lazy(() => import('./pages/ops/Exceptions'))
-const DataSources = lazy(() => import('./pages/ops/DataSources'))
 const Analytics = lazy(() => import('./pages/ops/AnalyticsV3'))
 const Settings = lazy(() => import('./pages/ops/Settings'))
 const Connectors = lazy(() => import('./pages/ops/Connectors'))
@@ -110,10 +109,6 @@ if (ENABLE_OPS_DASHBOARD) {
       {
         path: 'settlement-pipeline',
         element: <SettlementPipelineDemo />,
-      },
-      {
-        path: 'data-sources',
-        element: <DataSources />,
       },
       {
         path: 'analytics',
