@@ -1,15 +1,17 @@
+require('dotenv').config();
 const { Pool } = require('pg');
 
 class SettlementCalculatorV3 {
   constructor() {
-    // ONLY V2 database - no SabPaisa dependency at runtime!
-    this.v2Pool = new Pool({
-      host: 'localhost',
-      port: 5433,
-      user: 'postgres',
-      password: 'settlepaisa123',
-      database: 'settlepaisa_v2'
-    });
+    const dbConfig = {
+      user: process.env.DB_USER || 'postgres',
+      host: process.env.DB_HOST || 'localhost',
+      database: process.env.DB_NAME || 'settlepaisa_v2',
+      password: process.env.DB_PASSWORD || 'settlepaisa123',
+      port: parseInt(process.env.DB_PORT) || 5433
+    };
+    console.log('[Calculator] DB Config:', { ...dbConfig, password: '***' });
+    this.v2Pool = new Pool(dbConfig);
   }
   
   async getMerchantConfig(merchantId) {
