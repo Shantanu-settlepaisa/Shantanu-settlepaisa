@@ -7,11 +7,11 @@ const PORT = process.env.PORT || 5108;
 
 // Database connection to V2 PostgreSQL
 const pool = new Pool({
-  user: 'postgres',
-  host: 'localhost',
-  database: 'settlepaisa_v2',
-  password: 'settlepaisa123',
-  port: 5433,
+  user: process.env.DATABASE_USER || 'postgres',
+  host: process.env.DATABASE_HOST || 'localhost',
+  database: process.env.DATABASE_NAME || 'settlepaisa_v2',
+  password: process.env.DATABASE_PASSWORD || 'settlepaisa123',
+  port: parseInt(process.env.DATABASE_PORT || '5433'),
 });
 
 // Middleware
@@ -109,7 +109,7 @@ app.get('/api/overview', async (req, res) => {
           SUM(t.amount_paise) as total_reconciled_amount_paise
         FROM sp_v2_recon_matches rm
         JOIN sp_v2_settlement_items si ON rm.item_id = si.id  
-        JOIN sp_v2_transactions_v1 t ON si.txn_id = t.id
+        JOIN sp_v2_transactions t ON si.txn_id = t.id
         WHERE rm.created_at >= $1 AND rm.created_at <= $2
       `;
     } else {
@@ -118,7 +118,7 @@ app.get('/api/overview', async (req, res) => {
           SUM(t.amount_paise) as total_reconciled_amount_paise
         FROM sp_v2_recon_matches rm
         JOIN sp_v2_settlement_items si ON rm.item_id = si.id  
-        JOIN sp_v2_transactions_v1 t ON si.txn_id = t.id
+        JOIN sp_v2_transactions t ON si.txn_id = t.id
         WHERE rm.created_at >= CURRENT_DATE - INTERVAL '30 days'
       `;
     }
@@ -218,9 +218,8 @@ app.get('/api/overview', async (req, res) => {
     const matchedTransactions = parseInt(reconData.matched_count) || 0;
     const exceptions = parseInt(reconData.exception_count) || 0;
     const totalBankCredits = parseInt(bankData.total_credits) || 0;
-    // Note: exceptions ARE the unmatched transactions (status='EXCEPTION')
-    // So unmatched = 0 if all non-matched transactions are categorized as exceptions
-    const unmatchedTransactions = 0; // Keeping for API compatibility, but exceptions = unmatched
+    // Calculate unmatched: total - matched - exceptions (accounts for PENDING, FAILED, etc.)
+    const unmatchedTransactions = Math.max(0, totalTransactions - matchedTransactions - exceptions);
     
     // Source counts
     const manualCount = parseInt(sourceData.manual_count) || 0;
@@ -237,7 +236,8 @@ app.get('/api/overview', async (req, res) => {
     const totalAmountPaise = txnData.total_amount_paise ? parseInt(txnData.total_amount_paise, 10) : 0;
     const reconciledAmountPaise = reconData.reconciled_amount_paise ? parseInt(reconData.reconciled_amount_paise, 10) : 0;
     const exceptionAmountPaise = reconData.exception_amount_paise ? parseInt(reconData.exception_amount_paise, 10) : 0;
-    const unreconciledAmountPaise = exceptionAmountPaise;
+    // Unreconciled = Total - Reconciled (includes both exceptions and pending/unmatched)
+    const unreconciledAmountPaise = totalAmountPaise - reconciledAmountPaise;
     
     // Build V2 overview response with real data
     const overview = {
@@ -365,7 +365,7 @@ app.get('/api/stats', async (req, res) => {
     
     const stats = {};
     const tables = [
-      'sp_v2_transactions_v1',
+      'sp_v2_transactions',
       'sp_v2_utr_credits', 
       'sp_v2_recon_matches',
       'sp_v2_settlement_batches',
@@ -486,11 +486,11 @@ app.get('/api/reports/bank-mis', async (req, res) => {
           WHEN rm.id IS NOT NULL THEN 'MATCHED'
           ELSE 'UNMATCHED'
         END as recon_status
-      FROM sp_v2_transactions_v1 t
+      FROM sp_v2_transactions t
       LEFT JOIN sp_v2_utr_credits c ON t.utr = c.utr
       LEFT JOIN sp_v2_settlement_items si ON t.id = si.txn_id
       LEFT JOIN sp_v2_recon_matches rm ON si.id = rm.item_id
-      WHERE t.status = 'SUCCESS'
+      WHERE t.status = 'RECONCILED'
     `;
     
     const params = [];
@@ -561,7 +561,7 @@ app.get('/api/reports/recon-outcome', async (req, res) => {
           ELSE NULL
         END as exception_type,
         'System generated' as comments
-      FROM sp_v2_transactions_v1 t
+      FROM sp_v2_transactions t
       LEFT JOIN sp_v2_utr_credits c ON t.utr = c.utr
       LEFT JOIN sp_v2_settlement_items si ON t.id = si.txn_id
       LEFT JOIN sp_v2_recon_matches rm ON si.id = rm.item_id
