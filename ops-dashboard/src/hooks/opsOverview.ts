@@ -168,9 +168,8 @@ function transformV2ToKpis(v2Data: any): Kpis {
       recon: {
         matchRatePct: matchRatePct,
         matchedCount: matchedTransactions,
-        // Exceptions ARE the unmatched transactions - don't split artificially
-        unmatchedPgCount: exceptionsCount, // All exceptions are unmatched PG transactions
-        unmatchedBankCount: 0, // Bank unmatched are tracked separately (not in transactions table)
+        unmatchedPgCount: unmatchedTransactions,
+        unmatchedBankCount: 0,
         exceptionsCount: exceptionsCount,
       },
       connectorHealth: [
@@ -410,7 +409,8 @@ function transformV2ToReconSources(v2Data: any): ReconSourceSummary {
 async function fetchV2Analytics(filters: KpiFilters): Promise<V2OverviewResponse> {
   console.log('🔍 [V2 Hooks] Fetching analytics data with filters:', filters);
   
-  const apiUrl = `http://localhost:5108/api/overview?from=${filters.from}&to=${filters.to}`;
+  const API_BASE_URL = import.meta.env.VITE_OVERVIEW_API_URL || import.meta.env.VITE_API_BASE_URL || 'http://localhost:5108';
+  const apiUrl = `${API_BASE_URL}/api/overview?from=${filters.from}&to=${filters.to}`;
   console.log('📡 [V2 Hooks] Calling V2 API:', apiUrl);
   
   const response = await fetch(apiUrl, {

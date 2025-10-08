@@ -78,28 +78,28 @@ export function SettlementPipeline(props: SettlementPipelineProps) {
       key: 'inSettlement',
       value: inSettlement,
       color: 'bg-blue-500',
-      label: 'In Settlement',
+      label: 'Reconciled',
       emoji: '🟦'
     },
     {
       key: 'sentToBank',
       value: sentToBank,
       color: 'bg-amber-500',
-      label: 'Sent to Bank',
+      label: 'Settled',
       emoji: '🟧'
     },
     {
       key: 'credited',
       value: credited,
       color: 'bg-green-500',
-      label: 'Credited',
+      label: 'Credited to Merchant',
       emoji: '🟩'
     },
     {
       key: 'unsettled',
       value: unsettled,
       color: 'bg-red-500',
-      label: 'Unsettled',
+      label: 'Exceptions',
       emoji: '🟥'
     }
   ];
@@ -133,39 +133,39 @@ export function SettlementPipeline(props: SettlementPipelineProps) {
                     <li className="flex gap-2">
                       <span>🟦</span>
                       <div>
-                        <b>In Settlement</b> — Transaction captured and queued for settlement 
-                        <i> inside the PG system</i>. Preparing batch & validations.
+                        <b>Reconciled</b> — Transactions matched with bank statements, 
+                        <i>status = RECONCILED</i>. Ready for settlement batch creation.
                       </div>
                     </li>
                     
                     <li className="flex gap-2">
                       <span>🟧</span>
                       <div>
-                        <b>Sent to Bank</b> — Settlement instruction <i>pushed to the bank</i> 
-                        (API/file). Awaiting bank confirmation; funds are in transit.
+                        <b>Settled</b> — Settlement batch created, <i>status = SETTLED</i>. 
+                        Transactions grouped with fees/TDS calculated. Ready for merchant payout.
                       </div>
                     </li>
                     
                     <li className="flex gap-2">
                       <span>🟩</span>
                       <div>
-                        <b>Credited</b> — Bank has <i>confirmed credit</i> to the merchant 
-                        account (final success).
+                        <b>Credited to Merchant</b> — Final payout <i>completed to merchant bank account</i>. 
+                        End-to-end settlement successful.
                       </div>
                     </li>
                     
                     <li className="flex gap-2">
                       <span>🟥</span>
                       <div>
-                        <b>Unsettled</b> — Settlement <i>failed/rejected/expired</i> 
-                        (e.g., invalid IFSC, account blocked, cut-off missed). Needs Ops action.
+                        <b>Exceptions</b> — Reconciliation <i>failed or settlement rejected</i> 
+                        (e.g., amount mismatch, missing UTR, duplicate entry). Needs Ops review.
                       </div>
                     </li>
                   </ul>
                   
                   <div className="text-xs text-gray-500 border-t pt-2 mt-2">
                     <b>How to read:</b> Each segment is mutually-exclusive. 
-                    <b> Captured = In Settlement + Sent to Bank + Credited + Unsettled</b> 
+                    <b> Captured = Reconciled + Settled + Credited to Merchant + Exceptions</b> 
                     (selected date range).
                   </div>
                 </div>

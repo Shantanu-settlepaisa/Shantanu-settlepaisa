@@ -61,26 +61,26 @@ export function SettlementPipeline({
       key: 'IN_SETTLEMENT',
       count: inSettlement,
       color: 'bg-blue-600',
-      label: 'In Settlement',
+      label: 'Reconciled',
     },
     {
       key: 'SENT_TO_BANK',
       count: sentToBank,
       color: 'bg-amber-500',
-      label: 'Sent to Bank',
+      label: 'Settled',
     },
     {
       key: 'CREDITED',
       count: credited,
       color: 'bg-emerald-500',
-      label: 'Credited',
+      label: 'Credited to Merchant',
       value: creditedValue,
     },
     {
       key: 'UNSETTLED',
       count: unsettled,
       color: 'bg-red-500',
-      label: 'Unsettled',
+      label: 'Exceptions',
     },
   ];
 
@@ -110,10 +110,10 @@ export function SettlementPipeline({
                 <TooltipContent className="max-w-sm p-3">
                   <div className="space-y-2 text-xs">
                     <p className="font-medium">Settlement Lifecycle</p>
-                    <p>🟦 <b>In Settlement</b> - Transaction captured and queued for settlement inside the PG system</p>
-                    <p>🟧 <b>Sent to Bank</b> - Settlement instruction pushed to the bank, awaiting confirmation</p>
-                    <p>🟩 <b>Credited</b> - Bank has confirmed credit to merchant account</p>
-                    <p>🟥 <b>Unsettled</b> - Settlement failed/rejected, needs Ops action</p>
+                    <p>🟦 <b>Reconciled</b> - Transactions matched with bank statements, ready for settlement</p>
+                    <p>🟧 <b>Settled</b> - Settlement batch created with fees/TDS calculated</p>
+                    <p>🟩 <b>Credited to Merchant</b> - Final payout completed to merchant account</p>
+                    <p>🟥 <b>Exceptions</b> - Reconciliation failed or settlement rejected, needs review</p>
                   </div>
                 </TooltipContent>
               </Tooltip>

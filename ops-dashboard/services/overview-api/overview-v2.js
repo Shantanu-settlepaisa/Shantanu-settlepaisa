@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const { Pool } = require('pg');
@@ -76,7 +77,7 @@ app.get('/api/overview', async (req, res) => {
     const transactionQuery = `
       SELECT 
         COUNT(*) as total_transactions,
-        COUNT(CASE WHEN status = 'RECONCILED' THEN 1 END) as successful_transactions,
+        COUNT(CASE WHEN status IN ('RECONCILED', 'SETTLED') THEN 1 END) as successful_transactions,
         COUNT(CASE WHEN status = 'EXCEPTION' OR status = 'FAILED' THEN 1 END) as failed_transactions,
         SUM(amount_paise) as total_amount_paise
       FROM sp_v2_transactions
@@ -145,18 +146,18 @@ app.get('/api/overview', async (req, res) => {
     const reconResult = queryParams.length > 0
       ? await client.query(`
           SELECT 
-            COUNT(*) FILTER (WHERE status = 'RECONCILED') as matched_count,
+            COUNT(*) FILTER (WHERE status IN ('RECONCILED', 'SETTLED')) as matched_count,
             COUNT(*) FILTER (WHERE status = 'EXCEPTION') as exception_count,
-            SUM(amount_paise) FILTER (WHERE status = 'RECONCILED') as reconciled_amount_paise,
+            SUM(amount_paise) FILTER (WHERE status IN ('RECONCILED', 'SETTLED')) as reconciled_amount_paise,
             SUM(amount_paise) FILTER (WHERE status = 'EXCEPTION') as exception_amount_paise
           FROM sp_v2_transactions
           WHERE transaction_date >= $1 AND transaction_date <= $2
         `, queryParams)
       : await client.query(`
           SELECT 
-            COUNT(*) FILTER (WHERE status = 'RECONCILED') as matched_count,
+            COUNT(*) FILTER (WHERE status IN ('RECONCILED', 'SETTLED')) as matched_count,
             COUNT(*) FILTER (WHERE status = 'EXCEPTION') as exception_count,
-            SUM(amount_paise) FILTER (WHERE status = 'RECONCILED') as reconciled_amount_paise,
+            SUM(amount_paise) FILTER (WHERE status IN ('RECONCILED', 'SETTLED')) as reconciled_amount_paise,
             SUM(amount_paise) FILTER (WHERE status = 'EXCEPTION') as exception_amount_paise
           FROM sp_v2_transactions
           WHERE transaction_date >= CURRENT_DATE - INTERVAL '30 days'

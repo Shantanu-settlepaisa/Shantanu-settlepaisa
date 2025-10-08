@@ -146,32 +146,32 @@ export default function SettlementPipelineCard({ from, to, className }: Settleme
                     <li className="flex gap-2">
                       <span>🟦</span>
                       <div>
-                        <b>In Settlement</b> — Transaction captured and queued for settlement 
-                        <i> inside the PG system</i>. Preparing batch & validations.
+                        <b>Reconciled</b> — Transactions matched with bank statements, 
+                        <i>status = RECONCILED</i>. Ready for settlement batch creation.
                       </div>
                     </li>
                     
                     <li className="flex gap-2">
                       <span>🟧</span>
                       <div>
-                        <b>Sent to Bank</b> — Settlement instruction <i>pushed to the bank</i> 
-                        (API/file). Awaiting bank confirmation; funds are in transit.
+                        <b>Settled</b> — Settlement batch created, <i>status = SETTLED</i>. 
+                        Transactions grouped with fees/TDS calculated. Ready for merchant payout.
                       </div>
                     </li>
                     
                     <li className="flex gap-2">
                       <span>🟩</span>
                       <div>
-                        <b>Credited</b> — Bank has <i>confirmed credit</i> to the merchant 
-                        account (final success).
+                        <b>Credited to Merchant</b> — Final payout <i>completed to merchant bank account</i>. 
+                        End-to-end settlement successful.
                       </div>
                     </li>
                     
                     <li className="flex gap-2">
                       <span>🟥</span>
                       <div>
-                        <b>Unsettled</b> — Settlement <i>failed/rejected/expired</i> 
-                        (e.g., invalid IFSC, account blocked, cut-off missed). Needs Ops action.
+                        <b>Exceptions</b> — Reconciliation <i>failed or settlement rejected</i> 
+                        (e.g., amount mismatch, missing UTR, duplicate entry). Needs Ops review.
                       </div>
                     </li>
                   </ul>
