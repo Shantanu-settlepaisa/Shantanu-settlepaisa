@@ -340,8 +340,15 @@ class SettlementQueueProcessor {
     
     const batchId = batchResult.rows[0].id;
     
-    // Insert settlement items
+    // Insert settlement items with calculated fees
     for (const txn of transactions) {
+      // Find matching item from calculator result
+      const item = settlementBatch.items.find(i => i.transaction_id === txn.transaction_id);
+      
+      if (!item) {
+        console.warn(`[Settlement Queue] No calculator result for ${txn.transaction_id}, using zeros`);
+      }
+      
       await client.query(`
         INSERT INTO sp_v2_settlement_items (
           settlement_batch_id,
@@ -351,17 +358,19 @@ class SettlementQueueProcessor {
           gst_paise,
           reserve_paise,
           net_paise,
-          payment_mode
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+          payment_mode,
+          commission_rate
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
       `, [
         batchId,
         txn.transaction_id,
-        txn.paid_amount,
-        0, // TODO: Calculate individual commission
-        0, // TODO: Calculate individual GST
-        0, // TODO: Calculate individual reserve
-        txn.paid_amount, // Simplified for now
-        txn.payment_mode
+        item ? item.amount_paise : txn.paid_amount,
+        item ? item.commission_paise : 0,
+        item ? item.gst_paise : 0,
+        item ? item.reserve_paise : 0,
+        item ? item.net_paise : txn.paid_amount,
+        txn.payment_mode,
+        item ? item.commission_rate : null
       ]);
     }
     
