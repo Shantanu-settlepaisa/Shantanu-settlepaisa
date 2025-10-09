@@ -7,7 +7,7 @@ import type {
   DisputeEvidence
 } from '@/types/merchant-disputes'
 
-const API_BASE = 'http://localhost:8080/v1/merchant'
+const API_BASE = `${import.meta.env.VITE_MERCHANT_API_URL || 'http://localhost:8080'}/v1/merchant`
 const MERCHANT_ID = 'MERCH001'
 
 class MerchantDisputesService {

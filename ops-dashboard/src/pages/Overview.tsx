@@ -197,7 +197,7 @@ export default function Overview() {
           variancePaise={kpis?.totals.variancePaise || '0'}
           reconciledAmountPaise={kpis?.totals.reconciledAmountPaise || '0'}
           totalAmountPaise={kpis?.totals.totalAmountPaise || '0'}
-          unreconciledCount={kpis?.recon.exceptionsCount || 0}
+          unreconciledCount={kpis?.recon.unmatchedPgCount || 0}
           filters={filters}
           isLoading={isLoading}
         />

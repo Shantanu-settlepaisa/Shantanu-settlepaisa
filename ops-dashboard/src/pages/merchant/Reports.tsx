@@ -1,4 +1,6 @@
 import { useState } from 'react'
+
+const API_BASE = import.meta.env.VITE_MERCHANT_API_URL || 'http://localhost:8080'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import { 
   Calendar, 
@@ -81,7 +83,7 @@ export default function MerchantReports() {
   const { data: reports, isLoading, refetch } = useQuery({
     queryKey: ['merchant-reports', activeTab],
     queryFn: async () => {
-      const res = await fetch(`http://localhost:8080/v1/merchant/reports?merchant_id=MERCH001&report_type=${activeTab}`);
+      const res = await fetch(`${API_BASE}/v1/merchant/reports?merchant_id=MERCH001&report_type=${activeTab}`);
       const data = await res.json();
       return data.reports || [];
     },
@@ -225,7 +227,7 @@ export default function MerchantReports() {
   const { data: stats } = useQuery({
     queryKey: ['merchant-reports-stats'],
     queryFn: async () => {
-      const res = await fetch('http://localhost:8080/v1/merchant/reports/stats?merchant_id=MERCH001');
+      const res = await fetch(`${API_BASE}/v1/merchant/reports/stats?merchant_id=MERCH001`);
       const data = await res.json();
       return data;
     },
@@ -236,7 +238,7 @@ export default function MerchantReports() {
   const { data: scheduledReports } = useQuery({
     queryKey: ['merchant-scheduled-reports'],
     queryFn: async () => {
-      const res = await fetch('http://localhost:8080/v1/merchant/reports/scheduled?merchant_id=MERCH001');
+      const res = await fetch(`${API_BASE}/v1/merchant/reports/scheduled?merchant_id=MERCH001`);
       const data = await res.json();
       return data.scheduledReports || [];
     },
@@ -284,7 +286,7 @@ export default function MerchantReports() {
     setIsGenerating(true);
     
     try {
-      const res = await fetch('http://localhost:8080/v1/merchant/reports/generate', {
+      const res = await fetch(`${API_BASE}/v1/merchant/reports/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -300,7 +302,7 @@ export default function MerchantReports() {
       
       if (data.success) {
         // Download the report immediately
-        window.location.href = `http://localhost:8080${data.download_url}?merchant_id=MERCH001`;
+        window.location.href = `${API_BASE}${data.download_url}?merchant_id=MERCH001`;
         toast.success(`Report generated with ${data.row_count} rows`);
         refetch();
       } else {

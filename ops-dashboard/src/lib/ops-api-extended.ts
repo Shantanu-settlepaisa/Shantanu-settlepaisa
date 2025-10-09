@@ -3,7 +3,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { computeSnapshot, overviewBus } from '../services/overview-aggregator'
 import type { OverviewSnapshot } from '../types/overview'
 
-const USE_MOCK_API = import.meta.env.VITE_USE_MOCK_API !== 'false'
+const USE_MOCK_API = import.meta.env.VITE_USE_MOCK_API === 'true'
 
 // Extended types for reconciliation
 export interface ReconJob {
@@ -1726,7 +1726,8 @@ export class OpsApiExtended {
     if (params.cursor) queryParams.append('offset', params.cursor)
     if (params.limit) queryParams.append('limit', params.limit.toString())
     
-    const response = await fetch(`http://localhost:5103/exceptions-v2?${queryParams.toString()}`)
+    const reconApiUrl = import.meta.env.VITE_RECON_API_URL || 'http://localhost:5103'
+    const response = await fetch(`${reconApiUrl}/exceptions-v2?${queryParams.toString()}`)
     const data = await response.json()
     return data
   }

@@ -3,19 +3,31 @@ require('dotenv').config();
 
 // Environment variables
 const USE_DB = process.env.USE_DB === 'true';
-const PG_URL = process.env.PG_URL || 'postgresql://postgres:postgres@localhost:5432/settlepaisa';
+const PG_URL = process.env.PG_URL;
 const MERCHANT_ID = process.env.DEFAULT_MERCHANT_ID || '11111111-1111-1111-1111-111111111111';
 
 // Database connection pool
 let pool = null;
 
 if (USE_DB) {
-  pool = new Pool({
+  // Support both PG_URL and individual DB_* variables (like ops dashboard)
+  const poolConfig = PG_URL ? {
     connectionString: PG_URL,
     max: 10,
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 2000,
-  });
+  } : {
+    host: process.env.DB_HOST || 'localhost',
+    port: process.env.DB_PORT || 5432,
+    user: process.env.DB_USER || 'postgres',
+    password: process.env.DB_PASSWORD || 'postgres',
+    database: process.env.DB_NAME || 'settlepaisa_v2',
+    max: 10,
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 2000,
+  };
+  
+  pool = new Pool(poolConfig);
 
   // Test connection
   pool.query('SELECT NOW()', (err, res) => {

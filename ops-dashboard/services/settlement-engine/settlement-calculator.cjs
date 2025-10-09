@@ -1,14 +1,15 @@
+require('dotenv').config();
 const { Pool } = require('pg');
 
 // Settlement calculation engine with V1-compatible logic
 class SettlementCalculator {
   constructor() {
     this.pool = new Pool({
-      user: 'postgres',
-      host: 'localhost',
-      database: 'settlepaisa_v2',
-      password: 'settlepaisa123',
-      port: 5433,
+      user: process.env.DB_USER || 'postgres',
+      host: process.env.DB_HOST || 'localhost',
+      database: process.env.DB_NAME || 'settlepaisa_v2',
+      password: process.env.DB_PASSWORD || 'settlepaisa123',
+      port: process.env.DB_PORT || 5433,
     });
     
     // V1 compatible tax rates
@@ -149,7 +150,7 @@ class SettlementCalculator {
   }
 
   // Save settlement batch to database
-  async saveSettlementBatch(settlement) {
+  async saveSettlementBatch(settlement, transactions) {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
@@ -158,9 +159,9 @@ class SettlementCalculator {
       const batchQuery = `
         INSERT INTO sp_v2_settlement_batches (
           merchant_id, cycle_date, total_transactions, gross_amount_paise,
-          total_commission_paise, total_gst_paise, total_tds_paise, 
+          total_commission_paise, total_gst_paise, 
           total_reserve_paise, net_amount_paise, status
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         RETURNING id
       `;
       
@@ -171,18 +172,47 @@ class SettlementCalculator {
         settlement.grossAmountPaise,
         settlement.commissionPaise,
         settlement.gstPaise,
-        settlement.tdsPaise,
         settlement.reservePaise,
         settlement.netAmountPaise,
-        'PENDING'
+        'PENDING_APPROVAL'
       ];
       
       const batchResult = await client.query(batchQuery, batchValues);
       const batchDbId = batchResult.rows[0].id;
       
+      // Create settlement items for each transaction
+      // Get commission tier for calculations
+      const tier = await this.getCommissionTier(settlement.merchantId, settlement.batchDate);
+      
+      for (const txn of transactions) {
+        const txnAmount = parseInt(txn.amount_paise) || 0;
+        const txnCommission = Math.round(txnAmount * tier.commissionRate / 100);
+        const txnGst = Math.round(txnCommission * this.TAX_RATES.GST / 100);
+        const txnReserve = Math.round((txnAmount - txnCommission - txnGst) * this.TAX_RATES.RESERVE / 100);
+        const txnNet = txnAmount - txnCommission - txnGst - txnReserve;
+        
+        await client.query(`
+          INSERT INTO sp_v2_settlement_items (
+            settlement_batch_id, transaction_id, amount_paise, 
+            commission_paise, gst_paise, reserve_paise, net_paise,
+            commission_rate, created_at
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+        `, [batchDbId, txn.transaction_id, txnAmount, txnCommission, txnGst, txnReserve, txnNet, tier.commissionRate]);
+      }
+      
+      // Update transactions with settlement_batch_id
+      const transactionIds = transactions.map(t => t.transaction_id);
+      await client.query(`
+        UPDATE sp_v2_transactions 
+        SET settlement_batch_id = $1, updated_at = NOW()
+        WHERE transaction_id = ANY($2)
+      `, [batchDbId, transactionIds]);
+      
       await client.query('COMMIT');
       
       console.log(`✅ [Settlement] Batch saved (DB ID: ${batchDbId})`);
+      console.log(`✅ [Settlement] Created ${transactions.length} settlement items`);
+      console.log(`✅ [Settlement] Updated ${transactions.length} transactions`);
       
       return { ...settlement, dbId: batchDbId };
       
@@ -200,14 +230,10 @@ class SettlementCalculator {
     const client = await this.pool.connect();
     try {
       let query = `
-        SELECT id, merchant_id, amount_paise, utr, status, transaction_date as created_at
+        SELECT transaction_id, merchant_id, amount_paise, utr, status, transaction_date as created_at
         FROM sp_v2_transactions 
         WHERE status IN ('RECONCILED', 'SUCCESS')
-        AND id NOT IN (
-          SELECT DISTINCT transaction_id 
-          FROM sp_v2_settlement_transaction_map 
-          WHERE settlement_batch_id IS NOT NULL
-        )
+        AND settlement_batch_id IS NULL
       `;
       
       const values = [];
@@ -254,7 +280,7 @@ class SettlementCalculator {
       console.log(`💼 [Settlement] Processing ${txns.length} transactions for merchant: ${mid}`);
       
       const settlement = await this.calculateSettlement(txns, mid);
-      const savedSettlement = await this.saveSettlementBatch(settlement);
+      const savedSettlement = await this.saveSettlementBatch(settlement, txns);
       settlements.push(savedSettlement);
     }
     

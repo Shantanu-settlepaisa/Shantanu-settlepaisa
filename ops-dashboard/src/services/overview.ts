@@ -225,7 +225,7 @@ async function transformV2DatabaseResponse(v2Data: any, window: OverviewWindow):
   const matchedTransactions = reconciliation.matched || 0;
   const unmatchedTransactions = reconciliation.unmatched || 0;
   const totalAmount = v2Data.financial?.grossAmount || 0;
-  const reconciledAmount = v2Data.financial?.netAmount || 0;
+  const reconciledAmount = v2Data.financial?.reconciledAmount || 0;
   const exceptionTransactions = exceptions;
   
   // Build KPIs from V2 data to match expected structure

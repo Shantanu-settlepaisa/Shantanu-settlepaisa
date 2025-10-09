@@ -68,11 +68,20 @@ function detectBankFromFilename(filename: string): string {
 
 // Helper to compute MD5 (simplified)
 async function computeMD5(file: File): Promise<string> {
-  const buffer = await file.arrayBuffer()
-  const hashBuffer = await crypto.subtle.digest('SHA-256', buffer)
-  const hashArray = Array.from(new Uint8Array(hashBuffer))
-  const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('')
-  return hashHex.substring(0, 8)
+  try {
+    if (!crypto?.subtle?.digest) {
+      // Fallback for non-HTTPS contexts
+      return Math.random().toString(36).substring(2, 10);
+    }
+    const buffer = await file.arrayBuffer()
+    const hashBuffer = await crypto.subtle.digest('SHA-256', buffer)
+    const hashArray = Array.from(new Uint8Array(hashBuffer))
+    const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('')
+    return hashHex.substring(0, 8)
+  } catch (error) {
+    // Fallback on error
+    return Math.random().toString(36).substring(2, 10);
+  }
 }
 
 // Helper to read file preview
@@ -394,7 +403,8 @@ export function ManualUploadEnhanced() {
               exceptionsCount: exceptionsCount
             };
             
-            const response = await axios.post('http://localhost:5105/api/recon-results/manual', {
+            const overviewApiUrl = import.meta.env.VITE_OVERVIEW_API_URL || 'http://localhost:5108';
+            const response = await axios.post(`${overviewApiUrl}/api/recon-results/manual`, {
               jobId,
               summary
             });
@@ -434,7 +444,8 @@ export function ManualUploadEnhanced() {
           console.log('[Manual Upload] Sending bank data:', bankData.length, 'records');
           
           // Call the real recon API with uploaded data
-          const response = await fetch('http://localhost:5103/recon/run', {
+          const reconApiUrl = import.meta.env.VITE_RECON_API_URL || 'http://localhost:5103';
+          const response = await fetch(`${reconApiUrl}/recon/run`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json'
@@ -622,7 +633,8 @@ export function ManualUploadEnhanced() {
     setPgFetchStatus(null);
     
     try {
-      const response = await axios.get('http://localhost:5103/pg-transactions/fetch', {
+      const reconApiUrl = import.meta.env.VITE_RECON_API_URL || 'http://localhost:5103';
+      const response = await axios.get(`${reconApiUrl}/pg-transactions/fetch`, {
         params: {
           cycle_date: cycleDate,
           merchant_id: merchant !== 'All Merchants' ? merchant : undefined

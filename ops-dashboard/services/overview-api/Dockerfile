@@ -3,5 +3,5 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm install --production
 COPY . .
-EXPOSE 5104
-CMD ["node", "index.js"]
+EXPOSE 5108
+CMD ["node", "overview-v2.js"]

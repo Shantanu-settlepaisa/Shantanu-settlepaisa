@@ -3,11 +3,11 @@ const { Pool } = require('pg');
 const router = express.Router();
 
 const v2Pool = new Pool({
-  host: 'localhost',
-  port: 5433,
-  user: 'postgres',
-  password: 'settlepaisa123',
-  database: 'settlepaisa_v2'
+  host: process.env.DB_HOST || 'localhost',
+  port: process.env.DB_PORT || 5432,
+  user: process.env.DB_USER || 'postgres',
+  password: process.env.DB_PASSWORD || 'postgres',
+  database: process.env.DB_NAME || 'settlepaisa_v2'
 });
 
 const MERCHANT_ID = process.env.DEFAULT_MERCHANT_ID || 'MERCH001';

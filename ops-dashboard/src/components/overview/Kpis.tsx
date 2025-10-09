@@ -186,7 +186,7 @@ export function Kpis({ kpis, isLoading, filters }: KpisProps) {
     {
       title: "Variance",
       value: paiseToCompactINR(kpis.totals.variancePaise),
-      subtitle: `${kpis.recon.unmatchedPgCount + kpis.recon.unmatchedBankCount + kpis.recon.exceptionsCount} unreconciled`,
+      subtitle: `${kpis.recon.unmatchedPgCount + kpis.recon.exceptionsCount} unreconciled`,
       tooltip: "Amount difference between total and reconciled transactions",
       color: "amber",
       icon: AlertCircle,

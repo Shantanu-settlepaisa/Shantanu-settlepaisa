@@ -88,7 +88,8 @@ export default function MerchantSettlements() {
         if (startDate) params.append('startDate', startDate);
         if (endDate) params.append('endDate', endDate);
         
-        const endpoint = `/v1/merchant/settlements${params.toString() ? '?' + params.toString() : ''}`;
+        const API_BASE = import.meta.env.VITE_MERCHANT_API_URL || 'http://localhost:8080';
+        const endpoint = `${API_BASE}/v1/merchant/settlements${params.toString() ? '?' + params.toString() : ''}`;
         
         console.log(`Fetching settlements from: ${endpoint}`)
         const response = await fetch(endpoint)
@@ -224,7 +225,8 @@ export default function MerchantSettlements() {
     queryKey: ['merchant-settlement-stats'],
     queryFn: async () => {
       // Fetch from real API
-      const response = await fetch('/v1/merchant/dashboard/summary')
+      const API_BASE = import.meta.env.VITE_MERCHANT_API_URL || 'http://localhost:8080';
+      const response = await fetch(`${API_BASE}/v1/merchant/dashboard/summary`)
       const apiData = await response.json()
       
       const statsData = {

@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const SettlementCalculator = require('./settlement-calculator.cjs');
@@ -127,11 +128,11 @@ app.get('/api/settlement-batches', async (req, res) => {
   try {
     const { Pool } = require('pg');
     const pool = new Pool({
-      user: 'postgres',
-      host: 'localhost',
-      database: 'settlepaisa_v2',
-      password: 'settlepaisa123',
-      port: 5433,
+      user: process.env.DB_USER || 'postgres',
+      host: process.env.DB_HOST || 'localhost',
+      database: process.env.DB_NAME || 'settlepaisa_v2',
+      password: process.env.DB_PASSWORD || 'settlepaisa123',
+      port: process.env.DB_PORT || 5433,
     });
     
     const client = await pool.connect();
@@ -140,7 +141,7 @@ app.get('/api/settlement-batches', async (req, res) => {
       SELECT 
         id, merchant_id, cycle_date, total_transactions,
         gross_amount_paise, total_commission_paise, total_gst_paise, 
-        total_tds_paise, total_reserve_paise, net_amount_paise,
+        total_reserve_paise, net_amount_paise,
         status, created_at, updated_at
       FROM sp_v2_settlement_batches 
       ORDER BY created_at DESC 

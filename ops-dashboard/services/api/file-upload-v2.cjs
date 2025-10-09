@@ -7,6 +7,7 @@ const XLSX = require('xlsx');
 const { v4: uuidv4 } = require('uuid');
 const fs = require('fs');
 const path = require('path');
+const { convertV1CSVToV2, detectFormat } = require('./v1-column-mapper');
 
 const app = express();
 const PORT = process.env.PORT || 5107;
@@ -14,10 +15,10 @@ const PORT = process.env.PORT || 5107;
 // Database connection
 const pool = new Pool({
   user: process.env.DATABASE_USER || 'postgres',
-  host: process.env.DATABASE_HOST || 'localhost',
+  host: process.env.DATABASE_HOST || 'settlepaisa-staging.c9u0agyyg6q9.ap-south-1.rds.amazonaws.com',
   database: process.env.DATABASE_NAME || 'settlepaisa_v2',
-  password: process.env.DATABASE_PASSWORD || 'settlepaisa123',
-  port: parseInt(process.env.DATABASE_PORT || '5433'),
+  password: process.env.DATABASE_PASSWORD || 'SettlePaisa2024',
+  port: parseInt(process.env.DATABASE_PORT || '5432'),
 });
 
 // Middleware
@@ -160,13 +161,37 @@ async function processFile(file, fileType, includePreview = true) {
   // Auto-detect file type based on columns
   const detectedType = fileType === 'auto-detect' ? detectFileType(data[0]) : fileType;
   
+  // Convert V1 format to V2 if needed
+  let processedData = data;
+  try {
+    const format = detectFormat(Object.keys(data[0]));
+    console.log(`📋 [V2 Upload] Detected format: ${format}`);
+    
+    if (format === 'v1') {
+      const v1Type = detectedType === 'transactions' ? 'pg_transactions' : 'bank_statements';
+      processedData = convertV1CSVToV2(data, v1Type);
+      console.log(`✨ [V2 Upload] Converted ${data.length} V1 rows to V2 format`);
+    }
+  } catch (conversionError) {
+    console.error(`❌ [V2 Upload] V1->V2 conversion failed:`, conversionError);
+    console.error(`Stack:`, conversionError.stack);
+    // Use original data if conversion fails
+    processedData = data;
+  }
+  
   // Validate and process data
-  const { validRecords, errors } = validateData(data, detectedType);
+  console.log(`🔍 [V2 Upload] Calling validateData with fileType: "${detectedType}"`);
+  const { validRecords, errors } = validateData(processedData, detectedType);
+  
+  console.log(`📊 [V2 Upload] Validation results: ${validRecords.length} valid, ${errors.length} errors`);
+  if (errors.length > 0) {
+    console.log(`❌ [V2 Upload] First error:`, errors[0]);
+  }
   
   // Insert into V2 database
   let insertResult;
   if (validRecords.length > 0) {
-    if (detectedType === 'transactions' || detectedType === 'pg_data') {
+    if (detectedType === 'transactions' || detectedType === 'pg_transactions' || detectedType === 'pg_data') {
       insertResult = await insertTransactions(validRecords);
     } else if (detectedType === 'bank_statements' || detectedType === 'bank_data') {
       insertResult = await insertBankStatements(validRecords);
@@ -241,14 +266,17 @@ function validateData(data, fileType) {
 
   data.forEach((row, index) => {
     try {
-      if (fileType === 'transactions') {
+      if (fileType === 'transactions' || fileType === 'pg_transactions' || fileType === 'pg_data') {
         const validated = validateTransaction(row, index + 1);
         if (validated) validRecords.push(validated);
-      } else if (fileType === 'bank_statements') {
+      } else if (fileType === 'bank_statements' || fileType === 'bank_data') {
         const validated = validateBankStatement(row, index + 1);
         if (validated) validRecords.push(validated);
+      } else {
+        console.error(`[V2 Upload] Unknown fileType for validation: ${fileType}`);
       }
     } catch (error) {
+      console.error(`[V2 Upload] Validation error at row ${index + 1}:`, error.message);
       errors.push({
         row: index + 1,
         error: error.message,
@@ -260,32 +288,46 @@ function validateData(data, fileType) {
   return { validRecords, errors };
 }
 
-// Transaction validation
+// Transaction validation  
 function validateTransaction(row, rowNumber) {
-  const requiredFields = ['transaction_id', 'amount'];
-  const missing = requiredFields.filter(field => !row[field] && !findColumnVariant(row, field));
+  // Map common column variations - V2 schema uses transaction_id after V1->V2 conversion
+  const txnId = row.transaction_id || row.txn_id || row.pgw_ref || row.gateway_ref || row.pg_txn_id;
+  const amountRaw = row.amount_paise || row.amount || row.gross_amount || row.net_amount;
   
-  if (missing.length > 0) {
-    throw new Error(`Missing required fields: ${missing.join(', ')}`);
+  if (!txnId) {
+    throw new Error('Missing transaction ID field');
   }
-
-  // Map common column variations
-  const txnId = row.transaction_id || row.txn_id || row.pgw_ref || row.gateway_ref;
-  const amount = parseFloat(row.amount || row.amount_paise || row.gross_amount);
   
+  const amount = parseFloat(amountRaw);
   if (isNaN(amount) || amount <= 0) {
     throw new Error('Invalid amount');
   }
+
+  // If amount is already in paise (> 1000), use as-is, otherwise convert rupees to paise
+  const amountPaise = amount > 1000 ? Math.round(amount) : Math.round(amount * 100);
+
+  // Map status to valid database values
+  const rawStatus = (row.status || row.Status || 'SUCCESS').toUpperCase();
+  const statusMap = {
+    'SUCCESS': 'PENDING',
+    'COMPLETED': 'PENDING',
+    'FAILED': 'FAILED',
+    'PENDING': 'PENDING',
+    'RECONCILED': 'RECONCILED',
+    'EXCEPTION': 'EXCEPTION',
+    'UNMATCHED': 'UNMATCHED'
+  };
+  const validStatus = statusMap[rawStatus] || 'PENDING';
 
   return {
     id: uuidv4(),
     merchant_id: row.merchant_id || 'UNKNOWN',
     pgw_ref: txnId,
-    utr: row.utr || null,
-    amount_paise: Math.round(amount * 100), // Convert to paise
+    utr: row.utr || row.UTR || null,
+    amount_paise: amountPaise,
     currency: row.currency || 'INR',
     payment_mode: row.payment_mode || row.payment_method || 'UPI',
-    status: row.status || 'SUCCESS',
+    status: validStatus,
     customer_email: row.customer_email || null,
     customer_phone: row.customer_phone || null,
     metadata: {
@@ -297,26 +339,30 @@ function validateTransaction(row, rowNumber) {
 
 // Bank statement validation
 function validateBankStatement(row, rowNumber) {
-  const requiredFields = ['utr', 'amount'];
-  const missing = requiredFields.filter(field => !row[field] && !findColumnVariant(row, field));
+  // Map common column variations
+  const utr = row.utr || row.UTR || row.utr_number;
+  const amountRaw = row.amount_paise || row.amount || row.CREDIT_AMT || row.NET_CR_AMT || row.credited_amount;
   
-  if (missing.length > 0) {
-    throw new Error(`Missing required fields: ${missing.join(', ')}`);
+  if (!utr) {
+    throw new Error('Missing UTR field');
   }
-
-  const amount = parseFloat(row.amount || row.amount_paise || row.credited_amount);
+  
+  const amount = parseFloat(amountRaw);
   if (isNaN(amount) || amount <= 0) {
     throw new Error('Invalid amount');
   }
 
+  // If amount is already in paise (> 1000), use as-is, otherwise convert rupees to paise
+  const amountPaise = amount > 1000 ? Math.round(amount) : Math.round(amount * 100);
+
   return {
     id: uuidv4(),
-    acquirer: row.bank_name || row.acquirer || 'UNKNOWN',
-    utr: row.utr,
-    amount_paise: Math.round(amount * 100),
-    credited_at: new Date(row.credited_at || row.transaction_date || new Date()),
-    cycle_date: new Date(row.cycle_date || row.transaction_date || new Date()),
-    bank_reference: row.bank_ref || row.bank_reference || null,
+    acquirer: row.bank_name || row.BANK || row.acquirer || 'UNKNOWN',
+    utr: utr,
+    amount_paise: amountPaise,
+    credited_at: new Date(row.credited_at || row.VALUE_DATE || row.transaction_date || new Date()),
+    cycle_date: new Date(row.cycle_date || row.VALUE_DATE || row.transaction_date || new Date()),
+    bank_reference: row.bank_ref || row.TXNID || row.bank_reference || null,
     raw_data: {
       original_row: rowNumber,
       source_file: 'manual_upload',
@@ -347,31 +393,38 @@ async function insertTransactions(transactions) {
 
     for (const txn of transactions) {
       try {
+        await client.query('SAVEPOINT sp_txn');
+        
         // Check for duplicates
         const existing = await client.query(
-          'SELECT id FROM sp_v2_transactions_v1 WHERE pgw_ref = $1',
+          'SELECT id FROM sp_v2_transactions WHERE transaction_id = $1',
           [txn.pgw_ref]
         );
 
         if (existing.rows.length > 0) {
           duplicates++;
+          await client.query('RELEASE SAVEPOINT sp_txn');
           continue;
         }
 
-        // Insert transaction
+        // Insert transaction into sp_v2_transactions
         await client.query(`
-          INSERT INTO sp_v2_transactions_v1 
-          (id, merchant_id, pgw_ref, utr, amount_paise, currency, payment_mode, status, customer_email, customer_phone, metadata)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+          INSERT INTO sp_v2_transactions 
+          (transaction_id, merchant_id, gateway_ref, utr, amount_paise, currency, payment_method, status, 
+           transaction_date, transaction_timestamp, source_type, source_name)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         `, [
-          txn.id, txn.merchant_id, txn.pgw_ref, txn.utr, txn.amount_paise,
-          txn.currency, txn.payment_mode, txn.status, txn.customer_email, txn.customer_phone,
-          JSON.stringify(txn.metadata)
+          txn.pgw_ref, txn.merchant_id, txn.pgw_ref, txn.utr, txn.amount_paise,
+          txn.currency, txn.payment_mode, txn.status,
+          new Date(), new Date(), 'MANUAL_UPLOAD', 'manual_upload'
         ]);
 
+        await client.query('RELEASE SAVEPOINT sp_txn');
         inserted++;
       } catch (error) {
-        console.error('Error inserting transaction:', error);
+        await client.query('ROLLBACK TO SAVEPOINT sp_txn');
+        console.error(`[V2 Upload] Error inserting transaction ${txn.pgw_ref}:`, error.message);
+        console.error(`[V2 Upload] Transaction data:`, JSON.stringify(txn));
         skipped++;
       }
     }
@@ -399,10 +452,10 @@ async function insertBankStatements(statements) {
 
     for (const stmt of statements) {
       try {
-        // Check for duplicates
+        // Check for duplicates by UTR and bank
         const existing = await client.query(
-          'SELECT id FROM sp_v2_utr_credits WHERE acquirer = $1 AND utr = $2',
-          [stmt.acquirer, stmt.utr]
+          'SELECT id FROM sp_v2_bank_statements WHERE utr = $1 AND bank_name = $2',
+          [stmt.utr, stmt.acquirer]
         );
 
         if (existing.rows.length > 0) {
@@ -410,14 +463,15 @@ async function insertBankStatements(statements) {
           continue;
         }
 
-        // Insert bank statement
+        // Insert bank statement into sp_v2_bank_statements
         await client.query(`
-          INSERT INTO sp_v2_utr_credits 
-          (id, acquirer, utr, amount_paise, credited_at, cycle_date, bank_reference, raw_data)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+          INSERT INTO sp_v2_bank_statements 
+          (bank_ref, bank_name, utr, amount_paise, transaction_date, value_date, 
+           source_type, source_file, debit_credit)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         `, [
-          stmt.id, stmt.acquirer, stmt.utr, stmt.amount_paise, stmt.credited_at,
-          stmt.cycle_date, stmt.bank_reference, JSON.stringify(stmt.raw_data)
+          stmt.bank_reference || stmt.id, stmt.acquirer, stmt.utr, stmt.amount_paise, 
+          stmt.credited_at, stmt.cycle_date, 'MANUAL_UPLOAD', 'manual_upload', 'CREDIT'
         ]);
 
         inserted++;
@@ -446,8 +500,8 @@ app.get('/api/upload/stats', async (req, res) => {
     const client = await pool.connect();
     
     const [txnResult, bankResult] = await Promise.all([
-      client.query('SELECT COUNT(*) as count FROM sp_v2_transactions_v1'),
-      client.query('SELECT COUNT(*) as count FROM sp_v2_utr_credits')
+      client.query('SELECT COUNT(*) as count FROM sp_v2_transactions'),
+      client.query('SELECT COUNT(*) as count FROM sp_v2_bank_statements')
     ]);
 
     client.release();
