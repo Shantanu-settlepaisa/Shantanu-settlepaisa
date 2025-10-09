@@ -9,11 +9,11 @@ const sabpaisaPool = new Pool({
 });
 
 const v2Pool = new Pool({
-  user: 'postgres',
-  host: 'localhost',
-  database: 'settlepaisa_v2',
-  password: 'settlepaisa123',
-  port: 5433,
+  user: process.env.DB_USER || 'postgres',
+  host: process.env.DB_HOST || 'localhost',
+  database: process.env.DB_NAME || 'settlepaisa_v2',
+  password: process.env.DB_PASSWORD || 'settlepaisa123',
+  port: process.env.DB_PORT || 5433,
 });
 
 class SettlementCalculatorV1Logic {
