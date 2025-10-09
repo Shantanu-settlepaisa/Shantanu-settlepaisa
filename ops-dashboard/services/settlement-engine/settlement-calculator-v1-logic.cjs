@@ -161,8 +161,23 @@ class SettlementCalculatorV1Logic {
 
   async getMerchantConfig(merchantId) {
     try {
+      // Mock config for test merchants
+      if (merchantId.startsWith('TEST_') || merchantId.startsWith('MERCH_')) {
+        console.log(`[Settlement] Using mock config for test merchant: ${merchantId}`);
+        return {
+          merchantid: 999999,
+          client_code: merchantId,
+          companyname: `Test Company ${merchantId}`,
+          rolling_reserve: false,
+          rolling_percentage: 0,
+          no_of_days: 0,
+          subscribe: false,
+          subscribe_amount: 0
+        };
+      }
+
       const result = await sabpaisaPool.query(
-        `SELECT 
+        `SELECT
           merchantid,
           clientcode as client_code,
           companyname,
@@ -175,13 +190,13 @@ class SettlementCalculatorV1Logic {
          WHERE clientcode = $1`,
         [merchantId]
       );
-      
+
       if (result.rows.length === 0) {
         return null;
       }
-      
+
       return result.rows[0];
-      
+
     } catch (error) {
       console.error('[Settlement] Error fetching merchant config:', error.message);
       throw error;
@@ -190,8 +205,16 @@ class SettlementCalculatorV1Logic {
 
   async getFeeBearerConfig(merchantDbId, paymodeId) {
     try {
+      // Mock for test merchants (merchantDbId 999999 from above)
+      if (merchantDbId === 999999) {
+        return {
+          fee_bearer_id: '2',
+          fee_bearer_name: 'merchant'
+        };
+      }
+
       const result = await sabpaisaPool.query(
-        `SELECT 
+        `SELECT
           mfb.fee_bearer_id,
           fb.name as fee_bearer_name
          FROM merchant_fee_bearer mfb
@@ -199,16 +222,16 @@ class SettlementCalculatorV1Logic {
          WHERE mfb.merchant_id = $1 AND mfb.mode_id = $2`,
         [merchantDbId, paymodeId.toString()]
       );
-      
+
       if (result.rows.length === 0) {
         return {
           fee_bearer_id: '2',
           fee_bearer_name: 'merchant'
         };
       }
-      
+
       return result.rows[0];
-      
+
     } catch (error) {
       console.error('[Settlement] Error fetching fee bearer config:', error.message);
       return {
@@ -220,8 +243,20 @@ class SettlementCalculatorV1Logic {
 
   async getMDRRates(clientCode, paymodeId) {
     try {
+      // Mock MDR rates for test merchants
+      if (clientCode.startsWith('TEST_') || clientCode.startsWith('MERCH_')) {
+        return {
+          convcharges: '0',
+          convchargestype: 'percentage',
+          endpointcharge: '2',
+          endpointchargestypes: 'percentage',
+          gst: '18',
+          gsttype: 'percentage'
+        };
+      }
+
       const result = await sabpaisaPool.query(
-        `SELECT 
+        `SELECT
           convcharges,
           convchargestype,
           endpointcharge,
@@ -233,7 +268,7 @@ class SettlementCalculatorV1Logic {
          LIMIT 1`,
         [clientCode, paymodeId]
       );
-      
+
       if (result.rows.length === 0) {
         return {
           convcharges: '0',
@@ -244,9 +279,9 @@ class SettlementCalculatorV1Logic {
           gsttype: 'percentage'
         };
       }
-      
+
       return result.rows[0];
-      
+
     } catch (error) {
       console.error('[Settlement] Error fetching MDR rates:', error.message);
       return {
@@ -344,8 +379,8 @@ class SettlementCalculatorV1Logic {
       
       for (const item of settlementBatch.itemized_settlements) {
         await client.query(
-          `INSERT INTO sp_v2_settlement_items 
-           (settlement_batch_id, transaction_id, amount_paise, commission_paise, 
+          `INSERT INTO sp_v2_settlement_items
+           (settlement_batch_id, transaction_id, amount_paise, commission_paise,
             gst_paise, reserve_paise, net_paise, payment_mode, fee_bearer)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
           [
@@ -361,7 +396,20 @@ class SettlementCalculatorV1Logic {
           ]
         );
       }
-      
+
+      // Update transactions to link them to the settlement batch
+      const transactionIds = settlementBatch.itemized_settlements.map(item => item.transaction_id);
+      if (transactionIds.length > 0) {
+        const updateResult = await client.query(
+          `UPDATE sp_v2_transactions
+           SET settlement_batch_id = $1,
+               updated_at = NOW()
+           WHERE transaction_id = ANY($2::text[])`,
+          [batchId, transactionIds]
+        );
+        console.log(`[Settlement] Linked ${updateResult.rowCount} transactions to batch ${batchId}`);
+      }
+
       await client.query('COMMIT');
       
       console.log(`[Settlement] Persisted batch ${batchId} with ${settlementBatch.itemized_settlements.length} items`);

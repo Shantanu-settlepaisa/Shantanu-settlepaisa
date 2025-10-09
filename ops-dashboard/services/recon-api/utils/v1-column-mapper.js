@@ -81,13 +81,17 @@ const V1_TO_V2_COLUMN_MAPPING = {
   bank_statements: {
     'utr': 'utr',
     'rrn': 'rrn',
+    'amount': 'amount_paise',
     'paid_amount': 'amount_paise',
     'payee_amount': 'amount_paise',
     'trans_complete_date': 'transaction_date',
     'trans_date': 'transaction_date',
+    'date': 'transaction_date',
     'bank_name': 'bank_name',
     'transaction_status': 'status',
-    'approval_code': 'approval_code'
+    'approval_code': 'approval_code',
+    'transaction_id': 'bank_ref',
+    'remarks': 'remarks'
   }
 }
 

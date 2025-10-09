@@ -322,17 +322,18 @@ async function runReconciliation(params) {
         // Group matched transactions by merchant
         const merchantGroups = {};
         matchResult.matched.forEach(match => {
-          const merchantId = match.pg.merchant_id || match.pg.client_code;
+          const pg = match.pg || {};
+          const merchantId = pg.merchant_id || pg.client_code || 'UNKNOWN';
           if (!merchantGroups[merchantId]) {
             merchantGroups[merchantId] = [];
           }
           merchantGroups[merchantId].push({
-            transaction_id: match.pg.transaction_id || match.pg.pgw_ref,
-            paid_amount: match.pg.amount / 100, // Convert paise to rupees
-            payee_amount: match.pg.amount / 100,
-            payment_mode: match.pg.payment_mode,
-            paymode_id: match.pg.paymode_id,
-            ...match.pg
+            transaction_id: pg.transaction_id || pg.pgw_ref || pg.TXN_ID || '',
+            paid_amount: (pg.amount || 0) / 100,
+            payee_amount: (pg.amount || 0) / 100,
+            payment_mode: pg.payment_mode || pg.payment_method || '',
+            paymode_id: pg.paymode_id || null,
+            ...pg
           });
         });
         
@@ -469,8 +470,10 @@ async function fetchBankRecords(params) {
     
     if (records.length > 0) {
       try {
+        console.log('[Recon] BEFORE conversion, first record:', JSON.stringify(records[0]));
         records = convertV1CSVToV2(records, 'bank_statements');
         console.log(`[Recon] Converted ${records.length} bank records from V1 to V2 format`);
+        console.log('[Recon] AFTER conversion, first record:', JSON.stringify(records[0]));
       } catch (conversionError) {
         console.warn('[Recon] V1→V2 bank conversion failed, using data as-is:', conversionError.message);
       }
@@ -496,13 +499,15 @@ function normalizeTransactions(transactions) {
   // Check if this is V1 format by looking for V1 column names
   if (transactions.length > 0) {
     const firstRow = transactions[0];
-    const hasV1Columns = 
-      firstRow['Transaction ID'] || 
-      firstRow['Client Code'] || 
+    const hasV1Columns =
+      firstRow['Transaction ID'] ||
+      firstRow['Client Code'] ||
       firstRow['Payee Amount'] ||
       firstRow['Paid Amount'] ||
-      firstRow['Trans Complete Date'];
-    
+      firstRow['Trans Complete Date'] ||
+      // Also check lowercase_underscore format
+      firstRow['transaction_id'] && (firstRow['payee_amount'] || firstRow['paid_amount']) && firstRow['trans_complete_date'];
+
     if (hasV1Columns) {
       console.log('[PG Normalization] Detected V1 format, converting to V2');
       
@@ -571,6 +576,7 @@ function normalizeTransactions(transactions) {
 }
 
 async function normalizeBankRecords(records, bankFilename = null, jobId = null) {
+  console.log('[normalizeBankRecords] ENTRY:', records.length, 'records, bankFilename =', bankFilename);
   // Two-stage normalization if bank filename is available
   if (bankFilename) {
     try {
@@ -627,7 +633,7 @@ async function normalizeBankRecords(records, bankFilename = null, jobId = null) 
             normalized: true,
             bank_reference: r.utr || r.rrn || '',
             bank_name: r.bank_name || bankMapping.bank_name,
-            amount: r.amount_paise || 0,
+            amount: r.amount_paise || r.amount || 0,
             transaction_date: r.transaction_date || '',
             value_date: r.value_date || r.transaction_date || '',
             utr: (r.utr || '').toString().trim().toUpperCase(),
@@ -654,18 +660,31 @@ async function normalizeBankRecords(records, bankFilename = null, jobId = null) 
   }
   
   // Fallback: Basic normalization (existing logic)
-  return records.map(r => {
-    const amountInRupees = Number(r.Amount || r.AMOUNT || r.amount || 0);
-    const amountInPaise = Math.round(amountInRupees * 100);
+  return records.map((r, idx) => {
+    // DEBUG: Log first record to see what we're getting
+    if (idx === 0) {
+      console.log('[Bank Normalizer] First record before normalization:', JSON.stringify(r));
+    }
+    
+    // Check if amount is already in paise (from v1-column-mapper)
+    const amountPaise = r.amount_paise || 0;
+    const amountOther = Number(r.Amount || r.AMOUNT || r.amount || 0);
+    
+    if (idx === 0) {
+      console.log('[Bank Normalizer] amountPaise =', amountPaise, ', amountOther =', amountOther);
+    }
+    
+    // If amount_paise exists, use it; otherwise convert from rupees to paise
+    const finalAmount = amountPaise > 0 ? amountPaise : Math.round(amountOther * 100);
     
     return {
       ...r,
       normalized: true,
-      bank_reference: r['Bank Reference'] || r.bank_reference || r.TRANSACTION_ID || '',
+      bank_reference: r['Bank Reference'] || r.bank_reference || r.TRANSACTION_ID || r.bank_ref || '',
       bank_name: r['Bank Name'] || r.bank_name || r.BANK || '',
-      amount: amountInPaise,
-      transaction_date: r['Transaction Date'] || r.transaction_date || r.DATE || r.TXN_DATE || '',
-      value_date: r['Value Date'] || r.value_date || '',
+      amount: finalAmount,
+      transaction_date: r['Transaction Date'] || r.transaction_date || r.DATE || r.TXN_DATE || r.date || '',
+      value_date: r['Value Date'] || r.value_date || r.date || '',
       utr: (r.UTR || r.utr || '').toString().trim().toUpperCase(),
       remarks: r.Remarks || r.remarks || '',
       debit_credit: r['Debit/Credit'] || r.debit_credit || 'CREDIT'
@@ -1458,11 +1477,24 @@ async function persistResults(results, jobId = 'UNKNOWN', job = {}, params = {})
       
       for (const match of results.matched) {
         const pgTxnId = match.pg.transaction_id || match.pg.pgw_ref;
-        const bankStmtId = match.bank.id || match.bank.bank_ref;
         const pgAmount = match.pg.amount || 0;
         const bankAmount = match.bank.amount || 0;
         const variance = bankAmount - pgAmount;
         const matchScore = match.matchScore || 100;
+        
+        // Fetch bank statement ID from database
+        const bankRef = match.bank.bank_reference || match.bank.bank_ref || match.bank.utr || match.bank.TRANSACTION_ID || match.bank.UTR;
+        const bankIdResult = await client.query(
+          'SELECT id FROM sp_v2_bank_statements WHERE bank_ref = $1',
+          [bankRef]
+        );
+        
+        if (bankIdResult.rows.length === 0) {
+          console.error(`[Persistence] MATCHED - Bank statement not found for bank_ref: ${bankRef}, skipping`);
+          continue;
+        }
+        
+        const bankStmtId = bankIdResult.rows[0].id;
         
         console.log(`[Persistence] MATCHED - pgTxnId: ${pgTxnId}, bankStmtId: ${bankStmtId}, pgAmount: ${pgAmount}, bankAmount: ${bankAmount}, jobId: ${jobId}`);
         

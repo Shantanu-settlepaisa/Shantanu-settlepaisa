@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 const seedrandom = require('seedrandom');
+const { Pool } = require('pg');
 
 const app = express();
 const PORT = process.env.PORT || 5102;
@@ -57,16 +58,56 @@ function generateBankRecon(bank, cycle, seed = 'settlepaisa-bank') {
 }
 
 // AXIS Bank reconciliation endpoint
-app.get('/api/bank/axis/recon', (req, res) => {
+app.get('/api/bank/axis/recon', async (req, res) => {
   const { cycle } = req.query;
   
   if (!cycle) {
     return res.status(400).json({ error: 'Cycle parameter required' });
   }
   
+  // Try to fetch from database first
+  const pool = new Pool({
+    host: process.env.DB_HOST || 'localhost',
+    port: process.env.DB_PORT || 5433,
+    database: process.env.DB_NAME || 'settlepaisa_v2',
+    user: process.env.DB_USER || 'postgres',
+    password: process.env.DB_PASSWORD || 'settlepaisa123'
+  });
+  
+  try {
+    const result = await pool.query(`
+      SELECT 
+        bank_ref as TRANSACTION_ID,
+        utr as UTR,
+        amount_paise as AMOUNT,
+        transaction_date as DATE,
+        bank_name,
+        remarks
+      FROM sp_v2_bank_statements
+      WHERE transaction_date = $1
+      ORDER BY created_at
+    `, [cycle]);
+    
+    await pool.end();
+    
+    if (result.rows.length > 0) {
+      console.log(`[Mock Bank API] Returning ${result.rows.length} AXIS records from DATABASE for cycle ${cycle}`);
+      return res.json({
+        bank: 'AXIS',
+        cycle,
+        count: result.rows.length,
+        records: result.rows
+      });
+    }
+  } catch (dbError) {
+    console.error('[Mock Bank API] Database query failed:', dbError.message);
+    await pool.end();
+  }
+  
+  // Fallback to mock data
   const records = generateBankRecon('axis', cycle);
   
-  console.log(`[Mock Bank API] Returning ${records.length} AXIS records for cycle ${cycle}`);
+  console.log(`[Mock Bank API] Returning ${records.length} MOCK AXIS records for cycle ${cycle}`);
   
   res.json({
     bank: 'AXIS',

@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 const seedrandom = require('seedrandom');
+const { Pool } = require('pg');
 
 const app = express();
 const PORT = process.env.PORT || 5101;
@@ -120,21 +121,61 @@ app.post('/admin/seed', (req, res) => {
 });
 
 // API endpoint to get transactions
-app.get('/api/pg/transactions', (req, res) => {
+app.get('/api/pg/transactions', async (req, res) => {
   const { cycle } = req.query;
   
   if (!cycle) {
     return res.status(400).json({ error: 'Cycle parameter required' });
   }
   
-  // Get seeded data or generate on the fly
+  // Try to fetch from database first
+  const pool = new Pool({
+    host: process.env.DB_HOST || 'localhost',
+    port: process.env.DB_PORT || 5433,
+    database: process.env.DB_NAME || 'settlepaisa_v2',
+    user: process.env.DB_USER || 'postgres',
+    password: process.env.DB_PASSWORD || 'settlepaisa123'
+  });
+  
+  try {
+    const result = await pool.query(`
+      SELECT 
+        transaction_id,
+        merchant_id,
+        amount_paise as amount,
+        transaction_date,
+        transaction_timestamp as captured_at,
+        payment_method,
+        utr,
+        status
+      FROM sp_v2_transactions
+      WHERE transaction_date = $1
+      ORDER BY transaction_timestamp
+    `, [cycle]);
+    
+    await pool.end();
+    
+    if (result.rows.length > 0) {
+      console.log(`[Mock PG API] Returning ${result.rows.length} transactions from DATABASE for cycle ${cycle}`);
+      return res.json({
+        cycle,
+        count: result.rows.length,
+        transactions: result.rows
+      });
+    }
+  } catch (dbError) {
+    console.error('[Mock PG API] Database query failed:', dbError.message);
+    await pool.end();
+  }
+  
+  // Fallback to mock data if database is empty
   let transactions = cycleData.get(cycle);
   if (!transactions) {
     transactions = generateTransactions(cycle);
     cycleData.set(cycle, transactions);
   }
   
-  console.log(`[Mock PG API] Returning ${transactions.length} transactions for cycle ${cycle}`);
+  console.log(`[Mock PG API] Returning ${transactions.length} MOCK transactions for cycle ${cycle}`);
   
   res.json({
     cycle,
