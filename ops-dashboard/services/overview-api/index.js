@@ -19,7 +19,8 @@ const logger = require('./lib/logger.cjs');
 // Import authentication routes and middleware
 const authRoutes = require('./auth.cjs');
 const auditRoutes = require('./audit.cjs');
-const { authenticate, optionalAuth, opsStaffOnly } = require('./middleware/authMiddleware.cjs');
+const usersRoutes = require('./users.cjs');
+const { authenticate, optionalAuth, opsStaffOnly, adminOnly } = require('./middleware/authMiddleware.cjs');
 
 const app = express();
 const PORT = process.env.PORT || 5108;
@@ -52,6 +53,9 @@ app.use('/api/auth', authRoutes);
 
 // Audit log routes (ops staff only)
 app.use('/api/audit', authenticate, opsStaffOnly, auditRoutes);
+
+// User management routes (admin only)
+app.use('/api/users', authenticate, adminOnly, usersRoutes);
 
 // Mount recon-rules routes (protected)
 app.use('/api/recon-rules', authenticate, require('./routes/recon-rules'));
