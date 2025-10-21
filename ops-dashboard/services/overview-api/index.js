@@ -289,47 +289,102 @@ app.get('/api/exceptions/top-reasons-detailed', async (req, res) => {
 app.get('/api/connectors/health-summary', async (req, res) => {
   try {
     const connectors = [
-      { 
-        id: 'hdfc-sftp', 
-        name: 'HDFC SFTP', 
-        status: 'healthy', 
+      {
+        id: 'hdfc-sftp',
+        name: 'HDFC SFTP',
+        status: 'healthy',
         lastSync: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
-        lag: 5 
+        lag: 5
       },
-      { 
-        id: 'icici-api', 
-        name: 'ICICI API', 
-        status: 'healthy', 
+      {
+        id: 'icici-api',
+        name: 'ICICI API',
+        status: 'healthy',
         lastSync: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
-        lag: 10 
+        lag: 10
       },
-      { 
-        id: 'axis-sftp', 
-        name: 'AXIS SFTP', 
-        status: 'degraded', 
+      {
+        id: 'axis-sftp',
+        name: 'AXIS SFTP',
+        status: 'degraded',
         lastSync: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
-        lag: 120 
+        lag: 120
       },
-      { 
-        id: 'sbi-api', 
-        name: 'SBI API', 
-        status: 'down', 
+      {
+        id: 'sbi-api',
+        name: 'SBI API',
+        status: 'down',
         lastSync: new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString(),
-        lag: 360 
+        lag: 360
       },
-      { 
-        id: 'kotak-sftp', 
-        name: 'Kotak SFTP', 
-        status: 'healthy', 
+      {
+        id: 'kotak-sftp',
+        name: 'Kotak SFTP',
+        status: 'healthy',
         lastSync: new Date(Date.now() - 15 * 60 * 1000).toISOString(),
-        lag: 15 
+        lag: 15
       }
     ];
-    
+
     res.json(connectors);
   } catch (error) {
     console.error('[Connector Health API] Error:', error);
     res.status(500).json({ error: error.message });
+  }
+});
+
+// Connector health endpoint (alternative format for frontend compatibility)
+app.get('/api/connectors/health', async (req, res) => {
+  try {
+    const connectors = [
+      {
+        name: 'HDFC SFTP',
+        status: 'OK',
+        lastSync: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
+        queuedFiles: 0,
+        failures: 0
+      },
+      {
+        name: 'ICICI API',
+        status: 'OK',
+        lastSync: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+        queuedFiles: 0,
+        failures: 0
+      },
+      {
+        name: 'AXIS SFTP',
+        status: 'LAGGING',
+        lastSync: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+        queuedFiles: 1,
+        failures: 0
+      },
+      {
+        name: 'SBI API',
+        status: 'FAILING',
+        lastSync: new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString(),
+        queuedFiles: 3,
+        failures: 2
+      },
+      {
+        name: 'Kotak SFTP',
+        status: 'OK',
+        lastSync: new Date(Date.now() - 15 * 60 * 1000).toISOString(),
+        queuedFiles: 0,
+        failures: 0
+      }
+    ];
+
+    res.json({
+      success: true,
+      connectors: connectors,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('[Connector Health API] Error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
   }
 });
 
