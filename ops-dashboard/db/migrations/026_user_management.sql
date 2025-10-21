@@ -179,7 +179,7 @@ CREATE TRIGGER trg_ops_users_updated_at
 INSERT INTO sp_v2_ops_users (email, password_hash, full_name, role, is_active, email_verified)
 VALUES (
   'admin@settlepaisa.com',
-  '$2b$10$rC7J4qYxKqZxYQF9vK.9OuqK3p1Jh7xZL9jZ8XkN5Jl2YqGzX8Xqm', -- Admin@123
+  '$2b$10$unpj6m9XGLqzNk2Hyqtileaw653LLT6SuoIq6ve5sbTK2ckaVRx0q', -- Admin@123
   'System Administrator',
   'ADMIN',
   true,
