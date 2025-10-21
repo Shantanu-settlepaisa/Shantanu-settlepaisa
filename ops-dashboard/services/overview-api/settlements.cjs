@@ -6,7 +6,7 @@ const v2Pool = new Pool({
   host: process.env.DB_HOST || 'localhost',
   database: process.env.DB_NAME || 'settlepaisa_v2',
   password: process.env.DB_PASSWORD || 'settlepaisa123',
-  port: process.env.DB_PORT || 5433,
+  port: parseInt(process.env.DB_PORT || '5432'),
 });
 
 v2Pool.on('connect', () => {

@@ -2,28 +2,70 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const { Pool } = require('pg');
+const { registerSettlementEndpoints } = require('./settlements.cjs');
+
+// Development logging (gated in production)
+const isDev = process.env.NODE_ENV !== 'production';
+const log = (...args) => isDev && console.log(...args);
 
 const app = express();
 const PORT = process.env.PORT || 5108;
 
-// Database connection to V2 PostgreSQL
+// Database connection to V2 PostgreSQL with production-ready pool configuration
 const pool = new Pool({
-  user: process.env.DATABASE_USER || 'postgres',
-  host: process.env.DATABASE_HOST || 'localhost',
-  database: process.env.DATABASE_NAME || 'settlepaisa_v2',
-  password: process.env.DATABASE_PASSWORD || 'settlepaisa123',
-  port: parseInt(process.env.DATABASE_PORT || '5433'),
+  user: process.env.DB_USER || 'postgres',
+  host: process.env.DB_HOST || 'localhost',
+  database: process.env.DB_NAME || 'settlepaisa_v2',
+  password: process.env.DB_PASSWORD || 'settlepaisa123',
+  port: parseInt(process.env.DB_PORT || '5432'),
+  // Connection pool limits
+  max: 20, // Maximum number of clients
+  min: 2,  // Minimum number of clients
+  idleTimeoutMillis: 30000, // Close idle clients after 30s
+  connectionTimeoutMillis: 5000, // Timeout after 5s
 });
 
-// Middleware
-app.use(cors());
+// Pool error handler
+pool.on('error', (err, client) => {
+  console.error('[Pool Error] Unexpected database error:', err);
+});
+
+// Middleware - Secure CORS configuration
+const allowedOrigins = process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(',')
+  : [
+      'http://localhost:5174',
+      'http://localhost:5173',
+      'http://shantanu-settlepaisa-ops-staging.s3-website.ap-south-1.amazonaws.com'
+    ];
+
+app.use(cors({
+  origin: (origin, callback) => {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+
+    if (allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      console.warn(`🚫 [CORS] Blocked request from origin: ${origin}`);
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-User-Role']
+}));
+
 app.use(express.json());
+
+// Register settlement endpoints
+registerSettlementEndpoints(app);
 
 // V2 Overview API - Real Data from Database with Date Filtering
 app.get('/api/overview', async (req, res) => {
   try {
     const { from, to } = req.query;
-    console.log('🔍 [V2 Overview] Fetching real data from V2 database with filters:', { from, to });
+    log('🔍 [V2 Overview] Fetching real data from V2 database with filters:', { from, to });
     
     // Parse and validate date filters
     let dateCondition = "WHERE created_at >= CURRENT_DATE - INTERVAL '30 days'";
@@ -52,7 +94,7 @@ app.get('/api/overview', async (req, res) => {
           dateLabel = `${diffDays} Days`;
         }
         
-        console.log('📅 [V2 Overview] Date filter applied:', { fromDate, toDate, diffDays, dateLabel });
+        log('📅 [V2 Overview] Date filter applied:', { fromDate, toDate, diffDays, dateLabel });
       }
     }
     
@@ -69,7 +111,7 @@ app.get('/api/overview', async (req, res) => {
       if (!isNaN(fromDate) && !isNaN(toDate)) {
         whereClause = "WHERE transaction_date >= $1 AND transaction_date <= $2";
         queryParams = [fromDate.toISOString().split('T')[0], toDate.toISOString().split('T')[0]];
-        console.log('📅 Using date filter:', { from: queryParams[0], to: queryParams[1] });
+        log('📅 Using date filter:', { from: queryParams[0], to: queryParams[1] });
       }
     }
     
@@ -349,15 +391,32 @@ app.get('/api/overview', async (req, res) => {
   }
 });
 
-// Health check endpoint
-app.get('/api/health', (req, res) => {
-  res.json({
-    status: 'healthy',
+// Health check endpoint with DB connectivity test
+app.get('/health', async (req, res) => {
+  const healthCheck = {
     service: 'v2-overview-api',
+    status: 'healthy',
     timestamp: new Date().toISOString(),
-    database: 'connected'
-  });
+    uptime: process.uptime(),
+    database: 'unknown'
+  };
+
+  try {
+    const client = await pool.connect();
+    await client.query('SELECT 1');
+    client.release();
+    healthCheck.database = 'connected';
+    res.status(200).json(healthCheck);
+  } catch (error) {
+    healthCheck.status = 'unhealthy';
+    healthCheck.database = 'disconnected';
+    healthCheck.error = error.message;
+    res.status(503).json(healthCheck);
+  }
 });
+
+// Legacy health endpoint (redirect to /health)
+app.get('/api/health', (req, res) => res.redirect(301, '/health'));
 
 // Statistics endpoint for debugging
 app.get('/api/stats', async (req, res) => {
@@ -749,14 +808,14 @@ app.get('/api/connectors/health', async (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`🚀 [V2 Overview API] Running on port ${PORT}`);
-  console.log(`📊 Real data endpoint: GET http://localhost:${PORT}/api/overview`);
-  console.log(`📈 Statistics: GET http://localhost:${PORT}/api/stats`);
-  console.log(`🔌 Connector health: GET http://localhost:${PORT}/api/connectors/health`);
-  console.log(`📋 Settlement reports: GET http://localhost:${PORT}/api/reports/settlements`);
-  console.log(`🏦 Bank MIS reports: GET http://localhost:${PORT}/api/reports/bank-mis`);
-  console.log(`🔄 Recon outcome: GET http://localhost:${PORT}/api/reports/recon-outcome`);
-  console.log(`💰 Tax reports: GET http://localhost:${PORT}/api/reports/tax`);
+  log(`🚀 [V2 Overview API] Running on port ${PORT}`);
+  log(`📊 Real data endpoint: GET http://localhost:${PORT}/api/overview`);
+  log(`📈 Statistics: GET http://localhost:${PORT}/api/stats`);
+  log(`🔌 Connector health: GET http://localhost:${PORT}/api/connectors/health`);
+  log(`📋 Settlement reports: GET http://localhost:${PORT}/api/reports/settlements`);
+  log(`🏦 Bank MIS reports: GET http://localhost:${PORT}/api/reports/bank-mis`);
+  log(`🔄 Recon outcome: GET http://localhost:${PORT}/api/reports/recon-outcome`);
+  log(`💰 Tax reports: GET http://localhost:${PORT}/api/reports/tax`);
 });
 
 module.exports = app;
