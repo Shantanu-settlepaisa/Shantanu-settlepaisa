@@ -11,7 +11,8 @@ import {
   LogOut,
   User,
   Shield,
-  Wallet
+  Wallet,
+  Users
 } from 'lucide-react'
 import { useAuthStore } from '@/lib/auth'
 import { cn } from '@/lib/utils'
@@ -25,6 +26,7 @@ const navigation = [
   { name: 'Connectors', href: '/ops/connectors', icon: Cable },
   { name: 'Reports', href: '/ops/reports', icon: FileText },
   { name: 'Analytics', href: '/ops/analytics', icon: BarChart3 },
+  { name: 'Users', href: '/ops/users', icon: Users, adminOnly: true },
   { name: 'Settings', href: '/ops/settings', icon: Settings },
 ]
 
@@ -57,23 +59,30 @@ export function OpsLayout() {
 
           {/* Navigation */}
           <nav className="flex-1 px-4 py-4 space-y-1">
-            {navigation.map((item) => (
-              <NavLink
-                key={item.name}
-                to={item.href}
-                className={({ isActive }) =>
-                  cn(
-                    'flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors',
-                    isActive
-                      ? 'bg-blue-50 text-blue-700'
-                      : 'text-gray-700 hover:bg-gray-50'
-                  )
-                }
-              >
-                <item.icon className="w-5 h-5 mr-3" />
-                {item.name}
-              </NavLink>
-            ))}
+            {navigation.map((item) => {
+              // Hide admin-only items if user is not admin
+              if (item.adminOnly && displayUser.role !== 'sp-ops') {
+                return null
+              }
+
+              return (
+                <NavLink
+                  key={item.name}
+                  to={item.href}
+                  className={({ isActive }) =>
+                    cn(
+                      'flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors',
+                      isActive
+                        ? 'bg-blue-50 text-blue-700'
+                        : 'text-gray-700 hover:bg-gray-50'
+                    )
+                  }
+                >
+                  <item.icon className="w-5 h-5 mr-3" />
+                  {item.name}
+                </NavLink>
+              )
+            })}
           </nav>
 
           {/* User section */}

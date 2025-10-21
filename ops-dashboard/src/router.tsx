@@ -22,9 +22,12 @@ const ReconConfig = lazy(() => import('./pages/ops/ReconConfigCentral'))
 const ManualUpload = lazy(() => import('./components/ManualUploadUnified'))
 const ConnectorsUnified = lazy(() => import('./components/ConnectorsUnified'))
 const SettlementDetails = lazy(() => import('./pages/ops/SettlementDetails'))
+const Settlements = lazy(() => import('./pages/ops/Settlements'))
+const SettlementApprove = lazy(() => import('./pages/ops/SettlementApprove'))
 const Exceptions = lazy(() => import('./pages/ops/Exceptions'))
 const Analytics = lazy(() => import('./pages/ops/AnalyticsV3'))
 const Settings = lazy(() => import('./pages/ops/Settings'))
+const Users = lazy(() => import('./pages/ops/Users'))
 const Connectors = lazy(() => import('./pages/ops/Connectors'))
 const ReconciliationView = lazy(() => import('./pages/ops/ReconciliationView'))
 const Reports = lazy(() => import('./pages/ops/Reports'))
@@ -87,8 +90,18 @@ if (ENABLE_OPS_DASHBOARD) {
         element: <ReconciliationView />,
       },
       {
-        path: 'settlements/:settlementId',
+        path: 'settlements',
+        element: <Settlements />,
+        errorElement: <RouteErrorBoundary />,
+      },
+      {
+        path: 'settlements/:batchId',
         element: <SettlementDetails />,
+      },
+      {
+        path: 'settlements/:batchId/approve',
+        element: <SettlementApprove />,
+        errorElement: <RouteErrorBoundary />,
       },
       {
         path: 'exceptions',
@@ -113,6 +126,10 @@ if (ENABLE_OPS_DASHBOARD) {
       {
         path: 'analytics',
         element: <Analytics />,
+      },
+      {
+        path: 'users',
+        element: <Users />,
       },
       {
         path: 'settings',
