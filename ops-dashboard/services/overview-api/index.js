@@ -12,15 +12,52 @@ const { registerAnalyticsV3Endpoints } = require('./analytics-v3-endpoints');
 const { getSettlementPipeline, initializeDatabase } = require('./settlement-pipeline');
 const analyticsV2DB = require('./analytics-v2-db-adapter');
 const disputesV2DB = require('./disputes-v2-db-adapter');
+const { registerSettlementEndpoints } = require('./settlements.cjs');
+const realDB = require('./real-db-adapter.cjs');
+const logger = require('./lib/logger.cjs');
+
+// Import authentication routes and middleware
+const authRoutes = require('./auth.cjs');
+const auditRoutes = require('./audit.cjs');
+const { authenticate, optionalAuth, opsStaffOnly } = require('./middleware/authMiddleware.cjs');
 
 const app = express();
-const PORT = process.env.PORT || 5105;
+const PORT = process.env.PORT || 5108;
 
 app.use(cors());
 app.use(bodyParser.json());
 
-// Mount recon-rules routes
-app.use('/api/recon-rules', require('./routes/recon-rules'));
+// Add request logging middleware
+app.use(logger.middleware);
+
+// ============================================================================
+// PUBLIC ROUTES (No authentication required)
+// ============================================================================
+
+// Health check
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'healthy',
+    service: 'overview-api',
+    port: PORT
+  });
+});
+
+// Authentication routes (login, register, etc.)
+app.use('/api/auth', authRoutes);
+
+// ============================================================================
+// PROTECTED ROUTES (Authentication required)
+// ============================================================================
+
+// Audit log routes (ops staff only)
+app.use('/api/audit', authenticate, opsStaffOnly, auditRoutes);
+
+// Mount recon-rules routes (protected)
+app.use('/api/recon-rules', authenticate, require('./routes/recon-rules'));
+
+// Register settlement endpoints (protected)
+registerSettlementEndpoints(app);
 
 // Demo data generation for KPIs
 function generateKpiData(filters) {
@@ -85,30 +122,30 @@ const reconResultsStore = {
   }
 };
 
-// New KPI endpoints for dynamic dashboard
+// New KPI endpoints for dynamic dashboard - USING REAL DATABASE
 app.get('/api/kpis', async (req, res) => {
   const role = req.header('X-User-Role') || 'sp-ops';
   const merchantId = req.header('X-Merchant-Id') || req.query.merchantId;
   const { from, to, acquirerId } = req.query;
-  
+
   try {
-    console.log(`[KPIs API] Request: role=${role}, from=${from}, to=${to}, merchantId=${merchantId}, acquirerId=${acquirerId}`);
-    
-    const filters = { from, to, merchantId, acquirerId };
-    const kpiData = generateKpiData(filters);
-    
-    // Connector health simulation
+    console.log(`[KPIs API] ✅ Using REAL DATABASE - role=${role}, from=${from}, to=${to}, merchantId=${merchantId}, acquirerId=${acquirerId}`);
+
+    // Get real data from database
+    const kpiData = await realDB.getKpisFromDatabase(from, to);
+
+    // Connector health simulation (keep this as mock for now)
     const connectorHealth = [
       { connector: 'HDFC_SFTP', status: 'ok', lastSyncISO: new Date(Date.now() - 5 * 60 * 1000).toISOString() },
       { connector: 'ICICI_API', status: 'ok', lastSyncISO: new Date(Date.now() - 10 * 60 * 1000).toISOString() },
       { connector: 'AXIS_SFTP', status: 'degraded', lastSyncISO: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString() },
       { connector: 'SBI_API', status: 'down', lastSyncISO: new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString() }
     ];
-    
+
     const response = {
-      timeRange: { 
-        fromISO: new Date(from).toISOString(), 
-        toISO: new Date(to).toISOString() 
+      timeRange: {
+        fromISO: new Date(from).toISOString(),
+        toISO: new Date(to).toISOString()
       },
       totals: {
         transactionsCount: kpiData.totalTransactions,
@@ -125,23 +162,25 @@ app.get('/api/kpis', async (req, res) => {
       },
       connectorHealth
     };
-    
+
     // Add settlements data only for finance role
     if (role === 'sp-finance') {
       const dayCount = Math.max(1, Math.floor((new Date(to) - new Date(from)) / (1000 * 60 * 60 * 24))) + 1;
       const batchCount = Math.ceil(dayCount / 1); // Daily batches
       const netToMerchantsPaise = BigInt(Math.floor(Number(kpiData.reconciledAmountPaise) * 0.95)); // 5% MDR
-      
+
       response.settlements = {
         batchCount,
         lastCycleISO: new Date().toISOString(),
         netToMerchantsPaise: netToMerchantsPaise.toString()
       };
     }
-    
+
+    console.log(`[KPIs API] ✅ Returning real data: ${kpiData.matchedCount}/${kpiData.totalTransactions} matched (${kpiData.matchRatePct}%)`);
+
     res.json(response);
   } catch (error) {
-    console.error('[KPIs API] Error:', error);
+    console.error('[KPIs API] ❌ Error:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -165,93 +204,79 @@ app.get('/api/exceptions/top-reasons', async (req, res) => {
 
 app.get('/api/pipeline/summary', async (req, res) => {
   const { from, to, merchantId, acquirerId } = req.query;
-  
+
   try {
     // Use default dates if not provided
     const endDate = to || new Date().toISOString().split('T')[0];
     const startDate = from || new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]; // 14 days ago
-    
-    console.log('[Settlement Pipeline] Request: from=' + startDate + ', to=' + endDate);
-    
-    const filters = { from: startDate, to: endDate, merchantId, acquirerId };
-    const kpiData = generateKpiData(filters);
-    
-    // Fixed distribution: 2250 total -> 237 In Settlement, 575 Sent to Bank, 1338 Credited, 100 Unsettled
-    const totalCaptured = 2250;
-    const inSettlementOnly = 237;
-    const sentToBankOnly = 575;
-    const creditedOnly = 1338;
-    const unsettledOnly = 100;
-    
+
+    console.log('[Settlement Pipeline] ✅ Using REAL DATABASE - from=' + startDate + ', to=' + endDate);
+
+    // Get real pipeline data from database
+    const pipelineData = await realDB.getSettlementPipelineFromDatabase(startDate, endDate);
+
     // The API expects these fields based on PipelineSummary interface
-    // But we need to provide data that maps correctly in the UI
     const pipeline = {
-      ingested: totalCaptured,           // Total captured (used as 'captured' in UI)
-      inSettlement: inSettlementOnly,    // Transactions in settlement queue
-      reconciled: sentToBankOnly,        // Sent to bank (mapped to 'sentToBank' in UI)
-      settled: creditedOnly,             // Successfully credited (mapped to 'credited' in UI)
-      unsettled: unsettledOnly           // Failed/rejected
+      ingested: pipelineData.captured.count,           // Total captured
+      inSettlement: pipelineData.inSettlement.count,   // In settlement queue
+      reconciled: pipelineData.sentToBank.count,       // Sent to bank
+      settled: pipelineData.credited.count,            // Credited
+      unsettled: pipelineData.unsettled.count          // Unsettled/exceptions
     };
-    
-    console.log('[Settlement Pipeline] Data fetched:', {
+
+    console.log('[Settlement Pipeline] ✅ Real data:', {
       range: startDate + ' to ' + endDate,
-      captured: totalCaptured,
-      breakdown: inSettlementOnly + '/' + sentToBankOnly + '/' + creditedOnly + '/' + unsettledOnly
+      captured: pipeline.ingested,
+      breakdown: pipeline.inSettlement + '/' + pipeline.reconciled + '/' + pipeline.settled + '/' + pipeline.unsettled
     });
-    
+
     res.json(pipeline);
   } catch (error) {
-    console.error('[Pipeline API] Error:', error);
+    console.error('[Pipeline API] ❌ Error:', error);
     res.status(500).json({ error: error.message });
   }
 });
 
-// New endpoint for exception severity split
+// New endpoint for exception severity split - USING REAL DATABASE
 app.get('/api/exceptions/severity-split', async (req, res) => {
   const { from, to, merchantId, acquirerId } = req.query;
-  
+
   try {
-    const filters = { from, to, merchantId, acquirerId };
-    const kpiData = generateKpiData(filters);
-    
-    // Distribute exceptions by severity
-    const total = kpiData.exceptionsCount;
-    const severitySplit = {
-      critical: Math.floor(total * 0.15), // 15% critical
-      high: Math.floor(total * 0.25),     // 25% high
-      medium: Math.floor(total * 0.35),   // 35% medium
-      low: Math.floor(total * 0.25)       // 25% low
-    };
-    
-    // Ensure sum equals total
-    const sum = severitySplit.critical + severitySplit.high + severitySplit.medium + severitySplit.low;
-    if (sum < total) {
-      severitySplit.low += (total - sum);
-    }
-    
+    // Use default dates if not provided
+    const endDate = to || new Date().toISOString().split('T')[0];
+    const startDate = from || new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+
+    console.log('[Severity Split API] ✅ Using REAL DATABASE - from=' + startDate + ', to=' + endDate);
+
+    const severitySplit = await realDB.getExceptionSeverityFromDatabase(startDate, endDate);
+
+    console.log('[Severity Split API] ✅ Real data:', severitySplit);
+
     res.json(severitySplit);
   } catch (error) {
-    console.error('[Severity Split API] Error:', error);
+    console.error('[Severity Split API] ❌ Error:', error);
     res.status(500).json({ error: error.message });
   }
 });
 
-// New endpoint for top reasons with severity
+// New endpoint for top reasons with severity - USING REAL DATABASE
 app.get('/api/exceptions/top-reasons-detailed', async (req, res) => {
-  const { limit = 5 } = req.query;
-  
+  const { limit = 5, from, to } = req.query;
+
   try {
-    const topReasonsDetailed = [
-      { code: 'MISSING_UTR', label: 'Missing UTR', count: 32, severity: 'critical' },
-      { code: 'DUPLICATE_UTR', label: 'Duplicate UTR', count: 16, severity: 'high' },
-      { code: 'AMOUNT_MISMATCH', label: 'Amount Mismatch', count: 14, severity: 'high' },
-      { code: 'BANK_FILE_MISSING', label: 'Bank File Missing', count: 12, severity: 'medium' },
-      { code: 'STATUS_PENDING', label: 'Status Pending', count: 8, severity: 'low' }
-    ];
-    
-    res.json(topReasonsDetailed.slice(0, parseInt(limit)));
+    // Use default dates if not provided
+    const endDate = to || new Date().toISOString().split('T')[0];
+    const startDate = from || new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+
+    console.log('[Top Reasons Detailed API] ✅ Using REAL DATABASE - from=' + startDate + ', to=' + endDate);
+
+    const topReasonsDetailed = await realDB.getTopExceptionReasonsFromDatabase(startDate, endDate, parseInt(limit));
+
+    console.log('[Top Reasons Detailed API] ✅ Real data: ' + topReasonsDetailed.length + ' reasons');
+
+    res.json(topReasonsDetailed);
   } catch (error) {
-    console.error('[Top Reasons Detailed API] Error:', error);
+    console.error('[Top Reasons Detailed API] ❌ Error:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -481,57 +506,39 @@ app.get('/api/recon-sources/summary', async (req, res) => {
   }
 });
 
-// Public API endpoint for other services
+// Public API endpoint for other services - USING REAL DATABASE
 app.get('/api/overview', async (req, res) => {
   const { from, to, tz = 'Asia/Kolkata' } = req.query;
-  
+
   try {
-    // Generate demo data
-    const transactions = generateDemoTransactions({ from, to });
-    
-    let inSettlement = 0;
-    let sentToBank = 0;
-    let credited = 0;
-    let unsettled = 0;
-    let capturedValue = 0;
-    let creditedValue = 0;
+    // Use default dates if not provided
+    const endDate = to || new Date().toISOString().split('T')[0];
+    const startDate = from || new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
-    for (const txn of transactions) {
-      const state = determineTransactionState(txn);
-      capturedValue += txn.amount;
-      
-      switch (state) {
-        case 'CREDITED':
-          credited++;
-          creditedValue += txn.amount;
-          break;
-        case 'SENT_TO_BANK':
-          sentToBank++;
-          break;
-        case 'IN_SETTLEMENT':
-          inSettlement++;
-          break;
-        case 'UNSETTLED':
-          unsettled++;
-          break;
-      }
-    }
+    console.log('[Overview API /api/overview] ✅ Using REAL DATABASE - from=' + startDate + ', to=' + endDate);
 
-    const captured = transactions.length;
-    
-    const result = enforceConsistency({
-      captured,
-      inSettlement,
-      sentToBank,
-      credited,
-      unsettled,
-      capturedValue,
-      creditedValue,
+    // Get real pipeline data from database
+    const pipelineData = await realDB.getSettlementPipelineFromDatabase(startDate, endDate);
+
+    const result = {
+      captured: pipelineData.captured.count,
+      inSettlement: pipelineData.inSettlement.count,
+      sentToBank: pipelineData.sentToBank.count,
+      credited: pipelineData.credited.count,
+      unsettled: pipelineData.unsettled.count,
+      capturedValue: parseInt(pipelineData.captured.amountPaise),
+      creditedValue: parseInt(pipelineData.credited.amountPaise),
+      warnings: []
+    };
+
+    console.log('[Overview API /api/overview] ✅ Real data:', {
+      captured: result.captured,
+      breakdown: `${result.inSettlement}/${result.sentToBank}/${result.credited}/${result.unsettled}`
     });
-    
+
     res.json(result);
   } catch (error) {
-    console.error('[Overview API] Error:', error);
+    console.error('[Overview API /api/overview] ❌ Error:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -620,56 +627,116 @@ function generateDemoTransactions(params) {
   });
 }
 
-// Get consistent overview data
+// Get consistent overview data - USING REAL DATABASE
 app.get('/api/ops/overview', async (req, res) => {
   const { from, to, tz = 'Asia/Kolkata' } = req.query;
-  
+
   try {
     // Calculate window
+    const endDate = to || new Date().toISOString().split('T')[0];
+    const startDate = from || new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+
     const window = {
-      from: from || new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-      to: to || new Date().toISOString().split('T')[0],
+      from: startDate,
+      to: endDate,
       tz,
-      label: calculateWindowLabel(from, to)
+      label: calculateWindowLabel(startDate, endDate)
     };
 
-    // Fetch reconciliation data
-    const reconData = await fetchReconData(window);
-    const exceptionData = await fetchExceptionData(window);
-    
-    // Calculate tiles metrics
-    const tiles = calculateTiles(reconData, exceptionData);
-    
-    // Calculate pipeline with exclusive buckets (pass credited count for consistency)
-    const pipeline = calculatePipeline(reconData, tiles.creditedToMerchant.txnCount);
-    
-    // Calculate by source metrics
-    const bySource = calculateBySource(reconData);
-    
-    // Calculate top exception reasons
-    const topReasons = calculateTopReasons(exceptionData, tiles.openExceptions.count);
-    
-    // Generate warnings
-    const warnings = validateConsistency(tiles, pipeline, topReasons);
-    
+    console.log(`[Overview API /api/ops/overview] ✅ Using REAL DATABASE - from=${startDate}, to=${endDate}`);
+
+    // Fetch real data from database
+    const kpiData = await realDB.getKpisFromDatabase(startDate, endDate);
+    const pipelineData = await realDB.getSettlementPipelineFromDatabase(startDate, endDate);
+    const severitySplit = await realDB.getExceptionSeverityFromDatabase(startDate, endDate);
+    const topReasonsData = await realDB.getTopExceptionReasonsFromDatabase(startDate, endDate, 5);
+
+    // Convert real data to expected format
+    const tiles = {
+      totalAmount: {
+        amount: parseInt(kpiData.totalAmountPaise),
+        txnCount: kpiData.totalTransactions,
+        deltaPct: 0
+      },
+      reconciledAmount: {
+        amount: parseInt(kpiData.reconciledAmountPaise),
+        txnCount: kpiData.matchedCount,
+        deltaPct: 0
+      },
+      reconRate: {
+        matched: kpiData.matchedCount,
+        total: kpiData.totalTransactions,
+        pct: kpiData.matchRatePct,
+        deltaPct: 0 // TODO: Calculate from historical data
+      },
+      unmatchedValue: {
+        amount: parseInt(kpiData.variancePaise),
+        txnCount: kpiData.unmatchedPgCount + kpiData.unmatchedBankCount,
+        deltaPct: 0
+      },
+      openExceptions: {
+        count: kpiData.exceptionsCount,
+        high: severitySplit.high,
+        critical: severitySplit.critical,
+        deltaPct: 0
+      },
+      creditedToMerchant: {
+        amount: parseInt(pipelineData.credited.amountPaise),
+        txnCount: pipelineData.credited.count,
+        deltaPct: 0
+      }
+    };
+
+    const pipeline = {
+      totalCaptured: pipelineData.captured.count,
+      raw: {
+        inSettlement: pipelineData.inSettlement.count,
+        sentToBank: pipelineData.sentToBank.count,
+        creditedUtr: pipelineData.credited.count
+      },
+      exclusive: {
+        inSettlementOnly: pipelineData.inSettlement.count,
+        sentToBankOnly: pipelineData.sentToBank.count,
+        credited: pipelineData.credited.count,
+        unsettled: pipelineData.unsettled.count
+      }
+    };
+
+    // Get real source breakdown from database
+    const bySource = await realDB.getSourceBreakdownFromDatabase(startDate, endDate);
+
+    // Convert top reasons to expected format
+    const topReasons = {
+      mode: 'impacted',
+      rows: topReasonsData.map(r => ({
+        reason: r.label,
+        count: r.count,
+        pct: kpiData.exceptionsCount > 0 ?
+          parseFloat(((r.count / kpiData.exceptionsCount) * 100).toFixed(1)) : 0
+      })),
+      total: kpiData.exceptionsCount
+    };
+
     // Definitions for tooltips
     const definitions = getMetricDefinitions();
-    
+
     const overview = {
       window,
       tiles,
       pipeline: {
         ...pipeline,
-        warnings
+        warnings: []
       },
       bySource,
       topReasons,
       definitions
     };
-    
+
+    console.log(`[Overview API /api/ops/overview] ✅ Real data: matched=${kpiData.matchedCount}/${kpiData.totalTransactions} (${kpiData.matchRatePct}%), exceptions=${kpiData.exceptionsCount}`);
+
     res.json(overview);
   } catch (error) {
-    console.error('[Overview API] Error:', error);
+    console.error('[Overview API /api/ops/overview] ❌ Error:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -1485,14 +1552,14 @@ app.post('/api/settlement/initialize', async (req, res) => {
   }
 });
 
-// Health check
-app.get('/health', (req, res) => {
-  res.json({
-    status: 'healthy',
-    service: 'overview-api',
-    port: PORT
-  });
-});
+// NOTE: All data API routes below are currently PUBLIC for backward compatibility
+// TODO: Phase 2 - Add authentication to these routes:
+// - /api/kpis (use authenticate middleware)
+// - /api/overview (use authenticate middleware)
+// - /api/ops/overview (use authenticate middleware)
+// - /api/analytics/* (use authenticate middleware)
+// - /api/settlement/* (use authenticate + canApprove for approval endpoints)
+// - /api/exceptions/* (use authenticate middleware)
 
 app.listen(PORT, async () => {
   console.log(`[Overview API] Server running on port ${PORT}`);

@@ -412,11 +412,19 @@ async function checkDatabaseConnection() {
   }
 }
 
+/**
+ * Get database pool for direct queries (used by auth system)
+ */
+async function getDbPool() {
+  return pool;
+}
+
 module.exports = {
   getKpisFromDatabase,
   getSettlementPipelineFromDatabase,
   getExceptionSeverityFromDatabase,
   getTopExceptionReasonsFromDatabase,
   getSourceBreakdownFromDatabase,
-  checkDatabaseConnection
+  checkDatabaseConnection,
+  getDbPool
 };
