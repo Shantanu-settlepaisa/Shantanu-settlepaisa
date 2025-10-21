@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { authService } from '@/services/auth-service'
 
 export type UserRole = 'sp-ops' | 'sp-finance' | 'sp-compliance' | 'auditor' | 'merchant-admin' | 'merchant-ops' | 'merchant-viewer'
 
@@ -9,6 +10,7 @@ export interface User {
   name: string
   role: UserRole
   merchantId?: string
+  backendRole?: 'ADMIN' | 'OPS_MANAGER' | 'OPS_VIEWER' | 'FINANCE'
 }
 
 interface AuthState {
@@ -16,9 +18,10 @@ interface AuthState {
   token: string | null
   isAuthenticated: boolean
   login: (user: User, token: string) => void
-  logout: () => void
+  logout: () => Promise<void>
   hasRole: (roles: UserRole[]) => boolean
   canAccessOps: () => boolean
+  refreshUser: () => Promise<void>
 }
 
 export const useAuthStore = create<AuthState>()(
@@ -32,7 +35,10 @@ export const useAuthStore = create<AuthState>()(
         set({ user, token, isAuthenticated: true })
       },
 
-      logout: () => {
+      logout: async () => {
+        // Call backend logout endpoint
+        await authService.logout()
+        // Clear local state
         set({ user: null, token: null, isAuthenticated: false })
       },
 
@@ -45,38 +51,28 @@ export const useAuthStore = create<AuthState>()(
         const { user } = get()
         return user ? ['sp-ops', 'sp-finance', 'sp-compliance'].includes(user.role) : false
       },
+
+      refreshUser: async () => {
+        const currentUser = await authService.getCurrentUser()
+        if (currentUser) {
+          const mappedRole = authService.mapBackendRoleToFrontend(currentUser.role)
+          set({
+            user: {
+              id: currentUser.id,
+              email: currentUser.email,
+              name: currentUser.full_name,
+              role: mappedRole,
+              backendRole: currentUser.role,
+            },
+            isAuthenticated: true,
+          })
+        } else {
+          set({ user: null, isAuthenticated: false })
+        }
+      },
     }),
     {
       name: 'auth-storage',
     }
   )
 )
-
-// Demo mode: Auto-login with sp-ops role for SettlePaisa 2.0 Ops Dashboard
-if (import.meta.env.VITE_DEMO_MODE === 'true') {
-  // Clear old localStorage data and force ops login
-  localStorage.removeItem('auth-storage')
-  
-  // Use setTimeout to ensure Zustand has initialized
-  setTimeout(() => {
-    const store = useAuthStore.getState()
-    console.log('Demo mode - forcing logout and re-login with sp-ops role')
-    
-    // Force logout first to clear any existing state
-    store.logout()
-    
-    // Then login with correct ops role
-    store.login(
-      {
-        id: 'demo-ops-user',
-        email: 'ops@settlepaisa.com',
-        name: 'Demo Operations Admin',
-        role: 'sp-ops',
-        merchantId: undefined,
-      },
-      'demo-ops-token'
-    )
-    
-    console.log('New auth state:', { isAuthenticated: store.isAuthenticated, role: store.user?.role })
-  }, 50)
-}

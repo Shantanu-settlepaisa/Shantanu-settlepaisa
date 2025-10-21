@@ -1,16 +1,17 @@
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
 import { Suspense } from 'react'
-import { 
-  LayoutDashboard, 
-  GitBranch, 
-  FileText, 
-  AlertTriangle, 
+import {
+  LayoutDashboard,
+  GitBranch,
+  FileText,
+  AlertTriangle,
   Cable,
-  BarChart3, 
+  BarChart3,
   Settings,
   LogOut,
   User,
-  Shield
+  Shield,
+  Wallet
 } from 'lucide-react'
 import { useAuthStore } from '@/lib/auth'
 import { cn } from '@/lib/utils'
@@ -18,6 +19,7 @@ import { cn } from '@/lib/utils'
 const navigation = [
   { name: 'Overview', href: '/ops/overview', icon: LayoutDashboard },
   { name: 'Recon Workspace', href: '/ops/recon', icon: GitBranch },
+  { name: 'Settlements', href: '/ops/settlements', icon: Wallet },
   { name: 'Exceptions', href: '/ops/exceptions', icon: AlertTriangle },
   { name: 'Disputes', href: '/ops/disputes', icon: Shield },
   { name: 'Connectors', href: '/ops/connectors', icon: Cable },
@@ -30,14 +32,15 @@ export function OpsLayout() {
   const { user, logout } = useAuthStore()
   const navigate = useNavigate()
 
-  // Provide default user for demo mode
+  // User should always be present if OpsLayout is rendered
   const displayUser = user || {
-    name: 'Demo User',
+    name: 'Guest',
+    email: 'Not logged in',
     role: 'sp-ops'
   }
 
-  const handleLogout = () => {
-    logout()
+  const handleLogout = async () => {
+    await logout()
     navigate('/login')
   }
 
@@ -82,7 +85,7 @@ export function OpsLayout() {
                 </div>
                 <div className="ml-3">
                   <p className="text-sm font-medium text-gray-900">{displayUser.name}</p>
-                  <p className="text-xs text-gray-500">{displayUser.role}</p>
+                  <p className="text-xs text-gray-500">{displayUser.email || displayUser.role}</p>
                 </div>
               </div>
               <button
