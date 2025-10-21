@@ -334,55 +334,81 @@ app.get('/api/connectors/health-summary', async (req, res) => {
 });
 
 // Connector health endpoint (alternative format for frontend compatibility)
+// FIXED (Oct 21): Query real database instead of returning mock data
 app.get('/api/connectors/health', async (req, res) => {
   try {
-    const connectors = [
-      {
-        name: 'HDFC SFTP',
-        status: 'OK',
-        lastSync: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
-        queuedFiles: 0,
-        failures: 0
-      },
-      {
-        name: 'ICICI API',
-        status: 'OK',
-        lastSync: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
-        queuedFiles: 0,
-        failures: 0
-      },
-      {
-        name: 'AXIS SFTP',
-        status: 'LAGGING',
-        lastSync: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
-        queuedFiles: 1,
-        failures: 0
-      },
-      {
-        name: 'SBI API',
-        status: 'FAILING',
-        lastSync: new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString(),
-        queuedFiles: 3,
-        failures: 2
-      },
-      {
-        name: 'Kotak SFTP',
-        status: 'OK',
-        lastSync: new Date(Date.now() - 15 * 60 * 1000).toISOString(),
-        queuedFiles: 0,
-        failures: 0
+    // Use the existing pool from real-db-adapter
+    const { Pool } = require('pg');
+    const pool = new Pool({
+      user: process.env.DB_USER || 'postgres',
+      host: process.env.DB_HOST || 'localhost',
+      database: process.env.DB_NAME || 'settlepaisa_v2',
+      password: process.env.DB_PASSWORD || 'settlepaisa123',
+      port: parseInt(process.env.DB_PORT || '5432')
+    });
+
+    // Query actual connectors from database
+    const connectorsQuery = `
+      SELECT
+        c.id,
+        c.name,
+        c.connector_type,
+        c.status as connector_status,
+        c.last_run_at,
+        c.last_run_status,
+        cr.status as run_status,
+        cr.started_at as run_started_at,
+        cr.duration_seconds,
+        cr.records_failed
+      FROM sp_v2_connectors c
+      LEFT JOIN LATERAL (
+        SELECT status, started_at, duration_seconds, records_failed
+        FROM sp_v2_connector_runs
+        WHERE connector_id = c.id
+        ORDER BY started_at DESC
+        LIMIT 1
+      ) cr ON true
+      ORDER BY c.name
+    `;
+
+    const result = await pool.query(connectorsQuery);
+
+    const connectors = result.rows.map(row => {
+      // Calculate lag in minutes
+      const lastSyncTime = row.last_run_at || row.run_started_at;
+      const lagMinutes = lastSyncTime
+        ? Math.floor((Date.now() - new Date(lastSyncTime).getTime()) / (1000 * 60))
+        : null;
+
+      // Determine status based on connector status and lag
+      let status = 'OK';
+      if (row.connector_status !== 'ACTIVE' || row.last_run_status === 'FAILED' || row.run_status === 'FAILED') {
+        status = 'FAILING';
+      } else if (lagMinutes && lagMinutes > 60) {
+        status = 'LAGGING';
       }
-    ];
+
+      return {
+        name: row.name,
+        status: status,
+        lastSync: lastSyncTime || null,
+        queuedFiles: 0, // Not tracking queued files yet
+        failures: row.records_failed || 0
+      };
+    });
 
     res.json({
       success: true,
-      connectors: connectors,
+      connectors: connectors.length > 0 ? connectors : [],
       timestamp: new Date().toISOString()
     });
   } catch (error) {
     console.error('[Connector Health API] Error:', error);
-    res.status(500).json({
-      success: false,
+    // Fallback to empty array on error, don't break dashboard
+    res.json({
+      success: true,
+      connectors: [],
+      timestamp: new Date().toISOString(),
       error: error.message
     });
   }

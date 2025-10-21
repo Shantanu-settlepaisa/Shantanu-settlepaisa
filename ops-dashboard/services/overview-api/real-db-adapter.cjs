@@ -18,7 +18,11 @@ async function getKpisFromDatabase(from, to) {
   try {
     console.log(`[Real DB] Fetching KPIs from ${from} to ${to}`);
 
-    // Aggregate all reconciliation jobs in the date range
+    // Aggregate all reconciliation jobs that reconciled data in the date range
+    // FIXED (Oct 21): Use date_from/date_to instead of created_at
+    // This shows reconciliation metrics FOR the business date range,
+    // not jobs RUN during the date range
+    // Also use DISTINCT on job_id grouped by date to prevent duplicate counting
     const jobQuery = `
       SELECT
         SUM(total_pg_records) as total_pg_records,
@@ -31,8 +35,23 @@ async function getKpisFromDatabase(from, to) {
         SUM(reconciled_amount_paise) as reconciled_amount_paise,
         SUM(variance_amount_paise) as variance_amount_paise,
         COUNT(*) as job_count
-      FROM sp_v2_reconciliation_jobs
-      WHERE created_at::date BETWEEN $1 AND $2
+      FROM (
+        SELECT DISTINCT ON (date_from, date_to)
+          total_pg_records,
+          total_bank_records,
+          matched_records,
+          unmatched_pg,
+          unmatched_bank,
+          exception_records,
+          total_amount_paise,
+          reconciled_amount_paise,
+          variance_amount_paise,
+          date_from,
+          date_to
+        FROM sp_v2_reconciliation_jobs
+        WHERE (date_from <= $2 AND date_to >= $1)
+        ORDER BY date_from, date_to, created_at DESC
+      ) AS unique_jobs
     `;
 
     const jobResult = await client.query(jobQuery, [from, to]);
@@ -43,6 +62,7 @@ async function getKpisFromDatabase(from, to) {
       console.log('[Real DB] FALLBACK: Trying sp_v2_reconciliation_results table...');
 
       // PRODUCTION FALLBACK: Calculate KPIs from sp_v2_reconciliation_results
+      // Note: This table might use transaction_date or reconciliation_date instead of created_at
       try {
         const resultsQuery = `
           SELECT
@@ -54,7 +74,7 @@ async function getKpisFromDatabase(from, to) {
             SUM(pg_amount_paise) FILTER (WHERE match_status = 'MATCHED') as reconciled_amount_paise,
             COUNT(DISTINCT pg_transaction_id) FILTER (WHERE pg_transaction_id NOT LIKE 'BANK_%') as total_pg_records
           FROM sp_v2_reconciliation_results
-          WHERE created_at::date BETWEEN $1 AND $2
+          WHERE reconciliation_date BETWEEN $1 AND $2
         `;
 
         const resultsData = await client.query(resultsQuery, [from, to]);
