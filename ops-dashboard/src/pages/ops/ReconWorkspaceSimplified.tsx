@@ -1,13 +1,18 @@
 import { useState } from 'react'
-import { 
+import {
   FileUp,
-  Wifi
+  Wifi,
+  Upload
 } from 'lucide-react'
 import { ManualUploadEnhanced } from '@/components/ManualUploadEnhanced'
 import { ConnectorsAutomated } from '@/components/ConnectorsAutomated'
+import { RefundUploadModal } from '@/components/ops/RefundUploadModal'
+import { ChargebackUploadModal } from '@/components/ops/ChargebackUploadModal'
 
 export default function ReconWorkspaceSimplified() {
   const [activeTab, setActiveTab] = useState<'manual' | 'connectors'>('manual')
+  const [refundModalOpen, setRefundModalOpen] = useState(false)
+  const [chargebackModalOpen, setChargebackModalOpen] = useState(false)
 
   return (
     <div className="h-full flex flex-col">
@@ -18,6 +23,22 @@ export default function ReconWorkspaceSimplified() {
             <div>
               <h1 className="text-2xl font-bold text-gray-900">Reconciliation Workspace</h1>
               <p className="text-sm text-gray-500">Manage reconciliation jobs and file processing</p>
+            </div>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setRefundModalOpen(true)}
+                className="px-4 py-2 bg-blue-600 text-white rounded-md text-sm hover:bg-blue-700 flex items-center gap-2"
+              >
+                <Upload className="w-4 h-4" />
+                Upload Refunds
+              </button>
+              <button
+                onClick={() => setChargebackModalOpen(true)}
+                className="px-4 py-2 bg-purple-600 text-white rounded-md text-sm hover:bg-purple-700 flex items-center gap-2"
+              >
+                <Upload className="w-4 h-4" />
+                Upload Chargebacks
+              </button>
             </div>
           </div>
         </div>
@@ -61,6 +82,16 @@ export default function ReconWorkspaceSimplified() {
           )}
         </div>
       </div>
+
+      {/* Upload Modals */}
+      <RefundUploadModal
+        isOpen={refundModalOpen}
+        onClose={() => setRefundModalOpen(false)}
+      />
+      <ChargebackUploadModal
+        isOpen={chargebackModalOpen}
+        onClose={() => setChargebackModalOpen(false)}
+      />
     </div>
   )
 }

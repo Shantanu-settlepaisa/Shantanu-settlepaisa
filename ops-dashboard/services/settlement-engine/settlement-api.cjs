@@ -1,10 +1,32 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const { Pool } = require('pg');
 const SettlementCalculator = require('./settlement-calculator.cjs');
+const { calculateMerchantSettlement, completeSettlementProcessing } = require('./settlement-calculator-with-deductions.cjs');
+const { createHealthCheckEndpoint } = require('../health-check');
+
+// Development logging (gated in production)
+const isDev = process.env.NODE_ENV !== 'production';
+const log = (...args) => isDev && console.log(...args);
 
 const app = express();
 const PORT = process.env.PORT || 5109;
+
+// Database pool with production-ready configuration
+const pool = new Pool({
+  user: process.env.DB_USER || 'postgres',
+  host: process.env.DB_HOST || 'localhost',
+  database: process.env.DB_NAME || 'settlepaisa_v2',
+  password: process.env.DB_PASSWORD || 'settlepaisa123',
+  port: process.env.DB_PORT || 5432,
+  max: 20,
+  min: 2,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 5000,
+});
+
+pool.on('error', (err) => console.error('[Settlement Pool Error]', err));
 
 // Initialize settlement calculator
 const calculator = new SettlementCalculator();
@@ -70,6 +92,38 @@ app.post('/api/calculate-settlement', async (req, res) => {
   }
 });
 
+// Calculate settlement with refund and chargeback deductions
+app.post('/api/settlements/calculate-with-deductions', async (req, res) => {
+  try {
+    const { merchantId, cycleDate } = req.body;
+
+    if (!merchantId || !cycleDate) {
+      return res.status(400).json({
+        success: false,
+        error: 'merchantId and cycleDate are required'
+      });
+    }
+
+    log('🧮 [Settlement API] Calculating with deductions:', { merchantId, cycleDate });
+
+    const settlement = await calculateMerchantSettlement(merchantId, cycleDate);
+
+    res.json({
+      success: true,
+      settlement,
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error('❌ [Settlement API] Calculation with deductions error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
 // Get pending transactions for settlement
 app.get('/api/pending-transactions', async (req, res) => {
   try {
@@ -102,7 +156,7 @@ app.post('/api/process-settlements', async (req, res) => {
   try {
     const { merchantId } = req.body;
     
-    console.log('🚀 [Settlement API] Starting settlement processing...');
+    log('🚀 [Settlement API] Starting settlement processing...');
     
     const settlements = await calculator.processSettlements(merchantId || null);
     
@@ -126,15 +180,6 @@ app.post('/api/process-settlements', async (req, res) => {
 // Get settlement batches
 app.get('/api/settlement-batches', async (req, res) => {
   try {
-    const { Pool } = require('pg');
-    const pool = new Pool({
-      user: process.env.DB_USER || 'postgres',
-      host: process.env.DB_HOST || 'localhost',
-      database: process.env.DB_NAME || 'settlepaisa_v2',
-      password: process.env.DB_PASSWORD || 'settlepaisa123',
-      port: process.env.DB_PORT || 5433,
-    });
-    
     const client = await pool.connect();
     
     const query = `
@@ -168,28 +213,17 @@ app.get('/api/settlement-batches', async (req, res) => {
   }
 });
 
-// Health check endpoint
-app.get('/api/health', (req, res) => {
-  res.json({
-    status: 'healthy',
-    service: 'settlement-engine',
-    timestamp: new Date().toISOString(),
-    features: [
-      'V1-compatible commission tiers',
-      'Tax calculations (GST/TDS/Reserve)',
-      'Volume-based pricing',
-      'Batch settlement processing'
-    ]
-  });
-});
+// Health check endpoint with database connectivity test
+createHealthCheckEndpoint(app, 'settlement-engine', pool);
 
 app.listen(PORT, () => {
-  console.log(`💰 [Settlement Engine] Running on port ${PORT}`);
-  console.log(`🧮 Commission API: GET http://localhost:${PORT}/api/commission-tier/:merchantId`);
-  console.log(`⚙️  Calculate API: POST http://localhost:${PORT}/api/calculate-settlement`);
-  console.log(`📋 Pending API: GET http://localhost:${PORT}/api/pending-transactions`);
-  console.log(`🚀 Process API: POST http://localhost:${PORT}/api/process-settlements`);
-  console.log(`📊 Batches API: GET http://localhost:${PORT}/api/settlement-batches`);
+  log(`💰 [Settlement Engine] Running on port ${PORT}`);
+  log(`🧮 Commission API: GET http://localhost:${PORT}/api/commission-tier/:merchantId`);
+  log(`⚙️  Calculate API: POST http://localhost:${PORT}/api/calculate-settlement`);
+  log(`💳 Calculate (with deductions): POST http://localhost:${PORT}/api/settlements/calculate-with-deductions`);
+  log(`📋 Pending API: GET http://localhost:${PORT}/api/pending-transactions`);
+  log(`🚀 Process API: POST http://localhost:${PORT}/api/process-settlements`);
+  log(`📊 Batches API: GET http://localhost:${PORT}/api/settlement-batches`);
 });
 
 module.exports = app;

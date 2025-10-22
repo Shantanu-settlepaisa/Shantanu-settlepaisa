@@ -21,7 +21,8 @@ export default function SettlementDetails() {
   const { data: settlement, isLoading } = useQuery({
     queryKey: ['settlement', batchId],
     queryFn: async () => {
-      const response = await fetch(`http://localhost:5108/api/settlements/${batchId}`)
+      const API_BASE_URL = import.meta.env.VITE_OVERVIEW_API_URL || import.meta.env.VITE_API_BASE_URL || 'http://localhost:5108'
+      const response = await fetch(`${API_BASE_URL}/api/settlements/${batchId}`)
       if (!response.ok) {
         if (response.status === 404) throw new Error('Settlement batch not found')
         throw new Error('Failed to fetch settlement details')
@@ -164,6 +165,34 @@ export default function SettlementDetails() {
               </p>
             </div>
           </div>
+
+          {/* Deductions Section */}
+          {(settlement.refund_deductions_paise || settlement.chargeback_deductions_paise || settlement.outstanding_debt_recovered_paise) && (
+            <div className="mt-6 pt-4 border-t border-gray-200">
+              <p className="text-sm font-medium text-gray-700 mb-4">Deductions</p>
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-6">
+                {settlement.refund_deductions_paise > 0 && (
+                  <div>
+                    <p className="text-sm text-gray-500">Refund Deductions</p>
+                    <p className="text-lg font-semibold mt-1 text-red-600">-{formatPaiseToINR(settlement.refund_deductions_paise)}</p>
+                  </div>
+                )}
+                {settlement.chargeback_deductions_paise > 0 && (
+                  <div>
+                    <p className="text-sm text-gray-500">Chargeback Deductions</p>
+                    <p className="text-lg font-semibold mt-1 text-red-600">-{formatPaiseToINR(settlement.chargeback_deductions_paise)}</p>
+                  </div>
+                )}
+                {settlement.outstanding_debt_recovered_paise > 0 && (
+                  <div>
+                    <p className="text-sm text-gray-500">Outstanding Debt Recovered</p>
+                    <p className="text-lg font-semibold mt-1 text-red-600">-{formatPaiseToINR(settlement.outstanding_debt_recovered_paise)}</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           <div className="mt-4 pt-4 border-t border-gray-200">
             <div className="flex justify-between items-center">
               <p className="text-lg font-semibold">Net Settlement Amount</p>
