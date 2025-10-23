@@ -101,7 +101,6 @@ app.get('/api/reports/settlements', async (req, res) => {
         sb.gross_amount_paise,
         sb.total_commission_paise,
         sb.total_gst_paise,
-        sb.total_tds_paise,
         sb.total_reserve_paise,
         sb.refund_deductions_paise,
         sb.chargeback_deductions_paise,
