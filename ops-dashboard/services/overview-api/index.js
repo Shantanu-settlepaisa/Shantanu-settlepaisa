@@ -168,48 +168,56 @@ app.get('/api/reports/bank-mis', async (req, res) => {
 
     let query = `
       SELECT
-        t.id as transaction_id,
-        t.gateway_ref,
-        t.amount_paise as pg_amount_paise,
-        t.utr,
-        t.payment_mode,
-        t.status,
-        t.created_at::date as pg_date,
-        t.merchant_id,
+        c.id as bank_statement_id,
+        c.utr,
         c.amount_paise as bank_amount_paise,
         c.credited_at::date as bank_date,
         c.bank_reference,
         c.acquirer,
-        CASE
-          WHEN rm.id IS NOT NULL THEN 'MATCHED'
-          ELSE 'UNMATCHED'
-        END as recon_status
-      FROM sp_v2_transactions t
-      LEFT JOIN sp_v2_utr_credits c ON t.utr = c.utr
-      LEFT JOIN sp_v2_settlement_items si ON t.transaction_id = si.transaction_id
-      LEFT JOIN sp_v2_recon_matches rm ON si.id = rm.item_id
-      WHERE t.status = 'RECONCILED'
+        t.transaction_id,
+        t.gateway_ref,
+        t.amount_paise as pg_amount_paise,
+        t.created_at::date as pg_date,
+        t.merchant_id,
+        t.payment_mode,
+        COALESCE(
+          rr.match_status,
+          CASE
+            WHEN t.transaction_id IS NOT NULL THEN 'PENDING_RECON'
+            ELSE 'UPLOADED'
+          END
+        ) as match_status,
+        COALESCE(
+          rr.exception_reason_code,
+          CASE WHEN t.transaction_id IS NULL THEN 'NOT_RECONCILED' ELSE NULL END
+        ) as exception_reason_code,
+        rr.exception_message,
+        COALESCE(rr.variance_paise, (t.amount_paise - c.amount_paise)) as delta_paise
+      FROM sp_v2_utr_credits c
+      LEFT JOIN sp_v2_transactions t ON c.utr = t.utr
+      LEFT JOIN sp_v2_reconciliation_results rr ON c.id = rr.bank_statement_id
+      WHERE 1=1
     `;
 
     const params = [];
     let paramIndex = 1;
 
     if (cycle_date) {
-      query += ` AND t.created_at::date = $${paramIndex++}`;
+      query += ` AND c.credited_at::date = $${paramIndex++}`;
       params.push(cycle_date);
     }
 
     if (from_date) {
-      query += ` AND t.created_at::date >= $${paramIndex++}`;
+      query += ` AND c.credited_at::date >= $${paramIndex++}`;
       params.push(from_date);
     }
 
     if (to_date) {
-      query += ` AND t.created_at::date <= $${paramIndex++}`;
+      query += ` AND c.credited_at::date <= $${paramIndex++}`;
       params.push(to_date);
     }
 
-    query += ` ORDER BY t.created_at DESC LIMIT 1000`;
+    query += ` ORDER BY c.credited_at DESC LIMIT 1000`;
 
     const result = await client.query(query, params);
     client.release();
@@ -240,30 +248,28 @@ app.get('/api/reports/recon-outcome', async (req, res) => {
 
     let query = `
       SELECT
-        t.id as transaction_id,
+        t.transaction_id,
         t.gateway_ref,
         t.amount_paise,
         t.utr,
         t.payment_mode,
-        t.created_at::date as recon_date,
+        t.created_at::date as transaction_date,
         t.merchant_id,
         c.bank_reference,
         c.acquirer,
-        CASE
-          WHEN rm.id IS NOT NULL THEN 'MATCHED'
-          WHEN t.status = 'FAILED' THEN 'FAILED'
-          ELSE 'PENDING'
-        END as status,
-        CASE
-          WHEN rm.id IS NULL AND t.status = 'SUCCESS' THEN 'UTR_MISSING'
-          WHEN t.status = 'FAILED' THEN 'TXN_FAILED'
-          ELSE NULL
-        END as exception_type,
-        'System generated' as comments
+        c.amount_paise as bank_amount_paise,
+        COALESCE(
+          rr.match_status,
+          CASE
+            WHEN c.utr IS NOT NULL THEN 'PENDING_RECON'
+            ELSE 'UPLOADED'
+          END
+        ) as status,
+        rr.exception_reason_code as exception_type,
+        COALESCE(rr.exception_message, 'System generated') as comments
       FROM sp_v2_transactions t
       LEFT JOIN sp_v2_utr_credits c ON t.utr = c.utr
-      LEFT JOIN sp_v2_settlement_items si ON t.transaction_id = si.transaction_id
-      LEFT JOIN sp_v2_recon_matches rm ON si.id = rm.item_id
+      LEFT JOIN sp_v2_reconciliation_results rr ON t.id = rr.pg_transaction_id
       WHERE 1=1
     `;
 
@@ -316,14 +322,15 @@ app.get('/api/reports/settlement-transactions', async (req, res) => {
 
     let query = `
       SELECT
-        si.transaction_id,
+        t.transaction_id,
         t.created_at as transaction_date,
-        sb.cycle_date,
-        sb.merchant_name,
-        si.payment_mode,
         t.acquirer_code,
         t.utr,
         t.gateway_ref,
+        t.status as transaction_status,
+        sb.cycle_date,
+        sb.merchant_name,
+        si.payment_mode,
         si.amount_paise,
         si.commission_paise,
         si.commission_rate,
@@ -332,12 +339,11 @@ app.get('/api/reports/settlement-transactions', async (req, res) => {
         si.reserve_paise,
         si.net_paise,
         si.fee_bearer,
-        t.status as transaction_status,
         si.settlement_batch_id,
         sb.status as batch_status
-      FROM sp_v2_settlement_items si
+      FROM sp_v2_transactions t
+      INNER JOIN sp_v2_settlement_items si ON t.transaction_id = si.transaction_id
       JOIN sp_v2_settlement_batches sb ON si.settlement_batch_id = sb.id
-      LEFT JOIN sp_v2_transactions t ON si.transaction_id = t.transaction_id
       WHERE 1=1
     `;
 

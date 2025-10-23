@@ -134,7 +134,7 @@ export default function Reports() {
       case 'SETTLEMENT_TRANSACTIONS':
         return ['Txn ID', 'Txn Date', 'Cycle Date', 'Merchant', 'Payment Mode', 'Acquirer', 'UTR', 'PG Ref', 'Gross Amount', 'MDR Fees', 'Rate %', 'GST', 'Reserve', 'Net Settlement', 'Fee Bearer', 'Status']
       case 'BANK_MIS':
-        return ['Txn ID', 'UTR', 'PG Amount', 'Bank Amount', 'Delta', 'PG Date', 'Bank Date', 'Status', 'Acquirer', 'Merchant']
+        return ['Txn ID', 'UTR', 'PG Amount', 'Bank Amount', 'Delta', 'PG Date', 'Bank Date', 'Status', 'Exception Type', 'Acquirer', 'Merchant']
       case 'RECON_OUTCOME':
         return ['Txn ID', 'PG Ref', 'Bank Ref', 'Amount', 'Status', 'Exception Type', 'Merchant', 'Acquirer', 'Payment Method']
       case 'TAX':
@@ -167,9 +167,11 @@ export default function Reports() {
     // Format status
     if (column === 'Status') {
       const statusColors: Record<string, string> = {
+        'UPLOADED': 'bg-blue-100 text-blue-800',
+        'PENDING_RECON': 'bg-yellow-100 text-yellow-800',
         'MATCHED': 'bg-green-100 text-green-800',
-        'UNMATCHED': 'bg-yellow-100 text-yellow-800',
-        'EXCEPTION': 'bg-red-100 text-red-800'
+        'EXCEPTION': 'bg-red-100 text-red-800',
+        'UNMATCHED': 'bg-orange-100 text-orange-800'
       }
       return <Badge className={statusColors[value] || ''}>{value}</Badge>
     }
@@ -358,7 +360,8 @@ export default function Reports() {
                               <TableCell>{formatCellValue(row.deltaRupees, 'Delta')}</TableCell>
                               <TableCell>{row.pgDate}</TableCell>
                               <TableCell>{row.bankDate}</TableCell>
-                              <TableCell>{formatCellValue(row.reconStatus, 'Status')}</TableCell>
+                              <TableCell>{formatCellValue(row.matchStatus, 'Status')}</TableCell>
+                              <TableCell>{row.exceptionReasonCode || '-'}</TableCell>
                               <TableCell>{row.acquirer}</TableCell>
                               <TableCell>{row.merchantName}</TableCell>
                             </>

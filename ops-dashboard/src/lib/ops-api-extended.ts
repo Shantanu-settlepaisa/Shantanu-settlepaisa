@@ -2431,16 +2431,19 @@ export class OpsApiExtended {
   private formatBankMISForDisplay(record: any) {
     const pgAmount = this.paiseToRupees(record.pg_amount_paise || 0)
     const bankAmount = this.paiseToRupees(record.bank_amount_paise || 0)
+    const delta = this.paiseToRupees(record.delta_paise || 0)
 
     return {
       txnId: record.transaction_id || '',
       utr: record.utr || '',
       pgAmountRupees: pgAmount,
       bankAmountRupees: bankAmount,
-      deltaRupees: pgAmount - bankAmount,
+      deltaRupees: delta,
       pgDate: record.pg_date?.split('T')[0] || '',
       bankDate: record.bank_date?.split('T')[0] || '',
-      reconStatus: record.recon_status || '',
+      matchStatus: record.match_status || '',
+      exceptionReasonCode: record.exception_reason_code || '',
+      exceptionMessage: record.exception_message || '',
       acquirer: record.acquirer || '',
       merchantName: record.merchant_id || ''
     }
