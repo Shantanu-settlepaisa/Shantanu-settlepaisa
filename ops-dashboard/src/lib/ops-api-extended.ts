@@ -2427,6 +2427,40 @@ export class OpsApiExtended {
     }
   }
 
+  // Transform Bank MIS data from API format to frontend format
+  private formatBankMISForDisplay(record: any) {
+    const pgAmount = this.paiseToRupees(record.pg_amount_paise || 0)
+    const bankAmount = this.paiseToRupees(record.bank_amount_paise || 0)
+
+    return {
+      txnId: record.transaction_id || '',
+      utr: record.utr || '',
+      pgAmountRupees: pgAmount,
+      bankAmountRupees: bankAmount,
+      deltaRupees: pgAmount - bankAmount,
+      pgDate: record.pg_date?.split('T')[0] || '',
+      bankDate: record.bank_date?.split('T')[0] || '',
+      reconStatus: record.recon_status || '',
+      acquirer: record.acquirer || '',
+      merchantName: record.merchant_id || ''
+    }
+  }
+
+  // Transform Recon Outcome data from API format to frontend format
+  private formatReconOutcomeForDisplay(outcome: any) {
+    return {
+      txnId: outcome.transaction_id || '',
+      pgRefId: outcome.gateway_ref || '',
+      bankRefId: outcome.bank_reference || '',
+      amountRupees: this.paiseToRupees(outcome.amount_paise || 0),
+      status: outcome.status || '',
+      exceptionType: outcome.exception_type || '',
+      merchantName: outcome.merchant_id || '',
+      acquirer: outcome.acquirer || '',
+      paymentMethod: outcome.payment_mode || ''
+    }
+  }
+
   async getSettlementSummary(params?: {
     fromDate?: string
     toDate?: string
@@ -2462,8 +2496,14 @@ export class OpsApiExtended {
     const response = await fetch(url)
     if (!response.ok) throw new Error(`HTTP ${response.status}`)
     const json = await response.json()
+
+    // Transform each record to match frontend expectations
+    const transformedData = (json.records || []).map((r: any) =>
+      this.formatBankMISForDisplay(r)
+    )
+
     return {
-      data: json.transactions || [],
+      data: transformedData,
       rowCount: json.count || 0
     }
   }
@@ -2480,8 +2520,14 @@ export class OpsApiExtended {
     const response = await fetch(url)
     if (!response.ok) throw new Error(`HTTP ${response.status}`)
     const json = await response.json()
+
+    // Transform each outcome to match frontend expectations
+    const transformedData = (json.outcomes || []).map((o: any) =>
+      this.formatReconOutcomeForDisplay(o)
+    )
+
     return {
-      data: json.outcomes || [],
+      data: transformedData,
       rowCount: json.count || 0
     }
   }
