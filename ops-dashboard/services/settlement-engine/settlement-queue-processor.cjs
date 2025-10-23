@@ -200,6 +200,9 @@ class SettlementQueueProcessor {
         total_gst_paise: calculatorResult.totalGST,
         total_reserve_paise: calculatorResult.totalReserve,
         net_settlement_amount: calculatorResult.netAmount,
+        refund_deductions_paise: calculatorResult.refundDeductions || 0,
+        chargeback_deductions_paise: calculatorResult.chargebackDeductions || 0,
+        outstanding_debt_recovered_paise: calculatorResult.debtRecovered || 0,
         items: calculatorResult.items
       };
       
@@ -346,12 +349,15 @@ class SettlementQueueProcessor {
         total_gst_paise,
         total_reserve_paise,
         net_amount_paise,
+        refund_deductions_paise,
+        chargeback_deductions_paise,
+        outstanding_debt_recovered_paise,
         status,
         created_at,
         updated_at
       ) VALUES (
         gen_random_uuid(),
-        $1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW()
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW()
       ) RETURNING id
     `, [
       settlementBatch.merchant_id,
@@ -362,26 +368,13 @@ class SettlementQueueProcessor {
       settlementBatch.total_gst_paise,
       settlementBatch.total_reserve_paise,
       settlementBatch.net_settlement_amount,
+      settlementBatch.refund_deductions_paise || 0,
+      settlementBatch.chargeback_deductions_paise || 0,
+      settlementBatch.outstanding_debt_recovered_paise || 0,
       'CALCULATED'
     ]);
 
     const batchId = batchResult.rows[0].id;
-
-    // Update with refund/chargeback deductions if present
-    if (settlementBatch.refundDeductions || settlementBatch.chargebackDeductions || settlementBatch.debtRecovered) {
-      await client.query(`
-        UPDATE sp_v2_settlements
-        SET refund_deductions_paise = $1,
-            chargeback_deductions_paise = $2,
-            outstanding_debt_recovered_paise = $3
-        WHERE id = $4
-      `, [
-        settlementBatch.refundDeductions || 0,
-        settlementBatch.chargebackDeductions || 0,
-        settlementBatch.debtRecovered || 0,
-        batchId
-      ]);
-    }
     
     // Insert settlement items with calculated fees
     for (const txn of transactions) {

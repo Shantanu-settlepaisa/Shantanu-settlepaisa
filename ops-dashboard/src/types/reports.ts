@@ -19,6 +19,12 @@ export interface SettlementSummaryRow {
   gstRupees: number
   tdsPaise: bigint
   tdsRupees: number
+  refundDeductionsPaise: bigint
+  refundDeductionsRupees: number
+  chargebackDeductionsPaise: bigint
+  chargebackDeductionsRupees: number
+  debtRecoveredPaise: bigint
+  debtRecoveredRupees: number
   netAmountPaise: bigint
   netAmountRupees: number
   transactionCount: number

@@ -458,7 +458,7 @@ app.get('/api/reports/settlements', async (req, res) => {
     const client = await pool.connect();
     
     let query = `
-      SELECT 
+      SELECT
         sb.id,
         sb.merchant_id,
         sb.cycle_date,
@@ -468,6 +468,9 @@ app.get('/api/reports/settlements', async (req, res) => {
         sb.total_gst_paise,
         sb.total_tds_paise,
         sb.total_reserve_paise,
+        sb.refund_deductions_paise,
+        sb.chargeback_deductions_paise,
+        sb.outstanding_debt_recovered_paise,
         sb.net_amount_paise,
         sb.status,
         sb.created_at,
@@ -807,6 +810,172 @@ app.get('/api/connectors/health', async (req, res) => {
   }
 });
 
+/**
+ * GET /api/analytics/bank-fees
+ * Returns bank fee analytics and revenue breakdown
+ *
+ * Query params:
+ * - merchant_id (optional): Filter by specific merchant
+ * - start_date (required): Start date (YYYY-MM-DD)
+ * - end_date (required): End date (YYYY-MM-DD)
+ *
+ * Returns:
+ * - aggregates: Total bank charges, SettlePaisa revenue, percentages
+ * - settlements: Per-merchant/date breakdown
+ */
+app.get('/api/analytics/bank-fees', async (req, res) => {
+  try {
+    const { merchant_id, start_date, end_date } = req.query;
+
+    // Validate required parameters
+    if (!start_date || !end_date) {
+      return res.status(400).json({
+        success: false,
+        error: 'start_date and end_date are required',
+        example: '/api/analytics/bank-fees?start_date=2025-10-01&end_date=2025-10-23'
+      });
+    }
+
+    log(`📊 [Bank Fee Analytics] Query: merchant=${merchant_id || 'ALL'}, ${start_date} to ${end_date}`);
+
+    // Build query
+    const queryParams = [start_date, end_date];
+    let merchantFilter = '';
+
+    if (merchant_id) {
+      merchantFilter = 'AND merchant_id = $3';
+      queryParams.push(merchant_id);
+    }
+
+    // Query settlement batches with bank fee data
+    const query = `
+      SELECT
+        merchant_id,
+        merchant_name,
+        cycle_date,
+        total_transactions,
+        gross_amount_paise,
+        total_commission_paise,
+        total_bank_charges_paise,
+        settlepaisa_revenue_paise,
+        net_amount_paise,
+        status
+      FROM sp_v2_settlement_batches
+      WHERE cycle_date >= $1
+        AND cycle_date <= $2
+        ${merchantFilter}
+      ORDER BY cycle_date DESC, merchant_id
+    `;
+
+    const result = await v2Pool.query(query, queryParams);
+
+    if (result.rows.length === 0) {
+      return res.json({
+        success: true,
+        message: 'No settlement data found for the specified period',
+        aggregates: {
+          total_settlements: 0,
+          total_transactions: 0,
+          total_gross_amount: 0,
+          total_commission: 0,
+          total_bank_charges: 0,
+          total_settlepaisa_revenue: 0,
+          bank_share_percent: 0,
+          settlepaisa_share_percent: 0
+        },
+        settlements: [],
+        query: {
+          start_date,
+          end_date,
+          merchant_id: merchant_id || null
+        },
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    // Calculate aggregates
+    const aggregates = result.rows.reduce((acc, row) => {
+      acc.total_settlements += 1;
+      acc.total_transactions += parseInt(row.total_transactions) || 0;
+      acc.total_gross_amount += parseInt(row.gross_amount_paise) || 0;
+      acc.total_commission += parseInt(row.total_commission_paise) || 0;
+      acc.total_bank_charges += parseInt(row.total_bank_charges_paise) || 0;
+      acc.total_settlepaisa_revenue += parseInt(row.settlepaisa_revenue_paise) || 0;
+      return acc;
+    }, {
+      total_settlements: 0,
+      total_transactions: 0,
+      total_gross_amount: 0,
+      total_commission: 0,
+      total_bank_charges: 0,
+      total_settlepaisa_revenue: 0
+    });
+
+    // Calculate percentages
+    const totalCommission = aggregates.total_commission;
+    aggregates.bank_share_percent = totalCommission > 0
+      ? ((aggregates.total_bank_charges / totalCommission) * 100).toFixed(2)
+      : '0.00';
+    aggregates.settlepaisa_share_percent = totalCommission > 0
+      ? ((aggregates.total_settlepaisa_revenue / totalCommission) * 100).toFixed(2)
+      : '0.00';
+
+    // Format settlements for response
+    const settlements = result.rows.map(row => ({
+      merchant_id: row.merchant_id,
+      merchant_name: row.merchant_name,
+      cycle_date: row.cycle_date,
+      total_transactions: parseInt(row.total_transactions) || 0,
+      gross_amount: (parseInt(row.gross_amount_paise) || 0) / 100,
+      total_commission: (parseInt(row.total_commission_paise) || 0) / 100,
+      bank_charges: (parseInt(row.total_bank_charges_paise) || 0) / 100,
+      settlepaisa_revenue: (parseInt(row.settlepaisa_revenue_paise) || 0) / 100,
+      net_settlement: (parseInt(row.net_amount_paise) || 0) / 100,
+      bank_share_percent: row.total_commission_paise > 0
+        ? ((row.total_bank_charges_paise / row.total_commission_paise) * 100).toFixed(2)
+        : '0.00',
+      settlepaisa_share_percent: row.total_commission_paise > 0
+        ? ((row.settlepaisa_revenue_paise / row.total_commission_paise) * 100).toFixed(2)
+        : '0.00',
+      status: row.status
+    }));
+
+    log(`   ✅ Found ${aggregates.total_settlements} settlements with ${aggregates.total_transactions} transactions`);
+    log(`   💰 Total Commission: ₹${(aggregates.total_commission / 100).toFixed(2)}`);
+    log(`   🏦 Bank Charges: ₹${(aggregates.total_bank_charges / 100).toFixed(2)} (${aggregates.bank_share_percent}%)`);
+    log(`   💼 SettlePaisa Revenue: ₹${(aggregates.total_settlepaisa_revenue / 100).toFixed(2)} (${aggregates.settlepaisa_share_percent}%)`);
+
+    res.json({
+      success: true,
+      aggregates: {
+        total_settlements: aggregates.total_settlements,
+        total_transactions: aggregates.total_transactions,
+        total_gross_amount: aggregates.total_gross_amount / 100,
+        total_commission: aggregates.total_commission / 100,
+        total_bank_charges: aggregates.total_bank_charges / 100,
+        total_settlepaisa_revenue: aggregates.total_settlepaisa_revenue / 100,
+        bank_share_percent: parseFloat(aggregates.bank_share_percent),
+        settlepaisa_share_percent: parseFloat(aggregates.settlepaisa_share_percent)
+      },
+      settlements: settlements,
+      query: {
+        start_date,
+        end_date,
+        merchant_id: merchant_id || null
+      },
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error('❌ [Bank Fee Analytics] Error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
 app.listen(PORT, () => {
   log(`🚀 [V2 Overview API] Running on port ${PORT}`);
   log(`📊 Real data endpoint: GET http://localhost:${PORT}/api/overview`);
@@ -816,6 +985,7 @@ app.listen(PORT, () => {
   log(`🏦 Bank MIS reports: GET http://localhost:${PORT}/api/reports/bank-mis`);
   log(`🔄 Recon outcome: GET http://localhost:${PORT}/api/reports/recon-outcome`);
   log(`💰 Tax reports: GET http://localhost:${PORT}/api/reports/tax`);
+  log(`💵 Bank fee analytics: GET http://localhost:${PORT}/api/analytics/bank-fees?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD`);
 });
 
 module.exports = app;

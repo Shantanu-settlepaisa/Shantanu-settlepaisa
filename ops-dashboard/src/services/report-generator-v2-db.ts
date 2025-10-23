@@ -9,7 +9,7 @@ import type {
 
 // V2 Database-Connected Report Generator
 export class ReportGeneratorV2DB {
-  private readonly API_BASE_URL = 'http://localhost:5108'
+  private readonly API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5108'
   
   // Convert paise to rupees for display
   private paiseToRupees(paise: string | number | bigint): number {
@@ -71,6 +71,12 @@ export class ReportGeneratorV2DB {
           gstRupees: this.paiseToRupees(settlement.total_gst_paise || 0),
           tdsPaise: BigInt(settlement.total_tds_paise || 0),
           tdsRupees: this.paiseToRupees(settlement.total_tds_paise || 0),
+          refundDeductionsPaise: BigInt(settlement.refund_deductions_paise || 0),
+          refundDeductionsRupees: this.paiseToRupees(settlement.refund_deductions_paise || 0),
+          chargebackDeductionsPaise: BigInt(settlement.chargeback_deductions_paise || 0),
+          chargebackDeductionsRupees: this.paiseToRupees(settlement.chargeback_deductions_paise || 0),
+          debtRecoveredPaise: BigInt(settlement.outstanding_debt_recovered_paise || 0),
+          debtRecoveredRupees: this.paiseToRupees(settlement.outstanding_debt_recovered_paise || 0),
           netAmountPaise: BigInt(settlement.net_amount_paise || 0),
           netAmountRupees: this.paiseToRupees(settlement.net_amount_paise || 0),
           transactionCount: settlement.total_transactions || 0
