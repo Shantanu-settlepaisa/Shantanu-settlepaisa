@@ -1,19 +1,21 @@
 import { useQuery } from '@tanstack/react-query';
 import { apiClient as api } from '@/lib/api-client';
 
-export function useAnalyticsKpisV2(params: { 
-  from: string; 
-  to: string; 
-  merchantId?: string; 
-  acquirerId?: string; 
-  mode?: string 
+const BASE_URL = import.meta.env.VITE_ANALYTICS_API_URL || 'http://localhost:5105';
+
+export function useAnalyticsKpisV2(params: {
+  from: string;
+  to: string;
+  merchantId?: string;
+  acquirerId?: string;
+  mode?: string
 }) {
   return useQuery({
     queryKey: ['analytics-kpis-v2', params],
     queryFn: async () => {
-      const { data } = await api.get('/api/analytics/kpis-v2', { 
+      const { data } = await api.get('/api/analytics/kpis-v2', {
         params,
-        baseURL: 'http://localhost:5105'
+        baseURL: BASE_URL
       });
       return data;
     },
@@ -23,18 +25,18 @@ export function useAnalyticsKpisV2(params: {
   });
 }
 
-export function useAnalyticsModeDistribution(params: { 
-  from: string; 
-  to: string; 
-  merchantId?: string; 
+export function useAnalyticsModeDistribution(params: {
+  from: string;
+  to: string;
+  merchantId?: string;
   acquirerId?: string;
 }) {
   return useQuery({
     queryKey: ['analytics-mode-distribution', params],
     queryFn: async () => {
-      const { data } = await api.get('/api/analytics/mode-distribution', { 
+      const { data } = await api.get('/api/analytics/mode-distribution', {
         params,
-        baseURL: 'http://localhost:5105'
+        baseURL: BASE_URL
       });
       return data;
     },
@@ -44,19 +46,19 @@ export function useAnalyticsModeDistribution(params: {
   });
 }
 
-export function useAnalyticsGmvTrend(params: { 
-  from: string; 
-  to: string; 
-  merchantId?: string; 
-  acquirerId?: string; 
-  mode?: string 
+export function useAnalyticsGmvTrend(params: {
+  from: string;
+  to: string;
+  merchantId?: string;
+  acquirerId?: string;
+  mode?: string
 }) {
   return useQuery({
     queryKey: ['analytics-gmv-trend', params],
     queryFn: async () => {
-      const { data } = await api.get('/api/analytics/gmv-trend', { 
+      const { data } = await api.get('/api/analytics/gmv-trend', {
         params,
-        baseURL: 'http://localhost:5105'
+        baseURL: BASE_URL
       });
       return data;
     },
@@ -66,19 +68,19 @@ export function useAnalyticsGmvTrend(params: {
   });
 }
 
-export function useAnalyticsSettlementFunnel(params: { 
-  from: string; 
-  to: string; 
-  merchantId?: string; 
-  acquirerId?: string; 
-  mode?: string 
+export function useAnalyticsSettlementFunnel(params: {
+  from: string;
+  to: string;
+  merchantId?: string;
+  acquirerId?: string;
+  mode?: string
 }) {
   return useQuery({
     queryKey: ['analytics-settlement-funnel', params],
     queryFn: async () => {
-      const { data } = await api.get('/api/analytics/settlement-funnel', { 
+      const { data } = await api.get('/api/analytics/settlement-funnel', {
         params,
-        baseURL: 'http://localhost:5105'
+        baseURL: BASE_URL
       });
       return data;
     },
@@ -88,19 +90,19 @@ export function useAnalyticsSettlementFunnel(params: {
   });
 }
 
-export function useAnalyticsFailureReasons(params: { 
-  from: string; 
-  to: string; 
-  merchantId?: string; 
-  acquirerId?: string; 
-  mode?: string 
+export function useAnalyticsFailureReasons(params: {
+  from: string;
+  to: string;
+  merchantId?: string;
+  acquirerId?: string;
+  mode?: string
 }) {
   return useQuery({
     queryKey: ['analytics-failure-reasons', params],
     queryFn: async () => {
-      const { data } = await api.get('/api/analytics/failure-reasons', { 
+      const { data } = await api.get('/api/analytics/failure-reasons', {
         params,
-        baseURL: 'http://localhost:5105'
+        baseURL: BASE_URL
       });
       return data;
     },

@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { apiClient as api } from '@/lib/api-client';
 
-const BASE_URL = 'http://localhost:5105';
+const BASE_URL = import.meta.env.VITE_ANALYTICS_API_URL || 'http://localhost:5105';
 
 // KPIs with deltas
 export function useAnalyticsKpisV3(params: { 

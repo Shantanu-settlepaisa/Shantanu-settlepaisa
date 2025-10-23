@@ -1,6 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
 import { apiClient } from '@/lib/api-client';
 
+const BASE_URL = import.meta.env.VITE_ANALYTICS_API_URL || 'http://localhost:5105';
+
 export type OutcomeWindow = '7d' | '30d';
 
 interface Filters {
@@ -34,49 +36,49 @@ export interface SlaBuckets {
 }
 
 export function useDisputesKpis(filters: Filters) {
-  return useQuery<DisputesKpis>({ 
-    queryKey: ['cb-kpis', filters], 
+  return useQuery<DisputesKpis>({
+    queryKey: ['cb-kpis', filters],
     queryFn: async () => {
-      const { data } = await apiClient.get('/api/disputes/kpis', { 
+      const { data } = await apiClient.get('/api/disputes/kpis', {
         params: filters,
-        baseURL: 'http://localhost:5105'
+        baseURL: BASE_URL
       });
       return data;
-    }, 
-    refetchInterval: 30000, 
-    staleTime: 20000, 
-    retry: 2 
+    },
+    refetchInterval: 30000,
+    staleTime: 20000,
+    retry: 2
   });
 }
 
 export function useOutcomeSummary(window: OutcomeWindow, scope: { merchantId?: string; acquirerId?: string }) {
-  return useQuery<OutcomeSummary>({ 
-    queryKey: ['cb-outcome', window, scope], 
+  return useQuery<OutcomeSummary>({
+    queryKey: ['cb-outcome', window, scope],
     queryFn: async () => {
-      const { data } = await apiClient.get('/api/disputes/outcome-summary', { 
+      const { data } = await apiClient.get('/api/disputes/outcome-summary', {
         params: { window, ...scope },
-        baseURL: 'http://localhost:5105'
+        baseURL: BASE_URL
       });
       return data;
-    }, 
-    refetchInterval: 30000, 
-    staleTime: 20000, 
-    retry: 2 
+    },
+    refetchInterval: 30000,
+    staleTime: 20000,
+    retry: 2
   });
 }
 
 export function useSlaBuckets(filters: Filters) {
-  return useQuery<SlaBuckets>({ 
-    queryKey: ['cb-sla', filters], 
+  return useQuery<SlaBuckets>({
+    queryKey: ['cb-sla', filters],
     queryFn: async () => {
-      const { data } = await apiClient.get('/api/disputes/sla-buckets', { 
+      const { data } = await apiClient.get('/api/disputes/sla-buckets', {
         params: filters,
-        baseURL: 'http://localhost:5105'
+        baseURL: BASE_URL
       });
       return data;
-    }, 
-    refetchInterval: 30000, 
-    staleTime: 20000, 
-    retry: 2 
+    },
+    refetchInterval: 30000,
+    staleTime: 20000,
+    retry: 2
   });
 }
