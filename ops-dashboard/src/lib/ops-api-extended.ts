@@ -5,6 +5,12 @@ import type { OverviewSnapshot } from '../types/overview'
 
 const USE_MOCK_API = import.meta.env.VITE_USE_MOCK_API === 'true'
 
+// API Base URLs from environment
+const RECON_API_URL = import.meta.env.VITE_RECON_API_URL || 'http://localhost:5103'
+const OVERVIEW_API_URL = import.meta.env.VITE_OVERVIEW_API_URL || 'http://localhost:5108'
+const UPLOAD_API_URL = import.meta.env.VITE_UPLOAD_API_URL || 'http://localhost:5109'
+const PG_API_URL = import.meta.env.VITE_PG_API_URL || 'http://localhost:5101'
+
 // Extended types for reconciliation
 export interface ReconJob {
   id: string
@@ -722,8 +728,8 @@ export class OpsApiExtended {
       return `/demo/exports/${jobId}_${tab}.csv`
     }
     
-    // Call real backend on port 5110
-    const response = await fetch(`http://localhost:5110/api/ops/v1/recon/manual/job/${jobId}/export?tab=${tab}`)
+    // Call real backend
+    const response = await fetch(`${RECON_API_URL}/api/ops/v1/recon/manual/job/${jobId}/export?tab=${tab}`)
     
     if (!response.ok) {
       throw new Error(`Export failed: ${response.statusText}`)
@@ -2382,6 +2388,18 @@ export class OpsApiExtended {
   // REPORT ENDPOINTS (OP-0009)
   // ============================================
 
+  // Helper to convert camelCase to snake_case for API params
+  private toSnakeCase(obj: Record<string, any>): Record<string, string> {
+    const snake: Record<string, string> = {}
+    for (const [key, value] of Object.entries(obj)) {
+      if (value != null) {
+        const snakeKey = key.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`)
+        snake[snakeKey] = String(value)
+      }
+    }
+    return snake
+  }
+
   async getSettlementSummary(params?: {
     fromDate?: string
     toDate?: string
@@ -2389,10 +2407,15 @@ export class OpsApiExtended {
     acquirer?: string
     merchant?: string
   }): Promise<any> {
-    const response = await fetch('http://localhost:5103/reports/settlement-summary?' + new URLSearchParams(
-      Object.entries(params || {}).filter(([_, v]) => v != null).map(([k, v]) => [k, String(v)])
-    ))
-    return response.json()
+    const snakeParams = this.toSnakeCase(params || {})
+    const url = `${OVERVIEW_API_URL}/api/reports/settlements?${new URLSearchParams(snakeParams)}`
+    const response = await fetch(url)
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    const json = await response.json()
+    return {
+      data: json.settlements || [],
+      rowCount: json.count || 0
+    }
   }
 
   async getBankMIS(params?: {
@@ -2401,10 +2424,15 @@ export class OpsApiExtended {
     toDate?: string
     acquirer?: string
   }): Promise<any> {
-    const response = await fetch('http://localhost:5103/reports/bank-mis?' + new URLSearchParams(
-      Object.entries(params || {}).filter(([_, v]) => v != null).map(([k, v]) => [k, String(v)])
-    ))
-    return response.json()
+    const snakeParams = this.toSnakeCase(params || {})
+    const url = `${OVERVIEW_API_URL}/api/reports/bank-mis?${new URLSearchParams(snakeParams)}`
+    const response = await fetch(url)
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    const json = await response.json()
+    return {
+      data: json.transactions || [],
+      rowCount: json.count || 0
+    }
   }
 
   async getReconOutcome(params?: {
@@ -2414,10 +2442,15 @@ export class OpsApiExtended {
     acquirer?: string
     status?: 'MATCHED' | 'UNMATCHED' | 'EXCEPTION'
   }): Promise<any> {
-    const response = await fetch('http://localhost:5103/reports/recon-outcome?' + new URLSearchParams(
-      Object.entries(params || {}).filter(([_, v]) => v != null).map(([k, v]) => [k, String(v)])
-    ))
-    return response.json()
+    const snakeParams = this.toSnakeCase(params || {})
+    const url = `${OVERVIEW_API_URL}/api/reports/recon-outcome?${new URLSearchParams(snakeParams)}`
+    const response = await fetch(url)
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    const json = await response.json()
+    return {
+      data: json.outcomes || [],
+      rowCount: json.count || 0
+    }
   }
 
   async getTaxReport(params?: {
@@ -2426,10 +2459,15 @@ export class OpsApiExtended {
     cycleDate?: string
     merchant?: string
   }): Promise<any> {
-    const response = await fetch('http://localhost:5103/reports/tax-report?' + new URLSearchParams(
-      Object.entries(params || {}).filter(([_, v]) => v != null).map(([k, v]) => [k, String(v)])
-    ))
-    return response.json()
+    const snakeParams = this.toSnakeCase(params || {})
+    const url = `${OVERVIEW_API_URL}/api/reports/tax-report?${new URLSearchParams(snakeParams)}`
+    const response = await fetch(url)
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    const json = await response.json()
+    return {
+      data: json.reports || [],
+      rowCount: json.count || 0
+    }
   }
 
   async getSettlementTransactions(params?: {
@@ -2439,10 +2477,15 @@ export class OpsApiExtended {
     merchantId?: string
     batchId?: string
   }): Promise<any> {
-    const response = await fetch('http://localhost:5103/reports/settlement-transactions?' + new URLSearchParams(
-      Object.entries(params || {}).filter(([_, v]) => v != null).map(([k, v]) => [k, String(v)])
-    ))
-    return response.json()
+    const snakeParams = this.toSnakeCase(params || {})
+    const url = `${OVERVIEW_API_URL}/api/reports/settlement-transactions?${new URLSearchParams(snakeParams)}`
+    const response = await fetch(url)
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    const json = await response.json()
+    return {
+      data: json.transactions || [],
+      rowCount: json.count || 0
+    }
   }
 
   async exportReport(params: {
