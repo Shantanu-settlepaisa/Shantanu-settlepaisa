@@ -239,13 +239,18 @@ async function calculateRefundDeductions(merchantId, cycleDate, transactions) {
   const outstandingResult = await pool.query(outstandingQuery, [merchantId, cycleDate]);
   const outstandingRefunds = outstandingResult.rows;
 
-  // Calculate totals
+  // Calculate totals with null-safety
+  const safeParseInt = (value) => {
+    const parsed = parseInt(value);
+    return isNaN(parsed) ? 0 : parsed;
+  };
+
   const currentCycleTotal = currentCycleRefunds.reduce(
-    (sum, r) => sum + parseInt(r.refund_amount_paise), 0
+    (sum, r) => sum + safeParseInt(r.refund_amount_paise), 0
   );
 
   const outstandingTotal = outstandingRefunds.reduce(
-    (sum, r) => sum + parseInt(r.refund_amount_paise), 0
+    (sum, r) => sum + safeParseInt(r.refund_amount_paise), 0
   );
 
   return {
@@ -256,14 +261,14 @@ async function calculateRefundDeductions(merchantId, cycleDate, transactions) {
     details: {
       currentCycleRefunds: currentCycleRefunds.map(r => ({
         transactionId: r.transaction_id,
-        amount: parseInt(r.refund_amount_paise),
+        amount: safeParseInt(r.refund_amount_paise),
         type: r.refund_type,
         date: r.refund_date,
         reason: r.refund_reason
       })),
       outstandingRefunds: outstandingRefunds.map(r => ({
         transactionId: r.transaction_id,
-        amount: parseInt(r.refund_amount_paise),
+        amount: safeParseInt(r.refund_amount_paise),
         type: r.refund_type,
         date: r.refund_date,
         originalBatchId: r.original_batch_id,
@@ -297,8 +302,14 @@ async function calculateChargebackDeductions(merchantId) {
   const result = await pool.query(query, [merchantId]);
   const chargebacks = result.rows;
 
+  // Null-safe parseInt helper
+  const safeParseInt = (value) => {
+    const parsed = parseInt(value);
+    return isNaN(parsed) ? 0 : parsed;
+  };
+
   const total = chargebacks.reduce(
-    (sum, cb) => sum + parseInt(cb.chargeback_paise), 0
+    (sum, cb) => sum + safeParseInt(cb.chargeback_paise), 0
   );
 
   return {
@@ -306,7 +317,7 @@ async function calculateChargebackDeductions(merchantId) {
     count: chargebacks.length,
     details: chargebacks.map(cb => ({
       transactionId: cb.txn_ref,
-      amount: parseInt(cb.chargeback_paise),
+      amount: safeParseInt(cb.chargeback_paise),
       reason: cb.reason_code,
       receivedAt: cb.received_at,
       status: cb.status,
@@ -336,8 +347,14 @@ async function calculateOutstandingDebtRecovery(merchantId) {
   const result = await pool.query(query, [merchantId]);
   const debts = result.rows;
 
+  // Null-safe parseInt helper
+  const safeParseInt = (value) => {
+    const parsed = parseInt(value);
+    return isNaN(parsed) ? 0 : parsed;
+  };
+
   const total = debts.reduce(
-    (sum, debt) => sum + parseInt(debt.debt_amount_paise), 0
+    (sum, debt) => sum + safeParseInt(debt.debt_amount_paise), 0
   );
 
   return {
@@ -345,7 +362,7 @@ async function calculateOutstandingDebtRecovery(merchantId) {
     count: debts.length,
     details: debts.map(debt => ({
       id: debt.id,
-      amount: parseInt(debt.debt_amount_paise),
+      amount: safeParseInt(debt.debt_amount_paise),
       originalBatchId: debt.original_batch_id,
       originalSettlementDate: debt.original_settlement_date,
       reason: debt.reason,
@@ -358,6 +375,24 @@ async function calculateOutstandingDebtRecovery(merchantId) {
  * Create outstanding debt record for negative settlements
  */
 async function createOutstandingDebt(merchantId, debtAmount, cycleDate, breakdown) {
+  // Sanitize inputs to prevent "null" string or NaN errors
+  const sanitizedDebtAmount = (debtAmount && !isNaN(debtAmount))
+    ? parseInt(debtAmount)
+    : 0;
+
+  const sanitizedCycleDate = cycleDate && cycleDate !== 'null'
+    ? cycleDate
+    : new Date().toISOString().split('T')[0];
+
+  const sanitizedMerchantId = merchantId && merchantId !== 'null'
+    ? merchantId
+    : 'UNKNOWN';
+
+  if (sanitizedDebtAmount === 0) {
+    console.warn('[Debt] Skipping debt creation: amount is zero or invalid');
+    return null;
+  }
+
   const query = `
     INSERT INTO sp_v2_merchant_outstanding_debts (
       merchant_id,
@@ -370,19 +405,19 @@ async function createOutstandingDebt(merchantId, debtAmount, cycleDate, breakdow
     RETURNING id, debt_amount_paise, created_at
   `;
 
-  const reason = `Negative settlement for cycle ${cycleDate}. Refunds and chargebacks exceeded new sales.`;
+  const reason = `Negative settlement for cycle ${sanitizedCycleDate}. Refunds and chargebacks exceeded new sales.`;
 
   const details = JSON.stringify({
-    cycleDate,
-    breakdown,
-    netBalance: -debtAmount,
+    cycleDate: sanitizedCycleDate,
+    breakdown: breakdown || {},
+    netBalance: -sanitizedDebtAmount,
     timestamp: new Date()
   });
 
   const result = await pool.query(query, [
-    merchantId,
-    debtAmount,
-    cycleDate,
+    sanitizedMerchantId,
+    sanitizedDebtAmount,
+    sanitizedCycleDate,
     reason,
     details
   ]);
