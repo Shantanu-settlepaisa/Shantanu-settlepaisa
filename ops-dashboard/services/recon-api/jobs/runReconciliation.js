@@ -1671,9 +1671,16 @@ async function persistResults(results, jobId = 'UNKNOWN', job = {}, params = {})
           if (bankResult.rows.length > 0) {
             const bankId = bankResult.rows[0].id;
             
-            // Skip sp_v2_recon_matches for now - schema incompatibility
-            // (expects UUID foreign keys but sp_v2_transactions has BIGINT id)
-            // Transaction status is already set to RECONCILED above, which is sufficient
+            // NOTE: sp_v2_recon_matches insertion skipped due to schema design difference
+            // - sp_v2_recon_matches (V1 schema): expects UUID FKs to sp_v2_settlement_items & sp_v2_utr_credits
+            // - Current workflow (V2): uses sp_v2_transactions (BIGINT id) & sp_v2_bank_statements (BIGINT id)
+            //
+            // Audit trail maintained via:
+            // 1. Transaction status = 'RECONCILED' (line 1598 above)
+            // 2. Bank statement metadata includes reconciliation details
+            // 3. Settlement items table links transactions to batches (separate workflow)
+            //
+            // Future enhancement: Create sp_v2_recon_audit table with BIGINT FKs for V2 schema
             console.log('[Persistence] Matched transaction and bank statement saved (IDs:', txnId, bankId, ')');
           }
         }
