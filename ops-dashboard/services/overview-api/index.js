@@ -1485,15 +1485,61 @@ app.get('/api/analytics/failure-reasons', async (req, res) => {
 // ===== Analytics KPIs V2 - CONNECTED TO V2 DATABASE =====
 app.get('/api/analytics/kpis-v2', async (req, res) => {
   const { from, to, merchantId, acquirerId, mode } = req.query;
-  
+
   try {
     console.log(`[Analytics KPIs V2] ✅ Using V2 Database - from=${from}, to=${to}, merchantId=${merchantId}, acquirerId=${acquirerId}, mode=${mode}`);
-    
+
     const data = await analyticsV2DB.getSettlementKpis({ from, to, merchantId, acquirerId, mode });
     res.json(data);
   } catch (error) {
     console.error('[Analytics KPIs V2] ❌ Database Error:', error.message);
     res.status(500).json({ error: error.message });
+  }
+});
+
+// ===== Financial Analytics - COFOUNDER METRICS =====
+app.get('/api/analytics/financial', async (req, res) => {
+  const { from, to, merchantId, groupBy } = req.query;
+
+  try {
+    // Validate required parameters
+    if (!from || !to) {
+      return res.status(400).json({
+        error: 'Missing required parameters',
+        message: 'Both "from" and "to" date parameters are required (YYYY-MM-DD format)'
+      });
+    }
+
+    // Validate date format
+    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+    if (!dateRegex.test(from) || !dateRegex.test(to)) {
+      return res.status(400).json({
+        error: 'Invalid date format',
+        message: 'Dates must be in YYYY-MM-DD format'
+      });
+    }
+
+    // Validate groupBy if provided
+    if (groupBy && !['day', 'week', 'month'].includes(groupBy)) {
+      return res.status(400).json({
+        error: 'Invalid groupBy parameter',
+        message: 'groupBy must be one of: day, week, month'
+      });
+    }
+
+    console.log(`[Financial Analytics] ✅ Request: from=${from}, to=${to}, merchantId=${merchantId || 'ALL'}, groupBy=${groupBy || 'none'}`);
+
+    const analytics = await realDB.getFinancialAnalytics(from, to, merchantId, groupBy);
+
+    console.log(`[Financial Analytics] ✅ Response: GMV=${analytics.summary.gmv.formatted}, Revenue=${analytics.summary.settlepaisaRevenue.formatted}, Margin=${analytics.summary.grossMarginPercent}%`);
+
+    res.json(analytics);
+  } catch (error) {
+    console.error('[Financial Analytics] ❌ Error:', error.message);
+    res.status(500).json({
+      error: 'Internal server error',
+      message: error.message
+    });
   }
 });
 

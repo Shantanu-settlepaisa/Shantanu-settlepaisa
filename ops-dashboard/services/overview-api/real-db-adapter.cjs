@@ -433,6 +433,176 @@ async function checkDatabaseConnection() {
 }
 
 /**
+ * Get financial analytics data from settlement batches
+ * @param {string} from - Start date (YYYY-MM-DD)
+ * @param {string} to - End date (YYYY-MM-DD)
+ * @param {string} merchantId - Optional merchant filter
+ * @param {string} groupBy - Optional grouping: 'day' | 'week' | 'month'
+ * @returns {Promise<Object>} Financial analytics with summary and trends
+ */
+async function getFinancialAnalytics(from, to, merchantId = null, groupBy = null) {
+  const client = await pool.connect();
+
+  try {
+    console.log(`[Real DB] Fetching financial analytics from ${from} to ${to}, merchantId=${merchantId}, groupBy=${groupBy}`);
+
+    // Build summary query
+    const summaryQuery = `
+      SELECT
+        SUM(gross_amount_paise) as total_gmv,
+        SUM(total_commission_paise) as total_mdr,
+        SUM(total_bank_charges_paise) as total_bank_charges,
+        SUM(settlepaisa_revenue_paise) as total_revenue,
+        SUM(net_amount_paise) as total_net_settled,
+        SUM(total_transactions) as total_txn_count,
+        COUNT(DISTINCT merchant_id) as merchant_count,
+        COUNT(*) as batch_count,
+        (SUM(settlepaisa_revenue_paise)::FLOAT /
+         NULLIF(SUM(total_commission_paise), 0) * 100) as margin_percent
+      FROM sp_v2_settlement_batches
+      WHERE cycle_date BETWEEN $1 AND $2
+        AND ($3::VARCHAR IS NULL OR merchant_id = $3)
+        AND status IN ('COMPLETED', 'SENT_TO_BANK', 'APPROVED', 'PENDING_APPROVAL')
+    `;
+
+    const summaryResult = await client.query(summaryQuery, [from, to, merchantId]);
+    const summary = summaryResult.rows[0];
+
+    // Calculate period info
+    const fromDate = new Date(from);
+    const toDate = new Date(to);
+    const daysDiff = Math.ceil((toDate - fromDate) / (1000 * 60 * 60 * 24)) + 1;
+
+    // Build response
+    const response = {
+      period: {
+        from,
+        to,
+        days: daysDiff
+      },
+      summary: {
+        gmv: {
+          paise: summary.total_gmv?.toString() || '0',
+          rupees: parseFloat((BigInt(summary.total_gmv || 0) / BigInt(100)).toString()),
+          formatted: formatCurrency(summary.total_gmv || 0)
+        },
+        mdrCollected: {
+          paise: summary.total_mdr?.toString() || '0',
+          rupees: parseFloat((BigInt(summary.total_mdr || 0) / BigInt(100)).toString()),
+          formatted: formatCurrency(summary.total_mdr || 0)
+        },
+        bankChargesPaid: {
+          paise: summary.total_bank_charges?.toString() || '0',
+          rupees: parseFloat((BigInt(summary.total_bank_charges || 0) / BigInt(100)).toString()),
+          formatted: formatCurrency(summary.total_bank_charges || 0)
+        },
+        settlepaisaRevenue: {
+          paise: summary.total_revenue?.toString() || '0',
+          rupees: parseFloat((BigInt(summary.total_revenue || 0) / BigInt(100)).toString()),
+          formatted: formatCurrency(summary.total_revenue || 0)
+        },
+        grossMarginPercent: parseFloat((summary.margin_percent || 0).toFixed(2)),
+        netSettled: {
+          paise: summary.total_net_settled?.toString() || '0',
+          rupees: parseFloat((BigInt(summary.total_net_settled || 0) / BigInt(100)).toString()),
+          formatted: formatCurrency(summary.total_net_settled || 0)
+        },
+        transactionCount: parseInt(summary.total_txn_count) || 0,
+        merchantCount: parseInt(summary.merchant_count) || 0,
+        batchCount: parseInt(summary.batch_count) || 0,
+        avgTransactionValue: {
+          paise: summary.total_txn_count > 0
+            ? Math.round(parseInt(summary.total_gmv || 0) / parseInt(summary.total_txn_count)).toString()
+            : '0',
+          rupees: summary.total_txn_count > 0
+            ? parseFloat((parseInt(summary.total_gmv || 0) / parseInt(summary.total_txn_count) / 100).toFixed(2))
+            : 0
+        }
+      }
+    };
+
+    // Add trends if groupBy is specified
+    if (groupBy) {
+      let dateGroup;
+      switch (groupBy) {
+        case 'day':
+          dateGroup = 'cycle_date';
+          break;
+        case 'week':
+          dateGroup = "DATE_TRUNC('week', cycle_date)::date";
+          break;
+        case 'month':
+          dateGroup = "DATE_TRUNC('month', cycle_date)::date";
+          break;
+        default:
+          dateGroup = 'cycle_date';
+      }
+
+      const trendQuery = `
+        SELECT
+          ${dateGroup} as date,
+          SUM(gross_amount_paise) as gmv,
+          SUM(total_commission_paise) as mdr,
+          SUM(total_bank_charges_paise) as bank_charges,
+          SUM(settlepaisa_revenue_paise) as revenue,
+          SUM(net_amount_paise) as net_settled,
+          SUM(total_transactions) as txn_count,
+          (SUM(settlepaisa_revenue_paise)::FLOAT /
+           NULLIF(SUM(total_commission_paise), 0) * 100) as margin_percent
+        FROM sp_v2_settlement_batches
+        WHERE cycle_date BETWEEN $1 AND $2
+          AND ($3::VARCHAR IS NULL OR merchant_id = $3)
+          AND status IN ('COMPLETED', 'SENT_TO_BANK', 'APPROVED', 'PENDING_APPROVAL')
+        GROUP BY ${dateGroup}
+        ORDER BY date ASC
+      `;
+
+      const trendResult = await client.query(trendQuery, [from, to, merchantId]);
+
+      response.trends = trendResult.rows.map(row => ({
+        date: row.date,
+        gmv: row.gmv?.toString() || '0',
+        mdr: row.mdr?.toString() || '0',
+        bankCharges: row.bank_charges?.toString() || '0',
+        revenue: row.revenue?.toString() || '0',
+        netSettled: row.net_settled?.toString() || '0',
+        txnCount: parseInt(row.txn_count) || 0,
+        marginPercent: parseFloat((row.margin_percent || 0).toFixed(2))
+      }));
+    }
+
+    console.log(`[Real DB] Financial analytics: GMV=${formatCurrency(summary.total_gmv || 0)}, Revenue=${formatCurrency(summary.total_revenue || 0)}, Margin=${(summary.margin_percent || 0).toFixed(1)}%`);
+
+    return response;
+  } catch (error) {
+    console.error('[Real DB] Error fetching financial analytics:', error.message);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Format currency amount in paise to human-readable string
+ * @param {number|string} paise - Amount in paise
+ * @returns {string} Formatted currency (e.g., "₹1.50 Cr", "₹45.00 L")
+ */
+function formatCurrency(paise) {
+  const amount = parseInt(paise) || 0;
+  const rupees = amount / 100;
+
+  if (rupees >= 10000000) {
+    return `₹${(rupees / 10000000).toFixed(2)} Cr`;
+  } else if (rupees >= 100000) {
+    return `₹${(rupees / 100000).toFixed(2)} L`;
+  } else if (rupees >= 1000) {
+    return `₹${(rupees / 1000).toFixed(2)} K`;
+  } else {
+    return `₹${rupees.toFixed(2)}`;
+  }
+}
+
+/**
  * Get database pool for direct queries (used by auth system)
  */
 async function getDbPool() {
@@ -445,6 +615,7 @@ module.exports = {
   getExceptionSeverityFromDatabase,
   getTopExceptionReasonsFromDatabase,
   getSourceBreakdownFromDatabase,
+  getFinancialAnalytics,
   checkDatabaseConnection,
   getDbPool
 };

@@ -26,6 +26,7 @@ const Settlements = lazy(() => import('./pages/ops/Settlements'))
 const SettlementApprove = lazy(() => import('./pages/ops/SettlementApprove'))
 const Exceptions = lazy(() => import('./pages/ops/Exceptions'))
 const Analytics = lazy(() => import('./pages/ops/AnalyticsV3'))
+const FinancialDashboard = lazy(() => import('./pages/ops/FinancialDashboard'))
 const Settings = lazy(() => import('./pages/ops/Settings'))
 const Users = lazy(() => import('./pages/ops/Users'))
 const Connectors = lazy(() => import('./pages/ops/Connectors'))
@@ -126,6 +127,10 @@ if (ENABLE_OPS_DASHBOARD) {
       {
         path: 'analytics',
         element: <Analytics />,
+      },
+      {
+        path: 'financial',
+        element: <FinancialDashboard />,
       },
       {
         path: 'users',
