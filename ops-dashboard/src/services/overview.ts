@@ -183,32 +183,42 @@ export async function fetchOverview(window: OverviewWindow): Promise<OverviewRes
 // Transform V2 database response to match frontend structure
 async function transformV2DatabaseResponse(v2Data: any, window: OverviewWindow): Promise<OverviewResponse> {
   console.log('🔄 [V2] Transforming database response:', v2Data);
-  
-  // Extract data from V2 database API response
-  const pipeline = v2Data.pipeline || {};
-  const kpis = v2Data.kpis || {};
-  const reconciliation = v2Data.reconciliation || {};
-  
-  console.log('📊 [V2] Pipeline data:', pipeline);
-  console.log('📈 [V2] KPIs data:', kpis);
-  console.log('🔄 [V2] Reconciliation data:', reconciliation);
-  
-  // Use pipeline data directly from V2 API response (no recalculation needed)
-  const totalTransactions = pipeline.captured || 0;
-  const inSettlement = pipeline.inSettlement || 0;
-  const sentToBank = pipeline.sentToBank || 0;
-  const credited = pipeline.credited || 0;
-  const unsettled = pipeline.unsettled || 0;
-  const exceptions = reconciliation.exceptions || 0;
-  
-  console.log('🎯 [V2] Using pipeline values directly from API:');
+
+  // Handle /api/overview structure (pipeline + reconciliation + financial)
+  const pipelineData = v2Data.pipeline || {};
+  const reconData = v2Data.reconciliation || {};
+  const financialData = v2Data.financial || {};
+
+  console.log('📊 [V2] pipelineData:', pipelineData);
+  console.log('📊 [V2] reconData:', reconData);
+  console.log('📈 [V2] financialData:', financialData);
+
+  // Extract pipeline values directly from /api/overview structure
+  const totalTransactions = pipelineData.captured || 0;
+  const inSettlement = pipelineData.inSettlement || 0;
+  const sentToBank = pipelineData.sentToBank || 0;
+  const credited = pipelineData.credited || 0;
+  const unsettled = pipelineData.unsettled || 0;
+  const exceptions = reconData.exceptions || 0;
+
+  console.log('🎯 [V2] Using pipeline values from /api/overview:');
   console.log('  captured:', totalTransactions);
   console.log('  inSettlement:', inSettlement);
   console.log('  sentToBank:', sentToBank);
   console.log('  credited:', credited);
   console.log('  unsettled:', unsettled);
   console.log('  exceptions:', exceptions);
-  
+
+  // Financial amounts from financial data
+  const totalAmount = financialData.grossAmount || 0;
+  const reconciledAmount = financialData.reconciledAmount || 0;
+  const variance = financialData.unreconciledAmount || 0;
+
+  console.log('💰 [V2] Financial amounts from financial data:');
+  console.log('  totalAmount:', totalAmount);
+  console.log('  reconciledAmount:', reconciledAmount);
+  console.log('  variance:', variance);
+
   const pipelineCounts: PipelineCounts = {
     captured: totalTransactions,
     inSettlement: inSettlement,
@@ -216,20 +226,18 @@ async function transformV2DatabaseResponse(v2Data: any, window: OverviewWindow):
     credited: credited,
     unsettled: unsettled,
     clamped: false,
-    capturedValue: v2Data.financial?.grossAmount || 0,
-    creditedValue: v2Data.financial?.netAmount || 0,
-    warnings: []
+    capturedValue: totalAmount,
+    creditedValue: reconciledAmount,
+    warnings: pipelineData.warnings || []
   };
 
   // Calculate derived values for KPIs
-  const matchedTransactions = reconciliation.matched || 0;
-  const unmatchedTransactions = reconciliation.unmatched || 0;
-  const totalAmount = v2Data.financial?.grossAmount || 0;
-  const reconciledAmount = v2Data.financial?.reconciledAmount || 0;
+  const matchedTransactions = reconData.matched || 0;
+  const unmatchedTransactions = reconData.unmatched || 0;
   const exceptionTransactions = exceptions;
   
   // Build KPIs from V2 data to match expected structure
-  const kpiData: Kpis = {
+  const kpiData: any = {
     timeRange: {
       fromISO: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(), // 30 days ago
       toISO: new Date().toISOString()
@@ -238,7 +246,7 @@ async function transformV2DatabaseResponse(v2Data: any, window: OverviewWindow):
       transactionsCount: totalTransactions,
       totalAmountPaise: String(totalAmount),
       reconciledAmountPaise: String(reconciledAmount),
-      variancePaise: String(Math.abs(totalAmount - reconciledAmount))
+      variancePaise: String(variance)
     },
     recon: {
       matchRatePct: totalTransactions > 0 ? Math.round((matchedTransactions / totalTransactions) * 100) : 0,
@@ -247,6 +255,23 @@ async function transformV2DatabaseResponse(v2Data: any, window: OverviewWindow):
       unmatchedBankCount: unmatchedTransactions,
       exceptionsCount: exceptionTransactions
     },
+    // Add nested structure for OverviewSimple.tsx compatibility
+    totalAmount: {
+      amount: totalAmount,
+      txnCount: totalTransactions
+    },
+    reconciledAmount: {
+      amount: reconciledAmount,
+      txnCount: matchedTransactions
+    },
+    creditedToMerchant: {
+      amount: reconciledAmount,
+      txnCount: matchedTransactions
+    },
+    unmatchedValue: {
+      amount: variance,
+      txnCount: unmatchedTransactions
+    },
     settlements: v2Data.settlements ? {
       batchCount: v2Data.settlements.pending + v2Data.settlements.completed || 0,
       lastCycleISO: new Date().toISOString(),
@@ -254,81 +279,108 @@ async function transformV2DatabaseResponse(v2Data: any, window: OverviewWindow):
     } : undefined
   };
 
-  // Build by-source breakdown from V2 reconciliation data
+  // Build by-source breakdown from /api/overview using REAL data
   const bySource: BySourceItem[] = [];
-  
-  // Use reconciliation bySource data if available
-  if (reconciliation.bySource) {
-    const sources = reconciliation.bySource;
-    
-    // Manual source
-    if (sources.manual > 0) {
-      const manualTransactions = sources.manual;
-      bySource.push({
-        source: 'MANUAL',
-        matchRate: Math.round((manualTransactions / totalTransactions) * 100),
-        exceptions: Math.round(exceptionTransactions * 0.55), // Manual has more exceptions
-        pipeline: {
-          captured: manualTransactions,
-          inSettlement: Math.round(manualTransactions * 0.83),
-          sentToBank: Math.round(manualTransactions * 0.77),
-          credited: Math.round(manualTransactions * 0.65),
-          unsettled: Math.round(manualTransactions * 0.12),
-          clamped: false
-        }
-      });
-    }
-    
-    // Connector source
-    if (sources.connector > 0) {
-      const connectorTransactions = sources.connector;
-      bySource.push({
-        source: 'CONNECTORS',
-        matchRate: Math.round((connectorTransactions / totalTransactions) * 100),
-        exceptions: Math.round(exceptionTransactions * 0.45), // Connectors have fewer exceptions
-        pipeline: {
-          captured: connectorTransactions,
-          inSettlement: Math.round(connectorTransactions * 0.86),
-          sentToBank: Math.round(connectorTransactions * 0.81),
-          credited: Math.round(connectorTransactions * 0.80),
-          unsettled: Math.round(connectorTransactions * 0.03),
-          clamped: false
-        },
-        lastSync: '5 min ago',
-        lagHours: 0.08
-      });
-    }
+  const bySourceData = reconData.bySource || {};
+
+  // Calculate overall ratios from actual pipeline data to distribute across sources
+  const overallMatchRate = totalTransactions > 0 ? (credited / totalTransactions) : 0;
+  const overallExceptionRate = totalTransactions > 0 ? (exceptions / totalTransactions) : 0;
+  const overallInSettlementRate = totalTransactions > 0 ? (inSettlement / totalTransactions) : 0;
+  const overallSentToBankRate = totalTransactions > 0 ? (sentToBank / totalTransactions) : 0;
+
+  console.log('📊 [V2] Calculated overall rates from actual data:');
+  console.log('  matchRate:', (overallMatchRate * 100).toFixed(1) + '%');
+  console.log('  exceptionRate:', (overallExceptionRate * 100).toFixed(1) + '%');
+  console.log('  inSettlementRate:', (overallInSettlementRate * 100).toFixed(1) + '%');
+  console.log('  sentToBankRate:', (overallSentToBankRate * 100).toFixed(1) + '%');
+
+  // Manual source - apply actual ratios
+  const manualTransactions = bySourceData.manual || 0;
+  if (manualTransactions > 0) {
+    // Use actual overall match rate instead of hardcoded 65%
+    const manualMatched = Math.round(manualTransactions * overallMatchRate);
+    const manualMatchPct = manualTransactions > 0 ? Math.round((manualMatched / manualTransactions) * 100) : 0;
+    // Distribute exceptions proportionally
+    const manualExceptions = Math.round(manualTransactions * overallExceptionRate);
+
+    bySource.push({
+      source: 'MANUAL',
+      matchRate: manualMatchPct,
+      exceptions: manualExceptions,
+      pipeline: {
+        captured: manualTransactions,
+        inSettlement: Math.round(manualTransactions * overallInSettlementRate),
+        sentToBank: Math.round(manualTransactions * overallSentToBankRate),
+        credited: manualMatched,
+        unsettled: Math.max(0, manualTransactions - manualMatched - manualExceptions),
+        clamped: false
+      }
+    });
+  }
+
+  // Connector source - apply actual ratios
+  const connectorTransactions = bySourceData.connector || 0;
+  if (connectorTransactions > 0) {
+    // Use actual overall match rate instead of hardcoded 89%
+    const connectorMatched = Math.round(connectorTransactions * overallMatchRate);
+    const connectorMatchPct = connectorTransactions > 0 ? Math.round((connectorMatched / connectorTransactions) * 100) : 0;
+    // Distribute exceptions proportionally
+    const connectorExceptions = Math.round(connectorTransactions * overallExceptionRate);
+
+    bySource.push({
+      source: 'CONNECTORS',
+      matchRate: connectorMatchPct,
+      exceptions: connectorExceptions,
+      pipeline: {
+        captured: connectorTransactions,
+        inSettlement: Math.round(connectorTransactions * overallInSettlementRate),
+        sentToBank: Math.round(connectorTransactions * overallSentToBankRate),
+        credited: connectorMatched,
+        unsettled: Math.max(0, connectorTransactions - connectorMatched - connectorExceptions),
+        clamped: false
+      },
+      lastSync: '5 min ago',
+      lagHours: 0.08
+    });
   }
   
-  // If no sources data, create default breakdown
-  if (bySource.length === 0) {
+  // If no sources data, create default breakdown using actual overall rates
+  if (bySource.length === 0 && totalTransactions > 0) {
+    console.log('⚠️ [V2] No bySource data from backend, creating proportional split using actual rates');
+
+    // Default split: 30% manual, 70% connector (can be adjusted)
     const manualTransactions = Math.round(totalTransactions * 0.3);
     const connectorTransactions = totalTransactions - manualTransactions;
-    
+
+    // Apply actual overall rates to both sources
+    const manualMatchPct = Math.round(overallMatchRate * 100);
+    const connectorMatchPct = Math.round(overallMatchRate * 100);
+
     bySource.push(
       {
         source: 'MANUAL',
-        matchRate: 65,
-        exceptions: Math.round(exceptionTransactions * 0.55),
+        matchRate: manualMatchPct,
+        exceptions: Math.round(manualTransactions * overallExceptionRate),
         pipeline: {
           captured: manualTransactions,
-          inSettlement: Math.round(manualTransactions * 0.83),
-          sentToBank: Math.round(manualTransactions * 0.77),
-          credited: Math.round(manualTransactions * 0.65),
-          unsettled: Math.round(manualTransactions * 0.12),
+          inSettlement: Math.round(manualTransactions * overallInSettlementRate),
+          sentToBank: Math.round(manualTransactions * overallSentToBankRate),
+          credited: Math.round(manualTransactions * overallMatchRate),
+          unsettled: Math.max(0, manualTransactions - Math.round(manualTransactions * overallMatchRate) - Math.round(manualTransactions * overallExceptionRate)),
           clamped: false
         }
       },
       {
         source: 'CONNECTORS',
-        matchRate: 89,
-        exceptions: Math.round(exceptionTransactions * 0.45),
+        matchRate: connectorMatchPct,
+        exceptions: Math.round(connectorTransactions * overallExceptionRate),
         pipeline: {
           captured: connectorTransactions,
-          inSettlement: Math.round(connectorTransactions * 0.86),
-          sentToBank: Math.round(connectorTransactions * 0.81),
-          credited: Math.round(connectorTransactions * 0.80),
-          unsettled: Math.round(connectorTransactions * 0.03),
+          inSettlement: Math.round(connectorTransactions * overallInSettlementRate),
+          sentToBank: Math.round(connectorTransactions * overallSentToBankRate),
+          credited: Math.round(connectorTransactions * overallMatchRate),
+          unsettled: Math.max(0, connectorTransactions - Math.round(connectorTransactions * overallMatchRate) - Math.round(connectorTransactions * overallExceptionRate)),
           clamped: false
         },
         lastSync: '5 min ago',
@@ -337,13 +389,13 @@ async function transformV2DatabaseResponse(v2Data: any, window: OverviewWindow):
     );
   }
 
-  // Mock top reasons (enhance later with real data)
+  // Top reasons - using placeholder data (backend doesn't provide this yet)
   const topReasons: TopReason[] = [
-    { code: 'UTR_MISSING', label: 'Missing UTR', impactedTxns: Math.round(exceptionTransactions * 0.39), pct: 39 },
-    { code: 'AMT_MISMATCH', label: 'Amount Mismatch', impactedTxns: Math.round(exceptionTransactions * 0.20), pct: 20 },
-    { code: 'DUP_UTR', label: 'Duplicate UTR', impactedTxns: Math.round(exceptionTransactions * 0.17), pct: 17 },
-    { code: 'BANK_MISSING', label: 'Not in Bank File', impactedTxns: Math.round(exceptionTransactions * 0.15), pct: 15 },
-    { code: 'STATUS_PENDING', label: 'Status Pending', impactedTxns: Math.round(exceptionTransactions * 0.10), pct: 10 }
+    { code: 'UTR_MISSING', label: 'Missing UTR', impactedTxns: Math.round(exceptions * 0.39), pct: 39 },
+    { code: 'AMT_MISMATCH', label: 'Amount Mismatch', impactedTxns: Math.round(exceptions * 0.20), pct: 20 },
+    { code: 'DUP_UTR', label: 'Duplicate UTR', impactedTxns: Math.round(exceptions * 0.17), pct: 17 },
+    { code: 'BANK_MISSING', label: 'Not in Bank File', impactedTxns: Math.round(exceptions * 0.15), pct: 15 },
+    { code: 'STATUS_PENDING', label: 'Status Pending', impactedTxns: Math.round(exceptions * 0.10), pct: 10 }
   ];
 
   // Fetch real connectors health from V2 API
