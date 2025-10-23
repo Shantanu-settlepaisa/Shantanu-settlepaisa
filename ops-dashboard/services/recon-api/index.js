@@ -19,6 +19,10 @@ const connectorsRoutes = require('./routes/connectors')
 const isDev = process.env.NODE_ENV !== 'production'
 const log = (...args) => isDev && console.log(...args)
 
+// Environment-driven API URLs for inter-service communication
+const PG_API_URL = process.env.PG_API_URL || 'http://localhost:5101';
+const BANK_API_URL = process.env.BANK_API_URL || 'http://localhost:5102';
+
 const app = express()
 app.use(cors())
 app.use(express.json())
@@ -128,13 +132,13 @@ app.get('/health', (req, res) => res.json({ status: 'ok', service: 'recon-api' }
 app.get('/connectors/pg/health', async (req, res) => {
   try {
     const startTime = Date.now()
-    const response = await axios.get('http://localhost:5101/health', { timeout: 3000 })
+    const response = await axios.get(`${PG_API_URL}/health`, { timeout: 3000 })
     const responseTime = Date.now() - startTime
-    
+
     res.json({
       status: 'healthy',
       connector: 'pg_api',
-      endpoint: 'http://localhost:5101',
+      endpoint: PG_API_URL,
       responseTime,
       lastChecked: new Date().toISOString(),
       details: response.data
@@ -144,7 +148,7 @@ app.get('/connectors/pg/health', async (req, res) => {
     res.status(503).json({
       status: 'unhealthy',
       connector: 'pg_api',
-      endpoint: 'http://localhost:5101',
+      endpoint: PG_API_URL,
       error: errorCode === 'ECONNREFUSED' 
         ? 'PG API service is not running or not accessible'
         : error.message,
@@ -214,7 +218,7 @@ app.post('/api/reconcile', async (req, res) => {
   
   try {
     // Fetch PG data
-    const pgResponse = await axios.get(`http://localhost:5101/api/pg/transactions?cycle=${cycleDate}`)
+    const pgResponse = await axios.get(`${PG_API_URL}/api/pg/transactions?cycle=${cycleDate}`)
     const pgData = pgResponse.data
     log('[Recon API] PG data fetched:', pgData.transactions?.length || 0, 'transactions')
     
@@ -223,14 +227,14 @@ app.post('/api/reconcile', async (req, res) => {
     
     if (bankSource.toLowerCase().includes('axis') || bankSource === 'api') {
       log('[Recon API] Fetching AXIS bank data...')
-      const bankResponse = await axios.get(`http://localhost:5102/api/bank/axis/recon?cycle=${cycleDate}`)
+      const bankResponse = await axios.get(`${BANK_API_URL}/api/bank/axis/recon?cycle=${cycleDate}`)
       bankData = bankResponse.data
       log('[Recon API] Bank data fetched:', bankData.records?.length || 0, 'records')
     } else if (bankSource.toLowerCase().includes('hdfc')) {
-      const bankResponse = await axios.get(`http://localhost:5102/api/bank/hdfc/recon?cycle=${cycleDate}`)
+      const bankResponse = await axios.get(`${BANK_API_URL}/api/bank/hdfc/recon?cycle=${cycleDate}`)
       bankData = bankResponse.data
     } else if (bankSource.toLowerCase().includes('icici')) {
-      const bankResponse = await axios.get(`http://localhost:5102/api/bank/icici/recon?cycle=${cycleDate}`)
+      const bankResponse = await axios.get(`${BANK_API_URL}/api/bank/icici/recon?cycle=${cycleDate}`)
       bankData = bankResponse.data
     }
     
@@ -274,7 +278,7 @@ app.get('/api/reconcile/:id', (req, res) => {
 // Test endpoint
 app.get('/api/test', async (req, res) => {
   try {
-    const bankResponse = await axios.get('http://localhost:5102/api/bank/axis/recon?cycle=2025-01-14')
+    const bankResponse = await axios.get(`${BANK_API_URL}/api/bank/axis/recon?cycle=2025-01-14`)
     res.json({
       success: true,
       records: bankResponse.data.records?.length || 0,

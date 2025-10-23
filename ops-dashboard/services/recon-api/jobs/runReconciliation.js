@@ -3,6 +3,10 @@ const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
 
+// Environment-driven API URLs for inter-service communication
+const PG_API_URL = process.env.PG_API_URL || 'http://localhost:5101';
+const BANK_API_URL = process.env.BANK_API_URL || 'http://localhost:5102';
+
 // In-memory job store (replace with DB in production)
 const jobs = new Map();
 const jobLogs = new Map();
@@ -11,7 +15,7 @@ const jobLogs = new Map();
 const ERROR_MAPPINGS = {
   'ECONNREFUSED': {
     code: 'PG_UNREACHABLE',
-    hint: 'PG API at http://localhost:5101 not reachable. Check service up & network/port.'
+    hint: `PG API at ${PG_API_URL} not reachable. Check service up & network/port.`
   },
   'ETIMEDOUT': {
     code: 'PG_TIMEOUT',
@@ -285,7 +289,7 @@ async function runReconciliation(params) {
     
     try {
       // Quick PG API health check
-      const pgHealthCheck = await axios.get('http://localhost:5101/api/pg/transactions', { 
+      const pgHealthCheck = await axios.get(`${PG_API_URL}/api/pg/transactions`, { 
         params: { cycle: params.date },
         timeout: 2000 
       }).catch(() => null);
@@ -670,7 +674,7 @@ async function fetchPGTransactions(params) {
   const { convertV1CSVToV2 } = require('../utils/v1-column-mapper');
   
   try {
-    const response = await axios.get(`http://localhost:5101/api/pg/transactions`, {
+    const response = await axios.get(`${PG_API_URL}/api/pg/transactions`, {
       params: { cycle: params.date },
       timeout: 5000
     });
@@ -706,7 +710,7 @@ async function fetchBankRecords(params) {
   const { convertV1CSVToV2 } = require('../utils/v1-column-mapper');
   
   try {
-    const response = await axios.get(`http://localhost:5102/api/bank/axis/recon`, {
+    const response = await axios.get(`${BANK_API_URL}/api/bank/axis/recon`, {
       params: { cycle: params.date },
       timeout: 5000
     });
