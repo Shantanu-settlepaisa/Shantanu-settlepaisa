@@ -12,7 +12,8 @@ import {
   User,
   Shield,
   Wallet,
-  Users
+  Users,
+  DollarSign
 } from 'lucide-react'
 import { useAuthStore } from '@/lib/auth'
 import { cn } from '@/lib/utils'
@@ -25,7 +26,7 @@ const navigation = [
   { name: 'Disputes', href: '/ops/disputes', icon: Shield },
   { name: 'Connectors', href: '/ops/connectors', icon: Cable },
   { name: 'Reports', href: '/ops/reports', icon: FileText },
-  { name: 'Analytics', href: '/ops/analytics', icon: BarChart3 },
+  { name: 'Financial', href: '/ops/financial', icon: DollarSign },
   { name: 'Users', href: '/ops/users', icon: Users, adminOnly: true },
   { name: 'Settings', href: '/ops/settings', icon: Settings },
 ]
