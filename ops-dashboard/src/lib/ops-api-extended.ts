@@ -2400,6 +2400,33 @@ export class OpsApiExtended {
     return snake
   }
 
+  // Helper to convert paise to rupees
+  private paiseToRupees(paise: string | number): number {
+    return Number(paise) / 100
+  }
+
+  // Transform settlement data from API format to frontend format
+  private formatSettlementForDisplay(settlement: any) {
+    return {
+      cycleDate: settlement.cycle_date?.split('T')[0] || '',
+      acquirer: settlement.acquirer_name || 'DEFAULT',
+      merchantName: settlement.merchant_name || settlement.merchant_id || '',
+      grossAmountRupees: this.paiseToRupees(settlement.gross_amount_paise || 0),
+      totalFeesRupees: this.paiseToRupees(settlement.total_commission_paise || 0),
+      gstRupees: this.paiseToRupees(settlement.total_gst_paise || 0),
+      totalPgChargesRupees: 0, // Not in current schema
+      rollingReserveRupees: this.paiseToRupees(settlement.total_reserve_paise || 0),
+      netAmountRupees: this.paiseToRupees(settlement.net_amount_paise || 0),
+      transactionCount: settlement.total_transactions || 0,
+      status: settlement.status || '',
+
+      // Task 7 deduction columns
+      refundDeductionsRupees: this.paiseToRupees(settlement.refund_deductions_paise || 0),
+      chargebackDeductionsRupees: this.paiseToRupees(settlement.chargeback_deductions_paise || 0),
+      debtRecoveredRupees: this.paiseToRupees(settlement.outstanding_debt_recovered_paise || 0)
+    }
+  }
+
   async getSettlementSummary(params?: {
     fromDate?: string
     toDate?: string
@@ -2412,8 +2439,14 @@ export class OpsApiExtended {
     const response = await fetch(url)
     if (!response.ok) throw new Error(`HTTP ${response.status}`)
     const json = await response.json()
+
+    // Transform each settlement to match frontend expectations
+    const transformedData = (json.settlements || []).map((s: any) =>
+      this.formatSettlementForDisplay(s)
+    )
+
     return {
-      data: json.settlements || [],
+      data: transformedData,
       rowCount: json.count || 0
     }
   }
