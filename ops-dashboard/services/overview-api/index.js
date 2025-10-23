@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 const axios = require('axios');
+const { Pool } = require('pg');
 const {
   createModeStackedEndpoint,
   createGmvTrendV2Endpoint,
@@ -24,6 +25,23 @@ const { authenticate, optionalAuth, opsStaffOnly, adminOnly } = require('./middl
 
 const app = express();
 const PORT = process.env.PORT || 5108;
+
+// Shared database pool for report endpoints
+const pool = new Pool({
+  user: process.env.DB_USER || 'postgres',
+  host: process.env.DB_HOST || 'localhost',
+  database: process.env.DB_NAME || 'settlepaisa_v2',
+  password: process.env.DB_PASSWORD || 'settlepaisa123',
+  port: parseInt(process.env.DB_PORT || '5432'),
+  max: 20,
+  min: 2,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 5000
+});
+
+pool.on('error', (err) => {
+  console.error('[Pool Error] Unexpected database error:', err);
+});
 
 app.use(cors());
 app.use(bodyParser.json());
@@ -62,6 +80,237 @@ app.use('/api/recon-rules', authenticate, require('./routes/recon-rules'));
 
 // Register settlement endpoints (protected)
 registerSettlementEndpoints(app);
+
+// ============================================================================
+// REPORT ENDPOINTS (Task 7 - Settlement Reports with Deduction Breakdown)
+// ============================================================================
+
+// Settlement Summary Report with refund/chargeback/debt deductions
+app.get('/api/reports/settlements', async (req, res) => {
+  try {
+    const { from_date, to_date, cycle_date, merchant_id } = req.query;
+
+    const client = await pool.connect();
+
+    let query = `
+      SELECT
+        sb.id,
+        sb.merchant_id,
+        sb.cycle_date,
+        sb.total_transactions,
+        sb.gross_amount_paise,
+        sb.total_commission_paise,
+        sb.total_gst_paise,
+        sb.total_tds_paise,
+        sb.total_reserve_paise,
+        sb.refund_deductions_paise,
+        sb.chargeback_deductions_paise,
+        sb.outstanding_debt_recovered_paise,
+        sb.net_amount_paise,
+        sb.status,
+        sb.created_at,
+        'DEFAULT' as acquirer_name,
+        CONCAT('Merchant ', sb.merchant_id) as merchant_name
+      FROM sp_v2_settlement_batches sb
+      WHERE 1=1
+    `;
+
+    const params = [];
+    let paramIndex = 1;
+
+    if (cycle_date) {
+      query += ` AND sb.cycle_date = $${paramIndex++}`;
+      params.push(cycle_date);
+    }
+
+    if (from_date) {
+      query += ` AND sb.cycle_date >= $${paramIndex++}`;
+      params.push(from_date);
+    }
+
+    if (to_date) {
+      query += ` AND sb.cycle_date <= $${paramIndex++}`;
+      params.push(to_date);
+    }
+
+    if (merchant_id) {
+      query += ` AND sb.merchant_id = $${paramIndex++}`;
+      params.push(merchant_id);
+    }
+
+    query += ` ORDER BY sb.cycle_date DESC, sb.created_at DESC`;
+
+    const result = await client.query(query, params);
+    client.release();
+
+    res.json({
+      success: true,
+      count: result.rows.length,
+      settlements: result.rows,
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error('❌ [Reports API] Settlement report error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// Bank MIS Report
+app.get('/api/reports/bank-mis', async (req, res) => {
+  try {
+    const { cycle_date, from_date, to_date } = req.query;
+
+    const client = await pool.connect();
+
+    let query = `
+      SELECT
+        t.id as transaction_id,
+        t.pgw_ref,
+        t.amount_paise as pg_amount_paise,
+        t.utr,
+        t.payment_mode,
+        t.status,
+        t.created_at::date as pg_date,
+        t.merchant_id,
+        c.amount_paise as bank_amount_paise,
+        c.credited_at::date as bank_date,
+        c.bank_reference,
+        c.acquirer,
+        CASE
+          WHEN rm.id IS NOT NULL THEN 'MATCHED'
+          ELSE 'UNMATCHED'
+        END as recon_status
+      FROM sp_v2_transactions t
+      LEFT JOIN sp_v2_utr_credits c ON t.utr = c.utr
+      LEFT JOIN sp_v2_settlement_items si ON t.id = si.txn_id
+      LEFT JOIN sp_v2_recon_matches rm ON si.id = rm.item_id
+      WHERE t.status = 'RECONCILED'
+    `;
+
+    const params = [];
+    let paramIndex = 1;
+
+    if (cycle_date) {
+      query += ` AND t.created_at::date = $${paramIndex++}`;
+      params.push(cycle_date);
+    }
+
+    if (from_date) {
+      query += ` AND t.created_at::date >= $${paramIndex++}`;
+      params.push(from_date);
+    }
+
+    if (to_date) {
+      query += ` AND t.created_at::date <= $${paramIndex++}`;
+      params.push(to_date);
+    }
+
+    query += ` ORDER BY t.created_at DESC LIMIT 1000`;
+
+    const result = await client.query(query, params);
+    client.release();
+
+    res.json({
+      success: true,
+      count: result.rows.length,
+      records: result.rows,
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error('❌ [Reports API] Bank MIS report error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// Reconciliation Outcome Report
+app.get('/api/reports/recon-outcome', async (req, res) => {
+  try {
+    const { cycle_date, from_date, to_date } = req.query;
+
+    const client = await pool.connect();
+
+    let query = `
+      SELECT
+        t.id as transaction_id,
+        t.pgw_ref,
+        t.amount_paise,
+        t.utr,
+        t.payment_mode,
+        t.created_at::date as recon_date,
+        t.merchant_id,
+        c.bank_reference,
+        c.acquirer,
+        CASE
+          WHEN rm.id IS NOT NULL THEN 'MATCHED'
+          WHEN t.status = 'FAILED' THEN 'FAILED'
+          ELSE 'PENDING'
+        END as status,
+        CASE
+          WHEN rm.id IS NULL AND t.status = 'SUCCESS' THEN 'UTR_MISSING'
+          WHEN t.status = 'FAILED' THEN 'TXN_FAILED'
+          ELSE NULL
+        END as exception_type,
+        'System generated' as comments
+      FROM sp_v2_transactions t
+      LEFT JOIN sp_v2_utr_credits c ON t.utr = c.utr
+      LEFT JOIN sp_v2_settlement_items si ON t.id = si.txn_id
+      LEFT JOIN sp_v2_recon_matches rm ON si.id = rm.item_id
+      WHERE 1=1
+    `;
+
+    const params = [];
+    let paramIndex = 1;
+
+    if (cycle_date) {
+      query += ` AND t.created_at::date = $${paramIndex++}`;
+      params.push(cycle_date);
+    }
+
+    if (from_date) {
+      query += ` AND t.created_at::date >= $${paramIndex++}`;
+      params.push(from_date);
+    }
+
+    if (to_date) {
+      query += ` AND t.created_at::date <= $${paramIndex++}`;
+      params.push(to_date);
+    }
+
+    query += ` ORDER BY t.created_at DESC LIMIT 1000`;
+
+    const result = await client.query(query, params);
+    client.release();
+
+    res.json({
+      success: true,
+      count: result.rows.length,
+      outcomes: result.rows,
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error('❌ [Reports API] Recon outcome report error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// ============================================================================
+// END REPORT ENDPOINTS
+// ============================================================================
 
 // Demo data generation for KPIs
 function generateKpiData(filters) {
