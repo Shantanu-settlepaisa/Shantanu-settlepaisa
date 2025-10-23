@@ -307,6 +307,95 @@ app.get('/api/reports/recon-outcome', async (req, res) => {
   }
 });
 
+// ===== Settlement Transactions Report =====
+app.get('/api/reports/settlement-transactions', async (req, res) => {
+  try {
+    const { cycle_date, from_date, to_date, merchant_id, batch_id, status } = req.query;
+
+    const client = await pool.connect();
+
+    let query = `
+      SELECT
+        si.transaction_id,
+        t.created_at as transaction_date,
+        sb.cycle_date,
+        sb.merchant_name,
+        si.payment_mode,
+        t.acquirer_code,
+        t.utr,
+        t.gateway_ref,
+        si.amount_paise,
+        si.commission_paise,
+        si.commission_rate,
+        si.commission_type,
+        si.gst_paise,
+        si.reserve_paise,
+        si.net_paise,
+        si.fee_bearer,
+        t.status as transaction_status,
+        si.settlement_batch_id,
+        sb.status as batch_status
+      FROM sp_v2_settlement_items si
+      JOIN sp_v2_settlement_batches sb ON si.settlement_batch_id = sb.id
+      LEFT JOIN sp_v2_transactions t ON si.transaction_id = t.transaction_id
+      WHERE 1=1
+    `;
+
+    const params = [];
+    let paramIndex = 1;
+
+    if (cycle_date) {
+      query += ` AND sb.cycle_date = $${paramIndex++}`;
+      params.push(cycle_date);
+    }
+
+    if (from_date) {
+      query += ` AND sb.cycle_date >= $${paramIndex++}`;
+      params.push(from_date);
+    }
+
+    if (to_date) {
+      query += ` AND sb.cycle_date <= $${paramIndex++}`;
+      params.push(to_date);
+    }
+
+    if (merchant_id) {
+      query += ` AND sb.merchant_id = $${paramIndex++}`;
+      params.push(merchant_id);
+    }
+
+    if (batch_id) {
+      query += ` AND si.settlement_batch_id = $${paramIndex++}`;
+      params.push(batch_id);
+    }
+
+    if (status) {
+      query += ` AND t.status = $${paramIndex++}`;
+      params.push(status);
+    }
+
+    query += ` ORDER BY sb.cycle_date DESC, si.transaction_id LIMIT 1000`;
+
+    const result = await client.query(query, params);
+    client.release();
+
+    res.json({
+      success: true,
+      count: result.rows.length,
+      transactions: result.rows,
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error('❌ [Reports API] Settlement transactions report error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
 // ============================================================================
 // END REPORT ENDPOINTS
 // ============================================================================

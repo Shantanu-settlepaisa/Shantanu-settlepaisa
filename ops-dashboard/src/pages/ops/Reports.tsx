@@ -132,7 +132,7 @@ export default function Reports() {
       case 'SETTLEMENT_SUMMARY':
         return ['Cycle Date', 'Acquirer', 'Merchant', 'Gross Amount', 'MDR+Fees', 'GST', 'PG Charges', 'Rolling Reserve', 'Net Settlement', 'Txn Count']
       case 'SETTLEMENT_TRANSACTIONS':
-        return ['Txn ID', 'Cycle Date', 'Merchant', 'Payment Mode', 'Gross Amount', 'MDR Fees', 'GST', 'PG Charges', 'Reserve', 'Net Settlement', 'Fee Bearer']
+        return ['Txn ID', 'Txn Date', 'Cycle Date', 'Merchant', 'Payment Mode', 'Acquirer', 'UTR', 'PG Ref', 'Gross Amount', 'MDR Fees', 'Rate %', 'GST', 'Reserve', 'Net Settlement', 'Fee Bearer', 'Status']
       case 'BANK_MIS':
         return ['Txn ID', 'UTR', 'PG Amount', 'Bank Amount', 'Delta', 'PG Date', 'Bank Date', 'Status', 'Acquirer', 'Merchant']
       case 'RECON_OUTCOME':
@@ -332,16 +332,21 @@ export default function Reports() {
                           {activeTab === 'SETTLEMENT_TRANSACTIONS' && (
                             <>
                               <TableCell className="font-mono text-xs">{row.txnId}</TableCell>
+                              <TableCell>{row.transactionDate}</TableCell>
                               <TableCell>{row.cycleDate}</TableCell>
                               <TableCell>{row.merchantName}</TableCell>
                               <TableCell>{row.paymentMode || '-'}</TableCell>
+                              <TableCell>{row.acquirer || '-'}</TableCell>
+                              <TableCell className="font-mono text-xs">{row.utr || '-'}</TableCell>
+                              <TableCell className="font-mono text-xs">{row.pgRefId || '-'}</TableCell>
                               <TableCell>{formatCellValue(row.grossAmountRupees, 'Gross Amount')}</TableCell>
                               <TableCell>{formatCellValue(row.mdrFeesRupees, 'MDR Fees')}</TableCell>
+                              <TableCell>{row.commissionRate || '-'}</TableCell>
                               <TableCell>{formatCellValue(row.gstRupees, 'GST')}</TableCell>
-                              <TableCell>{formatCellValue(row.totalPgChargesRupees, 'PG Charges')}</TableCell>
-                              <TableCell>{formatCellValue(row.rollingReserveRupees, 'Reserve')}</TableCell>
+                              <TableCell>{formatCellValue(row.reserveRupees, 'Reserve')}</TableCell>
                               <TableCell className="font-semibold">{formatCellValue(row.netSettlementRupees, 'Net Settlement')}</TableCell>
                               <TableCell>{row.feeBearer || '-'}</TableCell>
+                              <TableCell>{formatCellValue(row.status, 'Status')}</TableCell>
                             </>
                           )}
                           {activeTab === 'BANK_MIS' && (

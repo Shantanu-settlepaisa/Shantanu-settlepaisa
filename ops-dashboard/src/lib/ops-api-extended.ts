@@ -2461,6 +2461,31 @@ export class OpsApiExtended {
     }
   }
 
+  // Transform Settlement Transaction data from API format to frontend format
+  private formatSettlementTransactionForDisplay(txn: any) {
+    return {
+      txnId: txn.transaction_id || '',
+      transactionDate: txn.transaction_date?.split('T')[0] || '',
+      cycleDate: txn.cycle_date?.split('T')[0] || '',
+      merchantName: txn.merchant_name || '',
+      paymentMode: txn.payment_mode || '',
+      acquirer: txn.acquirer_code || '',
+      utr: txn.utr || '',
+      pgRefId: txn.gateway_ref || '',
+      grossAmountRupees: this.paiseToRupees(txn.amount_paise || 0),
+      mdrFeesRupees: this.paiseToRupees(txn.commission_paise || 0),
+      commissionRate: txn.commission_rate || '',
+      commissionType: txn.commission_type || '',
+      gstRupees: this.paiseToRupees(txn.gst_paise || 0),
+      reserveRupees: this.paiseToRupees(txn.reserve_paise || 0),
+      netSettlementRupees: this.paiseToRupees(txn.net_paise || 0),
+      feeBearer: txn.fee_bearer || '',
+      status: txn.transaction_status || '',
+      batchId: txn.settlement_batch_id || '',
+      batchStatus: txn.batch_status || ''
+    }
+  }
+
   async getSettlementSummary(params?: {
     fromDate?: string
     toDate?: string
@@ -2561,8 +2586,14 @@ export class OpsApiExtended {
     const response = await fetch(url)
     if (!response.ok) throw new Error(`HTTP ${response.status}`)
     const json = await response.json()
+
+    // Transform each transaction to match frontend expectations
+    const transformedData = (json.transactions || []).map((t: any) =>
+      this.formatSettlementTransactionForDisplay(t)
+    )
+
     return {
-      data: json.transactions || [],
+      data: transformedData,
       rowCount: json.count || 0
     }
   }
