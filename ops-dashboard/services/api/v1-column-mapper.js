@@ -169,41 +169,38 @@ function mapV1ToV2(v1Row, type = 'pg_transactions') {
   if (!mapping) {
     throw new Error(`Unknown mapping type: ${type}`)
   }
-
-  // Create a case-insensitive key lookup map
-  const keyLookup = {}
-  for (const key of Object.keys(v1Row)) {
-    keyLookup[key.toLowerCase()] = key
-  }
-
+  
   const v2Row = {}
-
+  
+  let mappedCount = 0;
   for (const [v1Col, v2Col] of Object.entries(mapping)) {
-    // Look up the actual key in a case-insensitive way
-    const actualKey = keyLookup[v1Col.toLowerCase()]
-
-    if (actualKey && v1Row[actualKey] !== undefined && v1Row[actualKey] !== '') {
-      let value = v1Row[actualKey]
-
-      // 🆕 Handle ALL _paise columns uniformly (amount, gross_amount, bank_fee, bank_gst, settlement_amount)
-      // Convert from rupees to paise: multiply by 100
-      const paiseColumns = [
-        'amount_paise',
-        'gross_amount_paise',
-        'bank_fee_paise',
-        'bank_gst_paise',
-        'settlement_amount_paise'
-      ];
-
-      if (paiseColumns.includes(v2Col)) {
-        if (typeof value === 'string') {
-          const numValue = parseFloat(value.replace(/,/g, ''))
-          if (!isNaN(numValue)) {
-            value = Math.round(numValue * 100)
-          }
-        } else if (typeof value === 'number') {
-          value = Math.round(value * 100)
+    const hasProperty = v1Row.hasOwnProperty(v1Col);
+    const notUndefined = v1Row[v1Col] !== undefined;
+    const notEmpty = v1Row[v1Col] !== '';
+    
+    if (hasProperty && notUndefined && notEmpty) {
+      mappedCount++;
+      let value = v1Row[v1Col]
+      
+      if (v2Col === 'amount_paise' && typeof value === 'string') {
+        const numValue = parseFloat(value.replace(/,/g, ''))
+        if (!isNaN(numValue)) {
+          // If value is already in paise (> 1000), don't multiply by 100
+          value = numValue > 1000 ? Math.round(numValue) : Math.round(numValue * 100)
         }
+      } else if (v2Col === 'amount_paise' && typeof value === 'number') {
+        // If value is already in paise (> 1000), don't multiply by 100
+        value = value > 1000 ? Math.round(value) : Math.round(value * 100)
+      }
+      
+      // Handle fee columns (V2.10.0)
+      if ((v2Col === 'bank_fee_paise' || v2Col === 'settlement_amount_paise') && typeof value === 'string') {
+        const numValue = parseFloat(value.replace(/,/g, ''))
+        if (!isNaN(numValue)) {
+          value = Math.round(numValue * 100)
+        }
+      } else if ((v2Col === 'bank_fee_paise' || v2Col === 'settlement_amount_paise') && typeof value === 'number') {
+        value = Math.round(value * 100)
       }
       
       if (v2Col === 'merchant_id') {
@@ -233,57 +230,55 @@ function mapV1ToV2(v1Row, type = 'pg_transactions') {
     }
   }
   
+  if (mappedCount === 0) {
+    console.warn('[V1 Mapper] No fields mapped! Input keys:', Object.keys(v1Row), 'Expected mappings:', Object.keys(mapping));
+  } else if (mappedCount < 3 && type === 'bank_statements') {
+    console.warn('[V1 Mapper] Only', mappedCount, 'fields mapped for bank statement. v2Row:', JSON.stringify(v2Row), 'from v1Row:', JSON.stringify(v1Row));
+  }
+  
   if (type === 'pg_transactions') {
-    // Use case-insensitive lookups for fallback logic
-    const transactionIdKey = keyLookup['transaction_id']
-    const clientCodeKey = keyLookup['client_code']
-    const paymentModeKey = keyLookup['payment_mode']
-    const pgPayModeKey = keyLookup['pg_pay_mode']
-    const pgNameKey = keyLookup['pg_name']
-    const clientNameKey = keyLookup['client_name']
-
-    if (!v2Row.transaction_id && transactionIdKey && v1Row[transactionIdKey]) {
-      v2Row.transaction_id = v1Row[transactionIdKey]
+    if (!v2Row.transaction_id && v1Row.transaction_id) {
+      v2Row.transaction_id = v1Row.transaction_id
     }
-
-    if (!v2Row.merchant_id && clientCodeKey && v1Row[clientCodeKey]) {
-      v2Row.merchant_id = String(v1Row[clientCodeKey]).trim().toUpperCase()
+    
+    if (!v2Row.merchant_id && v1Row.client_code) {
+      v2Row.merchant_id = String(v1Row.client_code).trim().toUpperCase()
     }
-
+    
     if (!v2Row.source_type) {
       v2Row.source_type = 'manual_upload'
     }
-
+    
     if (!v2Row.currency) {
       v2Row.currency = 'INR'
     }
-
+    
     // Enhanced: Parse payment_method correctly (not just copy payment_mode)
-    if (paymentModeKey && v1Row[paymentModeKey]) {
-      v2Row.payment_method = parsePaymentMethod(v1Row[paymentModeKey])
+    if (v1Row.payment_mode) {
+      v2Row.payment_method = parsePaymentMethod(v1Row.payment_mode)
     }
-
+    
     // Enhanced: Extract card_network from payment_mode
-    if (paymentModeKey && v1Row[paymentModeKey]) {
-      const cardNetwork = parseCardNetwork(v1Row[paymentModeKey])
+    if (v1Row.payment_mode) {
+      const cardNetwork = parseCardNetwork(v1Row.payment_mode)
       if (cardNetwork) {
         v2Row.card_network = cardNetwork
       }
     }
-
+    
     // Enhanced: Normalize acquirer_code from pg_pay_mode
-    if (pgPayModeKey && v1Row[pgPayModeKey]) {
-      v2Row.acquirer_code = normalizeAcquirerCode(v1Row[pgPayModeKey])
+    if (v1Row.pg_pay_mode) {
+      v2Row.acquirer_code = normalizeAcquirerCode(v1Row.pg_pay_mode)
     }
-
+    
     // Enhanced: Generate gateway_ref
-    if (pgNameKey && transactionIdKey && v1Row[pgNameKey] && v1Row[transactionIdKey]) {
-      v2Row.gateway_ref = generateGatewayRef(v1Row[pgNameKey], v1Row[transactionIdKey])
+    if (v1Row.pg_name && v1Row.transaction_id) {
+      v2Row.gateway_ref = generateGatewayRef(v1Row.pg_name, v1Row.transaction_id)
     }
-
+    
     // Enhanced: Add merchant_name from client_name
-    if (clientNameKey && v1Row[clientNameKey]) {
-      v2Row.merchant_name = v1Row[clientNameKey]
+    if (v1Row.client_name) {
+      v2Row.merchant_name = v1Row.client_name
     }
   }
   
@@ -310,7 +305,11 @@ function convertV1CSVToV2(csvData, type = 'pg_transactions') {
   
   return csvData.map((row, idx) => {
     try {
-      return mapV1ToV2(row, type)
+      const v2Row = mapV1ToV2(row, type);
+      if (idx === 0) {
+        console.log('[V1 Mapper] Row 0 conversion:', 'Input keys:', Object.keys(row), 'Output keys:', Object.keys(v2Row), 'Output:', JSON.stringify(v2Row));
+      }
+      return v2Row;
     } catch (error) {
       console.error(`[V1 Mapper] Error converting row ${idx}:`, error.message)
       throw error
