@@ -171,9 +171,9 @@ app.get('/api/reports/bank-mis', async (req, res) => {
         c.id as bank_statement_id,
         c.utr,
         c.amount_paise as bank_amount_paise,
-        c.credited_at::date as bank_date,
-        c.bank_reference,
-        c.acquirer,
+        c.transaction_date::date as bank_date,
+        c.bank_ref as bank_reference,
+        c.bank_name as acquirer,
         t.transaction_id,
         t.gateway_ref,
         t.amount_paise as pg_amount_paise,
@@ -193,7 +193,7 @@ app.get('/api/reports/bank-mis', async (req, res) => {
         ) as exception_reason_code,
         rr.exception_message,
         COALESCE(rr.variance_paise, (t.amount_paise - c.amount_paise)) as delta_paise
-      FROM sp_v2_utr_credits c
+      FROM sp_v2_bank_statements c
       LEFT JOIN sp_v2_transactions t ON c.utr = t.utr
       LEFT JOIN sp_v2_reconciliation_results rr ON c.id = rr.bank_statement_id
       WHERE 1=1
@@ -203,21 +203,21 @@ app.get('/api/reports/bank-mis', async (req, res) => {
     let paramIndex = 1;
 
     if (cycle_date) {
-      query += ` AND c.credited_at::date = $${paramIndex++}`;
+      query += ` AND c.transaction_date::date = $${paramIndex++}`;
       params.push(cycle_date);
     }
 
     if (from_date) {
-      query += ` AND c.credited_at::date >= $${paramIndex++}`;
+      query += ` AND c.transaction_date::date >= $${paramIndex++}`;
       params.push(from_date);
     }
 
     if (to_date) {
-      query += ` AND c.credited_at::date <= $${paramIndex++}`;
+      query += ` AND c.transaction_date::date <= $${paramIndex++}`;
       params.push(to_date);
     }
 
-    query += ` ORDER BY c.credited_at DESC LIMIT 1000`;
+    query += ` ORDER BY c.transaction_date DESC LIMIT 1000`;
 
     const result = await client.query(query, params);
     client.release();
@@ -255,8 +255,8 @@ app.get('/api/reports/recon-outcome', async (req, res) => {
         t.payment_mode,
         t.created_at::date as transaction_date,
         t.merchant_id,
-        c.bank_reference,
-        c.acquirer,
+        c.bank_ref as bank_reference,
+        c.bank_name as acquirer,
         c.amount_paise as bank_amount_paise,
         COALESCE(
           rr.match_status,
@@ -268,8 +268,8 @@ app.get('/api/reports/recon-outcome', async (req, res) => {
         rr.exception_reason_code as exception_type,
         COALESCE(rr.exception_message, 'System generated') as comments
       FROM sp_v2_transactions t
-      LEFT JOIN sp_v2_utr_credits c ON t.utr = c.utr
-      LEFT JOIN sp_v2_reconciliation_results rr ON t.id = rr.pg_transaction_id
+      LEFT JOIN sp_v2_bank_statements c ON t.utr = c.utr
+      LEFT JOIN sp_v2_reconciliation_results rr ON t.id::TEXT = rr.pg_transaction_id
       WHERE 1=1
     `;
 
