@@ -169,7 +169,7 @@ app.get('/api/reports/bank-mis', async (req, res) => {
     let query = `
       SELECT
         t.id as transaction_id,
-        t.pgw_ref,
+        t.gateway_ref,
         t.amount_paise as pg_amount_paise,
         t.utr,
         t.payment_mode,
@@ -186,7 +186,7 @@ app.get('/api/reports/bank-mis', async (req, res) => {
         END as recon_status
       FROM sp_v2_transactions t
       LEFT JOIN sp_v2_utr_credits c ON t.utr = c.utr
-      LEFT JOIN sp_v2_settlement_items si ON t.id = si.txn_id
+      LEFT JOIN sp_v2_settlement_items si ON t.transaction_id = si.transaction_id
       LEFT JOIN sp_v2_recon_matches rm ON si.id = rm.item_id
       WHERE t.status = 'RECONCILED'
     `;
@@ -241,7 +241,7 @@ app.get('/api/reports/recon-outcome', async (req, res) => {
     let query = `
       SELECT
         t.id as transaction_id,
-        t.pgw_ref,
+        t.gateway_ref,
         t.amount_paise,
         t.utr,
         t.payment_mode,
@@ -262,7 +262,7 @@ app.get('/api/reports/recon-outcome', async (req, res) => {
         'System generated' as comments
       FROM sp_v2_transactions t
       LEFT JOIN sp_v2_utr_credits c ON t.utr = c.utr
-      LEFT JOIN sp_v2_settlement_items si ON t.id = si.txn_id
+      LEFT JOIN sp_v2_settlement_items si ON t.transaction_id = si.transaction_id
       LEFT JOIN sp_v2_recon_matches rm ON si.id = rm.item_id
       WHERE 1=1
     `;
