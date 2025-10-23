@@ -65,7 +65,7 @@ function logStructured(jobId, level, message, data = {}) {
 function mapErrorToUserSafe(error) {
   const errorStr = error.toString();
   const errorCode = error.code || '';
-  
+
   // Check for known error patterns
   for (const [pattern, mapping] of Object.entries(ERROR_MAPPINGS)) {
     if (errorStr.includes(pattern) || errorCode === pattern) {
@@ -76,13 +76,117 @@ function mapErrorToUserSafe(error) {
       };
     }
   }
-  
+
   // Default error
   return {
     code: 'UNKNOWN_ERROR',
     message: error.message || 'An unexpected error occurred',
     hint: 'Please check the logs for more details or contact support.'
   };
+}
+
+// PRODUCTION SAFEGUARD: Database health check
+async function checkDatabaseHealth(jobId) {
+  const { Pool } = require('pg');
+  const pool = new Pool({
+    host: process.env.DB_HOST || 'localhost',
+    port: parseInt(process.env.DB_PORT || '5433'),
+    database: process.env.DB_NAME || 'settlepaisa_v2',
+    user: process.env.DB_USER || 'postgres',
+    password: process.env.DB_PASSWORD || 'settlepaisa123',
+    connectionTimeoutMillis: 5000
+  });
+
+  try {
+    logStructured(jobId, 'info', 'Running database health check');
+
+    const client = await pool.connect();
+
+    // Test 1: Connection works
+    await client.query('SELECT 1');
+    logStructured(jobId, 'info', 'Database connection: ✅ OK');
+
+    // Test 2: Check if sp_v2_reconciliation_jobs table exists
+    const tableCheck = await client.query(`
+      SELECT EXISTS (
+        SELECT FROM information_schema.tables
+        WHERE table_schema = 'public'
+        AND table_name = 'sp_v2_reconciliation_jobs'
+      );
+    `);
+
+    if (!tableCheck.rows[0].exists) {
+      client.release();
+      await pool.end();
+      throw new Error('DB_ERROR: Table sp_v2_reconciliation_jobs does not exist');
+    }
+    logStructured(jobId, 'info', 'Required tables: ✅ OK');
+
+    // Test 3: Test write permissions
+    try {
+      await client.query('BEGIN');
+      await client.query(`
+        INSERT INTO sp_v2_reconciliation_jobs (
+          job_id, job_name, date_from, date_to, status
+        ) VALUES ($1, $2, $3, $4, $5)
+      `, [
+        `healthcheck-${Date.now()}`,
+        'Health Check',
+        '2000-01-01',
+        '2000-01-01',
+        'PENDING'
+      ]);
+      await client.query('ROLLBACK');
+      logStructured(jobId, 'info', 'Database write permissions: ✅ OK');
+    } catch (writeError) {
+      await client.query('ROLLBACK');
+      client.release();
+      await pool.end();
+      throw new Error(`DB_ERROR: Database write test failed - ${writeError.message}`);
+    }
+
+    client.release();
+    await pool.end();
+
+    logStructured(jobId, 'info', 'Database health check: ✅ All checks passed');
+    return true;
+
+  } catch (error) {
+    await pool.end().catch(() => {});
+    logStructured(jobId, 'error', 'Database health check failed', {
+      error: error.message
+    });
+    throw error;
+  }
+}
+
+// PRODUCTION SAFEGUARD: Retry with exponential backoff
+async function retryWithBackoff(fn, maxRetries = 3, baseDelayMs = 100, context = 'operation') {
+  let lastError;
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+
+      // Don't retry certain errors
+      const nonRetryableErrors = ['SCHEMA_MISMATCH', 'VALIDATION_ERROR'];
+      if (nonRetryableErrors.some(code => error.message.includes(code))) {
+        throw error;
+      }
+
+      if (attempt < maxRetries) {
+        const delayMs = baseDelayMs * Math.pow(2, attempt - 1);
+        console.log(`[Retry] ${context} failed (attempt ${attempt}/${maxRetries}), retrying in ${delayMs}ms...`);
+        console.log(`[Retry] Error: ${error.message}`);
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+      }
+    }
+  }
+
+  console.error(`[Retry] ${context} failed after ${maxRetries} attempts`);
+  throw lastError;
 }
 
 async function runReconciliation(params) {
@@ -145,7 +249,15 @@ async function runReconciliation(params) {
   
   try {
     job.status = 'running';
-    
+
+    // Stage 0: Database Health Check (PRODUCTION SAFEGUARD)
+    job.stage = 'healthcheck';
+    try {
+      await checkDatabaseHealth(jobId);
+    } catch (healthError) {
+      throw new Error(`Database health check failed: ${healthError.message}`);
+    }
+
     // Stage 1: Validate inputs (Preflight checks)
     job.stage = 'validation';
     logStructured(jobId, 'info', 'Running preflight validators');
@@ -200,8 +312,14 @@ async function runReconciliation(params) {
       pgTransactions = params.pgTransactions;
       logStructured(jobId, 'info', `Using uploaded PG transactions: ${pgTransactions.length}`);
     } else {
-      pgTransactions = await fetchPGTransactions(params);
-      logStructured(jobId, 'info', `Fetched ${pgTransactions.length} PG transactions from API`);
+      // Try to fetch from database first (for manual uploads), then fall back to API
+      pgTransactions = await fetchPGFromDatabase(params, jobId);
+      if (pgTransactions.length === 0) {
+        pgTransactions = await fetchPGTransactions(params);
+        logStructured(jobId, 'info', `Fetched ${pgTransactions.length} PG transactions from API`);
+      } else {
+        logStructured(jobId, 'info', `Fetched ${pgTransactions.length} PG transactions from database`);
+      }
     }
     job.counters.pgFetched = pgTransactions.length;
     
@@ -216,8 +334,14 @@ async function runReconciliation(params) {
       bankFilename = params.bankFilename; // Pass filename for bank detection
       logStructured(jobId, 'info', `Using uploaded bank records: ${bankRecords.length}`, { filename: bankFilename });
     } else {
-      bankRecords = await fetchBankRecords(params);
-      logStructured(jobId, 'info', `Fetched ${bankRecords.length} bank records from API`);
+      // Try to fetch from database first (for manual uploads), then fall back to API
+      bankRecords = await fetchBankFromDatabase(params, jobId);
+      if (bankRecords.length === 0) {
+        bankRecords = await fetchBankRecords(params);
+        logStructured(jobId, 'info', `Fetched ${bankRecords.length} bank records from API`);
+      } else {
+        logStructured(jobId, 'info', `Fetched ${bankRecords.length} bank records from database`);
+      }
     }
     job.counters.bankFetched = bankRecords.length;
     
@@ -255,23 +379,29 @@ async function runReconciliation(params) {
     // Stage 6: Persist results (skip if dry run)
     if (!params.dryRun) {
       job.stage = 'persist';
-      logStructured(jobId, 'info', 'Persisting results');
+      logStructured(jobId, 'info', 'Persisting results to database');
       logStructured(jobId, 'info', 'About to call persistResults', {
         matchedCount: matchResult.matched.length,
         unmatchedPgCount: matchResult.unmatchedPg.length,
-        unmatchedBankCount: matchResult.unmatchedBank.length
+        unmatchedBankCount: matchResult.unmatchedBank.length,
+        exceptionsCount: matchResult.exceptions.length
       });
-      try {
-        await persistResults(matchResult, jobId, job, params);
-        logStructured(jobId, 'info', 'Persistence completed successfully');
-      } catch (persistError) {
-        logStructured(jobId, 'error', 'Persistence failed', {
-          error: persistError.message,
-          stack: persistError.stack
-        });
-        console.error('[Recon] Persistence failed:', persistError);
-        // Don't fail the whole job if persistence fails
-      }
+
+      // PRODUCTION FIX: Persistence is critical - fail job if it fails
+      // Use retry with exponential backoff for transient errors
+      await retryWithBackoff(
+        () => persistResults(matchResult, jobId, job, params),
+        3,
+        100,
+        `Persistence for job ${jobId}`
+      );
+
+      logStructured(jobId, 'info', 'Persistence completed successfully', {
+        jobId: jobId,
+        tablePersisted: 'sp_v2_reconciliation_jobs'
+      });
+    } else {
+      logStructured(jobId, 'info', 'Dry run mode - skipping persistence');
     }
     
     // Store results for settlement calculation
@@ -411,6 +541,125 @@ async function runReconciliation(params) {
   return job;
 }
 
+// Database fetch functions for manual uploads
+async function fetchPGFromDatabase(params, jobId) {
+  const { Pool } = require('pg');
+  const pool = new Pool({
+    user: 'postgres',
+    host: 'localhost',
+    database: 'settlepaisa_v2',
+    password: 'settlepaisa123',
+    port: 5433,
+  });
+
+  try {
+    const query = `
+      SELECT
+        transaction_id,
+        merchant_id,
+        amount_paise,
+        gross_amount_paise,
+        utr,
+        rrn,
+        payment_method,
+        transaction_date,
+        transaction_timestamp,
+        status,
+        source_type
+      FROM sp_v2_transactions
+      WHERE DATE(transaction_date) = $1
+        AND source_type = 'MANUAL_UPLOAD'
+        AND status = 'PENDING'
+      ORDER BY transaction_date
+    `;
+
+    const result = await pool.query(query, [params.date]);
+    await pool.end();
+
+    // Convert to format expected by reconciliation engine
+    const pgRecords = result.rows.map(row => ({
+      transaction_id: row.transaction_id,
+      merchant_id: row.merchant_id,
+      amount: row.amount_paise,
+      gross_amount: row.gross_amount_paise,
+      utr: row.utr,
+      rrn: row.rrn,
+      payment_method: row.payment_method,
+      transaction_date: row.transaction_date,
+      captured_at: row.transaction_timestamp,
+      status: row.status,
+      source_type: row.source_type
+    }));
+
+    console.log(`[fetchPGFromDatabase] First record:`, JSON.stringify(pgRecords[0]));
+    return pgRecords;
+  } catch (error) {
+    await pool.end().catch(() => {});
+    logStructured(jobId, 'warn', 'Failed to fetch PG from database', { error: error.message });
+    return [];
+  }
+}
+
+async function fetchBankFromDatabase(params, jobId) {
+  const { Pool } = require('pg');
+  const pool = new Pool({
+    user: 'postgres',
+    host: 'localhost',
+    database: 'settlepaisa_v2',
+    password: 'settlepaisa123',
+    port: 5433,
+  });
+
+  try {
+    const query = `
+      SELECT
+        bank_ref,
+        bank_name,
+        amount_paise,
+        gross_amount_paise,
+        bank_fee_paise,
+        bank_gst_paise,
+        transaction_date,
+        value_date,
+        utr,
+        remarks,
+        source_type
+      FROM sp_v2_bank_statements
+      WHERE DATE(transaction_date) = $1
+        AND source_type = 'MANUAL_UPLOAD'
+        AND processed = false
+      ORDER BY transaction_date
+    `;
+
+    const result = await pool.query(query, [params.date]);
+    await pool.end();
+
+    // Convert to format expected by reconciliation engine
+    const bankRecords = result.rows.map(row => ({
+      bank_ref: row.bank_ref,
+      bank_name: row.bank_name,
+      amount: row.amount_paise,
+      amount_paise: row.amount_paise, // Also include for normalization
+      gross_amount: row.gross_amount_paise,
+      gross_amount_paise: row.gross_amount_paise, // Also include for normalization
+      bank_fee: row.bank_fee_paise,
+      bank_gst: row.bank_gst_paise,
+      transaction_date: row.transaction_date,
+      value_date: row.value_date,
+      utr: row.utr,
+      remarks: row.remarks,
+      source_type: row.source_type
+    }));
+
+    console.log(`[fetchBankFromDatabase] First record:`, JSON.stringify(bankRecords[0]));
+    return bankRecords;
+  } catch (error) {
+    await pool.end().catch(() => {});
+    logStructured(jobId, 'warn', 'Failed to fetch bank from database', { error: error.message });
+    return [];
+  }
+}
+
 // Helper functions (implement with actual logic)
 function isValidDate(date) {
   const d = new Date(date);
@@ -481,15 +730,23 @@ async function fetchBankRecords(params) {
     
     return records;
   } catch (error) {
-    console.log('Bank API failed, using mock data:', error.message);
-    
-    return Array.from({ length: 120 }, (_, i) => ({
-      TRANSACTION_ID: `TXN${Date.now()}${i}`,
-      UTR: `UTR${Date.now()}${i}`,
-      AMOUNT: Math.floor(Math.random() * 100000),
-      DATE: params.date,
-      STATUS: 'SETTLED'
-    }));
+    console.error('[Recon Job] CRITICAL: Bank API unreachable', {
+      jobId: params.jobId,
+      bankType: params.bankType,
+      error: error.message,
+      url: bankApiUrl,
+      timestamp: new Date().toISOString()
+    });
+
+    // Mark job as FAILED if job tracking exists
+    if (jobs && jobs.has(params.jobId)) {
+      const job = jobs.get(params.jobId);
+      job.status = 'FAILED';
+      job.error = `Bank API failed: ${error.message}. Cannot proceed with reconciliation without bank data.`;
+      job.failedAt = new Date().toISOString();
+    }
+
+    throw new Error(`Bank API failed: ${error.message}. Cannot proceed with reconciliation without bank data.`);
   }
 }
 
@@ -532,6 +789,7 @@ function normalizeTransactions(transactions) {
         transaction_id: t.transaction_id || '',
         merchant_id: t.merchant_id || '',
         amount: t.amount_paise || 0,
+        gross_amount: t.gross_amount_paise || 0, // 🆕 Add gross_amount for bank fee matching
         bank_fee: t.bank_fee_paise || 0,
         settlement_amount: t.settlement_amount_paise || 0,
         currency: t.currency || 'INR',
@@ -545,25 +803,31 @@ function normalizeTransactions(transactions) {
     }
   }
   
-  // Fallback: V2 format or unknown format
+  // Fallback: V2 format or unknown format (for API/CSV data, not database)
   return transactions.map(t => {
-    const amountInRupees = Number(t.Amount || t.AMOUNT || t.amount || 0);
+    // Convert amounts from rupees to paise (for CSV/API data)
+    const amountInRupees = Number(t.Amount || t.AMOUNT || 0);
     const amountInPaise = Math.round(amountInRupees * 100);
-    
-    const bankFeeInRupees = Number(t['Bank Fee'] || t.bank_fee || t.BANK_FEE || 0);
+
+    const grossAmountInRupees = Number(t.GROSS_AMT || 0);
+    const grossAmountInPaise = Math.round(grossAmountInRupees * 100);
+
+    const bankFeeInRupees = Number(t['Bank Fee'] || t.BANK_FEE || 0);
     const bankFeeInPaise = Math.round(bankFeeInRupees * 100);
-    
-    const settlementAmountInRupees = Number(t['Settlement Amount'] || t.settlement_amount || t.SETTLEMENT_AMOUNT || 0);
+
+    const settlementAmountInRupees = Number(t['Settlement Amount'] || t.SETTLEMENT_AMOUNT || 0);
     const settlementAmountInPaise = Math.round(settlementAmountInRupees * 100);
-    
+
     return {
-      ...t,
+      ...t,  // Preserve all original fields (including amount, gross_amount from database)
       normalized: true,
       transaction_id: t['Transaction ID'] || t.transaction_id || t.TXN_ID || '',
       merchant_id: t['Merchant ID'] || t.merchant_id || t.CLIENT_CODE || '',
-      amount: amountInPaise,
-      bank_fee: bankFeeInPaise,
-      settlement_amount: settlementAmountInPaise,
+      // Only override amount/gross if they don't exist or use uppercase format (CSV)
+      amount: t.amount || t.amount_paise || amountInPaise,
+      gross_amount: t.gross_amount || t.gross_amount_paise || grossAmountInPaise,
+      bank_fee: t.bank_fee || bankFeeInPaise,
+      settlement_amount: t.settlement_amount || settlementAmountInPaise,
       currency: t.Currency || t.currency || 'INR',
       transaction_date: t['Transaction Date'] || t.transaction_date || t.TXN_DATE || '',
       transaction_time: t['Transaction Time'] || t.transaction_time || '',
@@ -676,19 +940,30 @@ async function normalizeBankRecords(records, bankFilename = null, jobId = null) 
     
     // If amount_paise exists, use it; otherwise convert from rupees to paise
     const finalAmount = amountPaise > 0 ? amountPaise : Math.round(amountOther * 100);
-    
-    return {
+
+    // 🆕 Handle gross_amount_paise (for bank fee tracking)
+    const grossAmountPaise = r.gross_amount_paise || r.gross_amount || 0;
+    const finalGrossAmount = grossAmountPaise > 0 ? grossAmountPaise : (r.GROSS_AMT ? Math.round(r.GROSS_AMT * 100) : 0);
+
+    const normalized = {
       ...r,
       normalized: true,
       bank_reference: r['Bank Reference'] || r.bank_reference || r.TRANSACTION_ID || r.bank_ref || '',
       bank_name: r['Bank Name'] || r.bank_name || r.BANK || '',
       amount: finalAmount,
+      gross_amount: finalGrossAmount, // 🆕 Add gross_amount for matching
       transaction_date: r['Transaction Date'] || r.transaction_date || r.DATE || r.TXN_DATE || r.date || '',
       value_date: r['Value Date'] || r.value_date || r.date || '',
       utr: (r.UTR || r.utr || '').toString().trim().toUpperCase(),
       remarks: r.Remarks || r.remarks || '',
       debit_credit: r['Debit/Credit'] || r.debit_credit || 'CREDIT'
     };
+
+    if (idx === 0) {
+      console.log('[Bank Normalizer] Normalized first record:', JSON.stringify(normalized));
+    }
+
+    return normalized;
   });
 }
 
@@ -870,9 +1145,14 @@ function matchRecords(pgRecords, bankRecords, cycleDate = null) {
     }
     
     // Found UTR match - now validate date and amount
-    const pgAmount = Number(pg.amount) || 0;
-    const bankAmount = Number(bankMatch.amount) || 0;
+    // 🆕 Use gross amounts when available for matching, fallback to net (backward compatible)
+    // This fixes the ambiguity: match by customer-paid amount (gross), not merchant-received (net)
+    // For old records without gross_amount, falls back to net amount (pg.amount / bankMatch.amount)
+    const pgAmount = Number(pg.gross_amount || pg.amount) || 0;
+    const bankAmount = Number(bankMatch.gross_amount || bankMatch.amount) || 0;
     const amountDiff = Math.abs(pgAmount - bankAmount);
+
+    console.log(`[Matching] ${pg.transaction_id}: PG(gross=${pg.gross_amount}, net=${pg.amount}, used=${pgAmount}) vs Bank(gross=${bankMatch.gross_amount}, net=${bankMatch.amount}, used=${bankAmount}) => diff=${amountDiff}`);
     
     // ========================================================================
     // STEP 5a: DATE_OUT_OF_WINDOW Check
@@ -936,7 +1216,9 @@ function matchRecords(pgRecords, bankRecords, cycleDate = null) {
       
       // Check 2: Bank credit validation (settlement amount matches what bank credited)
       const expectedBankCredit = pgSettlementAmount || (pgAmount - pgBankFee);
-      const bankCreditVariance = Math.abs(expectedBankCredit - bankAmount);
+      // 🆕 Use actual bank net amount for credit validation (not the matched gross amount)
+      const actualBankCredit = Number(bankMatch.amount);
+      const bankCreditVariance = Math.abs(expectedBankCredit - actualBankCredit);
       
       if (bankCreditVariance > FEE_VARIANCE_TOLERANCE) {
         exceptions.push({
@@ -952,7 +1234,9 @@ function matchRecords(pgRecords, bankRecords, cycleDate = null) {
       
       // Check 3: Fee calculation validation (calculated fee vs recorded fee)
       if (pgBankFee > 0) {
-        const calculatedBankFee = pgAmount - bankAmount;
+        // 🆕 Bank fee = PG gross - Bank net (what was actually credited)
+        // Use gross for PG (when available), net for bank (actual credit)
+        const calculatedBankFee = Number(pg.gross_amount || pg.amount) - Number(bankMatch.amount);
         const feeVariance = Math.abs(calculatedBankFee - pgBankFee);
         
         if (feeVariance > FEE_VARIANCE_TOLERANCE) {
@@ -1065,30 +1349,97 @@ function matchRecords(pgRecords, bankRecords, cycleDate = null) {
 }
 
 async function persistResults(results, jobId = 'UNKNOWN', job = {}, params = {}) {
-  console.error('[Persistence] ========== PERSISTENCE FUNCTION CALLED ==========');
-  console.error('[Persistence] Starting persistence...');
-  console.error('[Persistence] Matched:', results.matched.length);
-  console.error('[Persistence] Unmatched PG:', results.unmatchedPg.length);
-  console.error('[Persistence] Unmatched Bank:', results.unmatchedBank.length);
-  
+  const startTime = Date.now();
+  console.log('[Persistence] ========== PERSISTENCE STARTED ==========');
+  console.log('[Persistence] Job ID:', jobId);
+  console.log('[Persistence] Matched:', results.matched.length);
+  console.log('[Persistence] Unmatched PG:', results.unmatchedPg.length);
+  console.log('[Persistence] Unmatched Bank:', results.unmatchedBank.length);
+  console.log('[Persistence] Exceptions:', results.exceptions?.length || 0);
+
   const { Pool } = require('pg');
-  const pool = new Pool({
+  const dbConfig = {
     host: process.env.DB_HOST || 'localhost',
     port: parseInt(process.env.DB_PORT || '5433'),
     database: process.env.DB_NAME || 'settlepaisa_v2',
     user: process.env.DB_USER || 'postgres',
     password: process.env.DB_PASSWORD || 'settlepaisa123'
+  };
+
+  console.log('[Persistence] Database config:', {
+    host: dbConfig.host,
+    port: dbConfig.port,
+    database: dbConfig.database,
+    user: dbConfig.user
   });
-  
+
+  const pool = new Pool(dbConfig);
+
   try {
     console.log('[Persistence] Connecting to database...');
     const client = await pool.connect();
-    console.log('[Persistence] Connected');
-    
+    console.log('[Persistence] ✅ Connected successfully');
+
     try {
+      console.log('[Persistence] Starting transaction...');
       await client.query('BEGIN');
-      
-      await client.query(`
+      console.log('[Persistence] ✅ Transaction started');
+
+      // Calculate financial amounts from reconciliation results
+      console.log('[Persistence] Calculating financial amounts...');
+
+      // Total amount: All PG transactions (matched + unmatched + exceptions with PG data)
+      const totalAmountPaise = [
+        ...results.matched.map(m => Number(m.pg.amount) || 0),
+        ...results.unmatchedPg.map(u => Number(u.amount) || 0),
+        ...results.exceptions.filter(e => e.pg).map(e => Number(e.pg.amount) || 0)
+      ].reduce((sum, amt) => sum + amt, 0);
+
+      // Reconciled amount: Only matched transactions
+      const reconciledAmountPaise = results.matched
+        .map(m => Number(m.pg.amount) || 0)
+        .reduce((sum, amt) => sum + amt, 0);
+
+      // Variance: Total - Reconciled
+      const varianceAmountPaise = totalAmountPaise - reconciledAmountPaise;
+
+      console.log(`[Persistence] Financial Summary:`);
+      console.log(`[Persistence]   Total Amount: ₹${(totalAmountPaise / 100).toFixed(2)} (${totalAmountPaise} paise)`);
+      console.log(`[Persistence]   Reconciled Amount: ₹${(reconciledAmountPaise / 100).toFixed(2)} (${reconciledAmountPaise} paise)`);
+      console.log(`[Persistence]   Variance: ₹${(varianceAmountPaise / 100).toFixed(2)} (${varianceAmountPaise} paise)`);
+
+      // Count exceptions with PG data
+      console.log(`[Persistence] DEBUG: results.exceptions =`, JSON.stringify(results.exceptions, null, 2));
+      console.log(`[Persistence] DEBUG: Checking each exception for pg property:`);
+      results.exceptions.forEach((e, idx) => {
+        console.log(`[Persistence]   Exception ${idx}: hasPg=${!!e.pg}, reasonCode=${e.reasonCode}`);
+      });
+
+      const exceptionsWithPg = results.exceptions.filter(e => e.pg).length;
+      const totalPgRecords = results.matched.length + results.unmatchedPg.length + exceptionsWithPg;
+
+      console.log(`[Persistence] Total PG Records Calculation:`);
+      console.log(`[Persistence]   Matched: ${results.matched.length}`);
+      console.log(`[Persistence]   Unmatched PG: ${results.unmatchedPg.length}`);
+      console.log(`[Persistence]   Exceptions with PG: ${exceptionsWithPg}`);
+      console.log(`[Persistence]   Total PG: ${totalPgRecords}`);
+
+      console.log('[Persistence] Inserting job record into sp_v2_reconciliation_jobs...');
+      console.log('[Persistence] Job data:', {
+        jobId,
+        date: params.date,
+        totalPgRecords,
+        totalBankRecords: results.matched.length + results.unmatchedBank.length,
+        matched: results.matched.length,
+        unmatchedPg: results.unmatchedPg.length,
+        unmatchedBank: results.unmatchedBank.length,
+        exceptions: results.exceptions.length,
+        totalAmountPaise,
+        reconciledAmountPaise,
+        varianceAmountPaise
+      });
+
+      const insertResult = await client.query(`
         INSERT INTO sp_v2_reconciliation_jobs (
           job_id,
           job_name,
@@ -1100,15 +1451,21 @@ async function persistResults(results, jobId = 'UNKNOWN', job = {}, params = {})
           unmatched_pg,
           unmatched_bank,
           exception_records,
+          total_amount_paise,
+          reconciled_amount_paise,
+          variance_amount_paise,
           status,
           processing_start,
           processing_end
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW(), NOW())
         ON CONFLICT (job_id) DO UPDATE SET
           matched_records = EXCLUDED.matched_records,
           unmatched_pg = EXCLUDED.unmatched_pg,
           unmatched_bank = EXCLUDED.unmatched_bank,
           exception_records = EXCLUDED.exception_records,
+          total_amount_paise = EXCLUDED.total_amount_paise,
+          reconciled_amount_paise = EXCLUDED.reconciled_amount_paise,
+          variance_amount_paise = EXCLUDED.variance_amount_paise,
           status = EXCLUDED.status,
           processing_end = NOW()
       `, [
@@ -1116,15 +1473,23 @@ async function persistResults(results, jobId = 'UNKNOWN', job = {}, params = {})
         `Reconciliation Job ${params.date || 'Unknown'}`,
         params.date || new Date().toISOString().split('T')[0],
         params.date || new Date().toISOString().split('T')[0],
-        results.matched.length + results.unmatchedPg.length,
+        totalPgRecords,
         results.matched.length + results.unmatchedBank.length,
         results.matched.length,
         results.unmatchedPg.length,
         results.unmatchedBank.length,
         results.exceptions.length,
+        totalAmountPaise,
+        reconciledAmountPaise,
+        varianceAmountPaise,
         'COMPLETED'
       ]);
-      console.log(`[Persistence] Saved job record: ${jobId}`);
+
+      console.log(`[Persistence] ✅ Job record saved successfully:`, {
+        jobId,
+        rowCount: insertResult.rowCount,
+        command: insertResult.command
+      });
       
       // REPLACE logic for manual uploads: delete existing data for this date
       if (job.sourceType === 'MANUAL_UPLOAD' && params.date) {
@@ -1149,11 +1514,37 @@ async function persistResults(results, jobId = 'UNKNOWN', job = {}, params = {})
       for (const match of results.matched) {
         // First ensure the PG transaction exists in sp_v2_transactions
         const pgTxn = match.pg;
+        const bankTxn = match.bank;
+
+        // 🆕 Calculate bank fee: PG gross - Bank net (what was actually credited)
+        // Use gross_amount when available (for new uploads), fallback to amount (for old records)
+        const pgGrossPaise = parseInt(pgTxn.gross_amount || pgTxn.amount) || 0;
+        const pgAmountPaise = parseInt(pgTxn.amount) || 0; // Net amount (merchant receives)
+        // Bank amount is already in paise from database, only convert if it's in uppercase (API format)
+        const bankCreditedPaise = parseInt(bankTxn.amount) || Math.round(parseFloat(bankTxn.AMOUNT || bankTxn.CREDIT_AMT || 0) * 100);
+        const bankFeePaise = pgGrossPaise - bankCreditedPaise;
+        const settlementAmountPaise = bankCreditedPaise;
+
+        console.log(`[Bank Fee Calc] ${pgTxn.transaction_id}: PG gross=${pgGrossPaise}, Bank net=${bankCreditedPaise}, Fee=${bankFeePaise}`);
+
+        // Calculate fee variance (warn if > 5%)
+        const feeVariancePaise = Math.abs(bankFeePaise);
+        const expectedFeeRate = 0.02; // 2% typical MDR
+        const expectedFeePaise = Math.round(pgAmountPaise * expectedFeeRate);
+        const variancePercent = expectedFeePaise > 0 ? Math.abs((bankFeePaise - expectedFeePaise) / expectedFeePaise) * 100 : 0;
+
+        if (variancePercent > 5 && bankFeePaise > 0) {
+          console.log(`⚠️  [Bank Fee] High variance for ${pgTxn.transaction_id}: ${variancePercent.toFixed(2)}% (expected: ₹${(expectedFeePaise/100).toFixed(2)}, actual: ₹${(bankFeePaise/100).toFixed(2)})`);
+        }
+
         await client.query(`
           INSERT INTO sp_v2_transactions (
             transaction_id,
             merchant_id,
             amount_paise,
+            bank_fee_paise,
+            settlement_amount_paise,
+            fee_variance_paise,
             currency,
             transaction_date,
             transaction_timestamp,
@@ -1162,7 +1553,7 @@ async function persistResults(results, jobId = 'UNKNOWN', job = {}, params = {})
             payment_method,
             utr,
             status
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
           ON CONFLICT (transaction_id) DO UPDATE SET
             merchant_id = CASE 
               WHEN sp_v2_transactions.source_type = 'API_SYNC' 
@@ -1199,18 +1590,24 @@ async function persistResults(results, jobId = 'UNKNOWN', job = {}, params = {})
               THEN sp_v2_transactions.utr 
               ELSE EXCLUDED.utr 
             END,
-            status = CASE 
-              WHEN sp_v2_transactions.source_type = 'API_SYNC' 
-              THEN sp_v2_transactions.status 
-              ELSE EXCLUDED.status 
+            status = CASE
+              WHEN sp_v2_transactions.source_type = 'API_SYNC'
+              THEN sp_v2_transactions.status
+              ELSE EXCLUDED.status
             END,
+            bank_fee_paise = EXCLUDED.bank_fee_paise,
+            settlement_amount_paise = EXCLUDED.settlement_amount_paise,
+            fee_variance_paise = EXCLUDED.fee_variance_paise,
             updated_at = NOW()
           WHERE sp_v2_transactions.source_type != 'API_SYNC'
         `, [
           pgTxn.transaction_id || pgTxn.pgw_ref,
           pgTxn.merchant_id || 'UNKNOWN',
-          pgTxn.amount || 0,
-          'INR',
+          pgAmountPaise,                    // $3: amount_paise
+          bankFeePaise,                     // $4: bank_fee_paise (NEW)
+          settlementAmountPaise,            // $5: settlement_amount_paise (NEW)
+          feeVariancePaise,                 // $6: fee_variance_paise (NEW)
+          'INR',                            // $7: currency
           pgTxn.transaction_date || new Date().toISOString().split('T')[0],
           pgTxn.transaction_timestamp || pgTxn.created_at || new Date().toISOString(),
           job.sourceType,
@@ -1562,16 +1959,32 @@ async function persistResults(results, jobId = 'UNKNOWN', job = {}, params = {})
       console.log(`[Persistence] Saved ${results.unmatchedPg.length} UNMATCHED_PG results`);
       
       for (const unmatchedBank of results.unmatchedBank) {
-        const bankStmtId = unmatchedBank.id || unmatchedBank.bank_id || null;
+        // Get bank statement ID from database if it exists
+        const bankRef = unmatchedBank.bank_reference || unmatchedBank.utr || unmatchedBank.TRANSACTION_ID || unmatchedBank.UTR || `BANK_${Date.now()}_${Math.random()}`;
+
+        let bankStmtId = null;
+        try {
+          const bankIdResult = await client.query(
+            'SELECT id FROM sp_v2_bank_statements WHERE bank_ref = $1',
+            [bankRef]
+          );
+
+          if (bankIdResult.rows.length > 0) {
+            bankStmtId = bankIdResult.rows[0].id;
+          }
+        } catch (err) {
+          console.log(`[Persistence] Could not fetch bank statement ID for ${bankRef}:`, err.message);
+        }
+
         const bankUtr = unmatchedBank.utr || unmatchedBank.UTR || unmatchedBank.TRANSACTION_ID || 'N/A';
         const pgTxnId = `BANK_${bankUtr}`;
         const bankAmount = unmatchedBank.amount || Math.round(parseFloat(unmatchedBank.AMOUNT || unmatchedBank.CREDIT_AMT || 0) * 100);
-        
+
         const existing = await client.query(
           'SELECT id FROM sp_v2_reconciliation_results WHERE pg_transaction_id = $1',
           [pgTxnId]
         );
-        
+
         if (existing.rows.length > 0) {
           await client.query(`
             UPDATE sp_v2_reconciliation_results SET
@@ -1596,7 +2009,24 @@ async function persistResults(results, jobId = 'UNKNOWN', job = {}, params = {})
       
       for (const exception of results.exceptions) {
         const pgTxnId = exception.pg ? (exception.pg.transaction_id || exception.pg.pgw_ref) : null;
-        const bankStmtId = exception.bank ? (exception.bank.id || exception.bank.bank_ref) : null;
+
+        // Get bank statement ID from database if exception has bank record
+        let bankStmtId = null;
+        if (exception.bank) {
+          const bankRef = exception.bank.bank_reference || exception.bank.bank_ref || exception.bank.utr || exception.bank.TRANSACTION_ID || exception.bank.UTR;
+          try {
+            const bankIdResult = await client.query(
+              'SELECT id FROM sp_v2_bank_statements WHERE bank_ref = $1',
+              [bankRef]
+            );
+            if (bankIdResult.rows.length > 0) {
+              bankStmtId = bankIdResult.rows[0].id;
+            }
+          } catch (err) {
+            console.log(`[Persistence] EXCEPTION - Could not fetch bank statement ID for ${bankRef}:`, err.message);
+          }
+        }
+
         const pgAmount = exception.pg ? (exception.pg.amount || 0) : null;
         const bankAmount = exception.bank ? (exception.bank.amount || 0) : null;
         const variance = exception.delta || 0;
@@ -1646,34 +2076,72 @@ async function persistResults(results, jobId = 'UNKNOWN', job = {}, params = {})
       }
       console.log(`[Persistence] Saved ${results.exceptions.length} EXCEPTION results`);
       
-      const commitResult = await client.query('COMMIT');
-      console.log(`[Persistence] ✓ Transaction COMMITTED`, commitResult);
-      
+      await client.query('COMMIT');
+      console.log(`[Persistence] ✅ Transaction COMMITTED successfully`);
+
       // Release client back to pool
       client.release();
       console.log('[Persistence] Client released back to pool');
-      
-      // DON'T end pool - let it stay alive (memory leak but for testing)
-      // await pool.end();
-      console.log('[Persistence] Pool NOT ended (intentional - for testing)');
-      
-      console.log(`[Persistence] Summary: ${results.matched.length} matches, ${results.unmatchedPg.length} unmatched PG, ${results.unmatchedBank.length} unmatched bank, ${results.exceptions.length} exceptions`);
+
+      await pool.end();
+      console.log('[Persistence] Connection pool ended');
+
+      const duration = Date.now() - startTime;
+      console.log('[Persistence] ========== PERSISTENCE COMPLETED ==========');
+      console.log(`[Persistence] ✅ All data persisted successfully in ${duration}ms`);
+      console.log(`[Persistence] Summary:`, {
+        jobId,
+        matched: results.matched.length,
+        unmatchedPg: results.unmatchedPg.length,
+        unmatchedBank: results.unmatchedBank.length,
+        exceptions: results.exceptions.length,
+        durationMs: duration
+      });
       
     } catch (error) {
       try {
         await client.query('ROLLBACK');
-        console.error('[Persistence] Transaction ROLLED BACK');
+        console.error('[Persistence] ❌ Transaction ROLLED BACK');
       } catch (rbError) {
-        console.error('[Persistence] Rollback failed:', rbError.message);
+        console.error('[Persistence] ❌ Rollback failed:', rbError.message);
       }
-      console.error('[Persistence] Error:', error.message);
+
+      const duration = Date.now() - startTime;
+      console.error('[Persistence] ========== PERSISTENCE FAILED ==========');
+      console.error('[Persistence] ❌ Error after', duration, 'ms');
+      console.error('[Persistence] Error name:', error.name);
+      console.error('[Persistence] Error message:', error.message);
+      console.error('[Persistence] Error code:', error.code);
+      console.error('[Persistence] Stack trace:', error.stack);
+      console.error('[Persistence] Job ID:', jobId);
+      console.error('[Persistence] ================================================');
+
       client.release();
-      // await pool.end();
-      throw error;
+      await pool.end();
+
+      // Re-throw with enhanced context
+      const enhancedError = new Error(`Persistence failed for job ${jobId}: ${error.message}`);
+      enhancedError.originalError = error;
+      enhancedError.jobId = jobId;
+      enhancedError.code = error.code;
+      throw enhancedError;
     }
   } catch (poolError) {
-    console.error('[Persistence] Pool connection error:', poolError.message);
-    throw poolError;
+    console.error('[Persistence] ========== DATABASE CONNECTION FAILED ==========');
+    console.error('[Persistence] ❌ Could not connect to database');
+    console.error('[Persistence] Error:', poolError.message);
+    console.error('[Persistence] Config:', {
+      host: dbConfig.host,
+      port: dbConfig.port,
+      database: dbConfig.database
+    });
+    console.error('[Persistence] =================================================');
+
+    // Re-throw with enhanced context
+    const enhancedError = new Error(`Database connection failed: ${poolError.message}`);
+    enhancedError.originalError = poolError;
+    enhancedError.jobId = jobId;
+    throw enhancedError;
   }
 }
 

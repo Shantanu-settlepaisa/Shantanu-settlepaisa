@@ -2,7 +2,9 @@ const express = require('express')
 const cors = require('cors')
 const { v4: uuidv4 } = require('uuid')
 const axios = require('axios')
+const { Pool } = require('pg')
 const { runReconciliation, getJob, getJobLogs } = require('./jobs/runReconciliation')
+// const { createHealthCheckEndpoint } = require('../health-check')
 const jobRoutes = require('./routes/jobRoutes')
 const exceptionsRoutes = require('./routes/exceptions')
 const exceptionsV2Routes = require('./routes/exceptions-v2')
@@ -13,9 +15,28 @@ const bankMappingsRoutes = require('./routes/bank-mappings')
 const pgTransactionsRoutes = require('./routes/pg-transactions')
 const connectorsRoutes = require('./routes/connectors')
 
+// Development logging (gated in production)
+const isDev = process.env.NODE_ENV !== 'production'
+const log = (...args) => isDev && console.log(...args)
+
 const app = express()
 app.use(cors())
 app.use(express.json())
+
+// Database pool for health checks with production-ready configuration
+const pool = new Pool({
+  user: process.env.DB_USER || 'postgres',
+  host: process.env.DB_HOST || 'localhost',
+  database: process.env.DB_NAME || 'settlepaisa_v2',
+  password: process.env.DB_PASSWORD || 'settlepaisa123',
+  port: process.env.DB_PORT || 5433,
+  max: 20,
+  min: 2,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 5000,
+})
+
+pool.on('error', (err) => console.error('[Recon Pool Error]', err))
 
 // Mount routes
 app.use('/recon', jobRoutes)
@@ -37,20 +58,23 @@ const HEALTH_CHECK_CACHE_MS = 5000
 
 // New reconciliation endpoint using job runner
 app.post('/recon/run', async (req, res) => {
-  const { date, merchantId, acquirerId, dryRun, limit, test, pgTransactions, bankRecords, bankFilename } = req.body
-  console.log('[Recon API] Starting reconciliation job:', { date, merchantId, acquirerId, dryRun, test, bankFilename })
+  const { date, cycle_date, merchantId, merchant_id, acquirerId, dryRun, limit, test, pgTransactions, bankRecords, bankFilename } = req.body
+  // Support both naming conventions: date/cycle_date and merchantId/merchant_id
+  const reconDate = date || cycle_date
+  const reconMerchantId = merchantId || merchant_id
+  log('[Recon API] Starting reconciliation job:', { date: reconDate, merchantId: reconMerchantId, acquirerId, dryRun, test, bankFilename })
   
   if (pgTransactions) {
-    console.log('[Recon API] Using uploaded PG transactions:', pgTransactions.length);
+    log('[Recon API] Using uploaded PG transactions:', pgTransactions.length);
   }
   if (bankRecords) {
-    console.log('[Recon API] Using uploaded bank records:', bankRecords.length);
+    log('[Recon API] Using uploaded bank records:', bankRecords.length);
   }
   
   try {
     const job = await runReconciliation({
-      date,
-      merchantId,
+      date: reconDate,
+      merchantId: reconMerchantId,
       acquirerId,
       dryRun,
       limit,
@@ -96,31 +120,9 @@ app.get('/recon/jobs/:jobId/logs', (req, res) => {
   res.json({ jobId: req.params.jobId, logs })
 })
 
-// Health check endpoint
-app.get('/recon/health', async (req, res) => {
-  // Use cached result if available
-  if (lastHealthCheck && Date.now() - lastHealthCheck.timestamp < HEALTH_CHECK_CACHE_MS) {
-    return res.json(lastHealthCheck.data)
-  }
-  
-  const health = {
-    status: 'healthy',
-    timestamp: new Date().toISOString(),
-    checks: {
-      service: 'up',
-      memory: {
-        used: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
-        limit: Math.round(process.memoryUsage().heapTotal / 1024 / 1024)
-      },
-      activeJobs: 0,
-      recentErrors: 0
-    }
-  }
-  
-  // Cache the result
-  lastHealthCheck = { timestamp: Date.now(), data: health }
-  res.json(health)
-})
+// Health check endpoint with database connectivity test
+// createHealthCheckEndpoint(app, 'recon-api', pool)
+app.get('/health', (req, res) => res.json({ status: 'ok', service: 'recon-api' }))
 
 // Connector health checks
 app.get('/connectors/pg/health', async (req, res) => {
@@ -156,51 +158,74 @@ app.get('/connectors/pg/health', async (req, res) => {
 })
 
 app.get('/connectors/bank/health', async (req, res) => {
-  // Mock SFTP health check
-  const mockSftpConnected = Math.random() > 0.2 // 80% success rate
-  
-  if (mockSftpConnected) {
+  const Client = require('ssh2-sftp-client');
+  const client = new Client();
+
+  const sftpConfig = {
+    host: process.env.SFTP_HOST || 'localhost',
+    port: parseInt(process.env.SFTP_PORT || '2222'),
+    username: process.env.SFTP_USERNAME || 'sp-sftp',
+    password: process.env.SFTP_PASSWORD || 'sp-sftp'
+  };
+
+  const inboundDir = process.env.SFTP_INBOUND_DIR || '/inbound';
+
+  try {
+    // Attempt real SFTP connection
+    await client.connect(sftpConfig);
+
+    // List files in inbound directory
+    const files = await client.list(inboundDir);
+    await client.end();
+
+    // Sort files by modification time (newest first)
+    files.sort((a, b) => b.modifyTime - a.modifyTime);
+
     res.json({
       status: 'healthy',
       connector: 'bank_sftp',
-      host: 'sftp.bank.internal',
-      directory: '/home/sp-sftp/incoming',
-      filesAvailable: Math.floor(Math.random() * 10) + 1,
-      lastChecked: new Date().toISOString(),
-      lastFileReceived: new Date(Date.now() - Math.random() * 3600000).toISOString()
-    })
-  } else {
+      host: sftpConfig.host,
+      port: sftpConfig.port,
+      directory: inboundDir,
+      filesAvailable: files.length,
+      latestFile: files[0]?.name || null,
+      lastFileReceived: files[0]?.modifyTime || null,
+      lastChecked: new Date().toISOString()
+    });
+
+  } catch (error) {
     res.status(503).json({
       status: 'unhealthy',
       connector: 'bank_sftp',
-      host: 'sftp.bank.internal',
-      error: 'SFTP connection failed',
-      errorCode: 'SFTP_AUTH_FAILED',
+      host: sftpConfig.host,
+      port: sftpConfig.port,
+      error: error.message,
+      errorCode: error.code || 'SFTP_CONNECTION_FAILED',
       hint: 'Check SFTP credentials and network connectivity',
       lastChecked: new Date().toISOString()
-    })
+    });
   }
 })
 
 // Legacy reconciliation endpoint (keep for backward compatibility)
 app.post('/api/reconcile', async (req, res) => {
   const { cycleDate, pgSource, bankSource } = req.body
-  console.log('[Recon API] Request received:', { cycleDate, pgSource, bankSource })
+  log('[Recon API] Request received:', { cycleDate, pgSource, bankSource })
   
   try {
     // Fetch PG data
     const pgResponse = await axios.get(`http://localhost:5101/api/pg/transactions?cycle=${cycleDate}`)
     const pgData = pgResponse.data
-    console.log('[Recon API] PG data fetched:', pgData.transactions?.length || 0, 'transactions')
+    log('[Recon API] PG data fetched:', pgData.transactions?.length || 0, 'transactions')
     
     // Fetch Bank data (try different banks)
     let bankData = { records: [] }
     
     if (bankSource.toLowerCase().includes('axis') || bankSource === 'api') {
-      console.log('[Recon API] Fetching AXIS bank data...')
+      log('[Recon API] Fetching AXIS bank data...')
       const bankResponse = await axios.get(`http://localhost:5102/api/bank/axis/recon?cycle=${cycleDate}`)
       bankData = bankResponse.data
-      console.log('[Recon API] Bank data fetched:', bankData.records?.length || 0, 'records')
+      log('[Recon API] Bank data fetched:', bankData.records?.length || 0, 'records')
     } else if (bankSource.toLowerCase().includes('hdfc')) {
       const bankResponse = await axios.get(`http://localhost:5102/api/bank/hdfc/recon?cycle=${cycleDate}`)
       bankData = bankResponse.data
@@ -459,9 +484,9 @@ function formatAmount(amount) {
 
 const PORT = 5103
 app.listen(PORT, () => {
-  console.log(`Reconciliation API running on port ${PORT}`)
-  console.log(`Health check: http://localhost:${PORT}/recon/health`)
-  console.log(`Job runner: POST http://localhost:${PORT}/recon/run`)
+  log(`Reconciliation API running on port ${PORT}`)
+  log(`Health check: http://localhost:${PORT}/recon/health`)
+  log(`Job runner: POST http://localhost:${PORT}/recon/run`)
   
   const { scheduleDailyPgSync } = require('./jobs/daily-pg-sync')
   scheduleDailyPgSync()
