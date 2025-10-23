@@ -18,11 +18,14 @@ class SettlementQueueProcessor {
     this.batchSize = 100;
     this.processingIntervalMs = 2 * 60 * 1000; // 2 minutes
     this.isProcessing = false;
+    // Auto-approval threshold - default ₹10k (1000000 paise)
+    this.autoApproveThreshold = parseInt(process.env.AUTO_APPROVE_THRESHOLD_PAISE || '1000000', 10);
   }
   
   async start() {
     console.log('[Settlement Queue] Starting queue processor...');
-    
+    console.log(`[Settlement Queue] Auto-approval threshold: ₹${(this.autoApproveThreshold / 100).toFixed(2)} (${this.autoApproveThreshold} paise)`);
+
     try {
       // Listen to PostgreSQL notifications for real-time processing
       const notificationClient = await v2Pool.connect();
@@ -305,10 +308,10 @@ class SettlementQueueProcessor {
       }
 
       // Check if approval needed
-      if (settlementBatch.net_settlement_amount > 100000 * 100) { // ₹1L threshold
+      if (settlementBatch.net_settlement_amount > this.autoApproveThreshold) {
         await this.queueForApproval(batchId, settlementBatch, resolvedMerchantId);
       } else {
-        await this.autoApprove(batchId);
+        await this.autoApprove(batchId, settlementBatch.net_settlement_amount);
       }
       
     } catch (error) {
@@ -454,16 +457,21 @@ class SettlementQueueProcessor {
     // Ops team will see pending approvals at /ops/settlements
   }
   
-  async autoApprove(batchId) {
+  async autoApprove(batchId, amountPaise) {
     await v2Pool.query(`
       UPDATE sp_v2_settlement_batches
       SET status = 'APPROVED',
           approved_at = NOW(),
+          approval_method = 'AUTO',
+          approval_reason = $2,
           updated_at = NOW()
       WHERE id = $1
-    `, [batchId]);
+    `, [
+      batchId,
+      `Auto-approved: Amount ₹${(amountPaise / 100).toFixed(2)} below threshold ₹${(this.autoApproveThreshold / 100).toFixed(2)}`
+    ]);
 
-    console.log(`[Settlement Queue] ✅ Batch ${batchId} auto-approved`);
+    console.log(`[Settlement Queue] ✅ Batch ${batchId} auto-approved (₹${(amountPaise / 100).toFixed(2)} < ₹${(this.autoApproveThreshold / 100).toFixed(2)} threshold)`);
 
     // NOTE: Bank transfer queue population happens automatically via approval workflow
     // The Ops Dashboard approval endpoint (POST /api/settlements/:batchId/approve)
