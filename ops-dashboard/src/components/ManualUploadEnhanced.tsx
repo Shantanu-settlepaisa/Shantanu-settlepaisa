@@ -186,6 +186,7 @@ export function ManualUploadEnhanced() {
   const [activeTab, setActiveTab] = useState<'all' | 'matched' | 'unmatchedPg' | 'unmatchedBank' | 'exceptions'>('all')
   const [isTabChanging, setIsTabChanging] = useState(false)
   const [isFetchingPg, setIsFetchingPg] = useState(false)
+  const [shouldOverwrite, setShouldOverwrite] = useState(false)
   const [pgFetchStatus, setPgFetchStatus] = useState<{
     success: boolean
     count: number
@@ -437,7 +438,7 @@ export function ManualUploadEnhanced() {
   // Handle PG file upload with V2 API
   const handlePGUpload = useCallback(async (files: File[]) => {
     console.log(`📁 [V2 Upload] Uploading ${files.length} PG files to V2 API...`);
-    
+
     try {
       // Upload files to V2 API for processing and database insertion
       const formData = new FormData();
@@ -445,7 +446,14 @@ export function ManualUploadEnhanced() {
         formData.append('files', file);
       });
       formData.append('fileType', 'transactions');
-      
+
+      // Add overwrite parameters if in overwrite mode
+      if (shouldOverwrite) {
+        formData.append('overwrite', 'true');
+        formData.append('date', cycleDate);
+        console.log(`🔄 [Overwrite] Will delete existing PG data for ${cycleDate} before upload`);
+      }
+
       const uploadApiUrl = import.meta.env.VITE_UPLOAD_API_URL || 'http://localhost:5107';
       const response = await fetch(`${uploadApiUrl}/api/upload/multiple`, {
         method: 'POST',
@@ -454,10 +462,16 @@ export function ManualUploadEnhanced() {
       
       const data = await response.json();
       console.log('V2 Upload response:', data);
-      
+
       if (data.success) {
         console.log(`✅ [V2 Upload] Successfully uploaded ${data.results.length} files`);
-        
+
+        // Reset overwrite flag after successful upload
+        if (shouldOverwrite) {
+          setShouldOverwrite(false);
+          console.log('✅ [Overwrite] Mode disabled after successful upload');
+        }
+
         // Create uploaded file objects for UI display
         const uploadedFiles: UploadedFile[] = await Promise.all(
           files.map(async (file, _index) => {
@@ -526,10 +540,11 @@ export function ManualUploadEnhanced() {
           }
         })
       );
-      
+
+
       setPgFiles(prev => [...prev, ...uploadedFiles]);
     }
-  }, [])
+  }, [shouldOverwrite, cycleDate])
 
   // Fetch PG transactions from database/API
   const handleFetchPgData = useCallback(async () => {
@@ -614,7 +629,7 @@ export function ManualUploadEnhanced() {
   // Handle Bank file upload with V2 API
   const handleBankUpload = useCallback(async (files: File[]) => {
     console.log(`🏦 [V2 Upload] Uploading ${files.length} Bank files to V2 API...`);
-    
+
     try {
       // Upload files to V2 API for processing and database insertion
       const formData = new FormData();
@@ -622,7 +637,14 @@ export function ManualUploadEnhanced() {
         formData.append('files', file);
       });
       formData.append('fileType', 'bank_statements');
-      
+
+      // Add overwrite parameters if in overwrite mode
+      if (shouldOverwrite) {
+        formData.append('overwrite', 'true');
+        formData.append('date', cycleDate);
+        console.log(`🔄 [Overwrite] Will delete existing Bank data for ${cycleDate} before upload`);
+      }
+
       const uploadApiUrl = import.meta.env.VITE_UPLOAD_API_URL || 'http://localhost:5107';
       const response = await fetch(`${uploadApiUrl}/api/upload/multiple`, {
         method: 'POST',
@@ -631,10 +653,16 @@ export function ManualUploadEnhanced() {
       
       const data = await response.json();
       console.log('V2 Bank Upload response:', data);
-      
+
       if (data.success) {
         console.log(`✅ [V2 Upload] Successfully uploaded ${data.results.length} bank files`);
-        
+
+        // Reset overwrite flag after successful upload
+        if (shouldOverwrite) {
+          setShouldOverwrite(false);
+          console.log('✅ [Overwrite] Mode disabled after successful upload');
+        }
+
         // Create uploaded file objects for UI display
         const uploadedFiles: UploadedFile[] = await Promise.all(
           files.map(async (file, _index) => {
@@ -703,10 +731,11 @@ export function ManualUploadEnhanced() {
           }
         })
       );
-      
+
+
       setBankFiles(prev => [...prev, ...uploadedFiles]);
     }
-  }, [])
+  }, [shouldOverwrite, cycleDate])
 
   // Manual reconciliation trigger
   const handleRunRecon = useCallback(async () => {
@@ -937,11 +966,12 @@ export function ManualUploadEnhanced() {
   
   // Clear all and start fresh
   const handleStartNew = () => {
-    console.log('[ManualUploadEnhanced] Starting new reconciliation');
+    console.log('[ManualUploadEnhanced] Starting new reconciliation with overwrite mode');
     setPgFiles([]);
     setBankFiles([]);
     setReconResults([]);
     setJobId(null);
+    setShouldOverwrite(true); // Enable overwrite for next uploads
     localStorage.removeItem('lastReconJobId');
     localStorage.removeItem('lastPgFileMetadata');
     localStorage.removeItem('lastBankFileMetadata');
@@ -952,6 +982,7 @@ export function ManualUploadEnhanced() {
       unmatchedBankCount: 0,
       exceptionsCount: 0,
     });
+    console.log(`[ManualUploadEnhanced] Overwrite mode activated - next upload will replace data for ${cycleDate}`);
   }
 
   return (
@@ -987,8 +1018,14 @@ export function ManualUploadEnhanced() {
           </div>
           
           <div className="flex items-center gap-3">
+            {shouldOverwrite && (
+              <div className="px-3 py-1.5 bg-amber-50 border border-amber-300 rounded text-xs text-amber-800 font-medium flex items-center gap-1.5">
+                <AlertCircle className="h-3.5 w-3.5" />
+                Overwrite mode: Next upload replaces {cycleDate} data
+              </div>
+            )}
             {jobId && (
-              <button 
+              <button
                 onClick={handleStartNew}
                 className="px-4 py-2 text-sm border border-blue-500 text-blue-600 rounded hover:bg-blue-50 flex items-center gap-2 whitespace-nowrap"
               >
@@ -996,7 +1033,7 @@ export function ManualUploadEnhanced() {
                 Start New
               </button>
             )}
-            <button 
+            <button
               onClick={() => setConfigDrawerOpen(true)}
               className="px-4 py-2 text-sm border border-gray-300 rounded hover:bg-gray-50 flex items-center gap-2 whitespace-nowrap"
             >

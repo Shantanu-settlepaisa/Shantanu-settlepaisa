@@ -8,18 +8,29 @@ const { v4: uuidv4 } = require('uuid');
 const fs = require('fs');
 const path = require('path');
 const { convertV1CSVToV2, detectFormat } = require('./v1-column-mapper');
+// const { createHealthCheckEndpoint } = require('../health-check');
+
+// Development logging (gated in production)
+const isDev = process.env.NODE_ENV !== 'production';
+const log = (...args) => isDev && console.log(...args);
 
 const app = express();
 const PORT = process.env.PORT || 5107;
 
-// Database connection
+// Database connection with production-ready pool configuration
 const pool = new Pool({
   user: process.env.DATABASE_USER || 'postgres',
   host: process.env.DATABASE_HOST || 'settlepaisa-staging.c9u0agyyg6q9.ap-south-1.rds.amazonaws.com',
   database: process.env.DATABASE_NAME || 'settlepaisa_v2',
   password: process.env.DATABASE_PASSWORD || 'SettlePaisa2024',
   port: parseInt(process.env.DATABASE_PORT || '5432'),
+  max: 20,
+  min: 2,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 5000,
 });
+
+pool.on('error', (err) => console.error('[Upload Pool Error]', err));
 
 // Middleware
 app.use(cors());
@@ -58,7 +69,7 @@ const upload = multer({
 // Enhanced File Upload Endpoint - Multiple Files
 app.post('/api/upload/multiple', upload.array('files', 10), async (req, res) => {
   try {
-    console.log('📁 [V2 Upload] Received files:', req.files?.map(f => f.originalname));
+    log('📁 [V2 Upload] Received files:', req.files?.map(f => f.originalname));
     
     if (!req.files || req.files.length === 0) {
       return res.status(400).json({ error: 'No files uploaded' });
@@ -115,12 +126,42 @@ app.post('/api/upload/single', upload.single('file'), async (req, res) => {
       return res.status(400).json({ error: 'No file uploaded' });
     }
 
-    const { fileType = 'auto-detect', preview = 'true' } = req.body;
-    
-    console.log(`📄 [V2 Upload] Processing: ${req.file.originalname} as ${fileType}`);
-    
-    const result = await processFile(req.file, fileType, preview === 'true');
-    
+    const {
+      fileType = 'auto-detect',
+      sourceType = null,
+      preview = 'true',
+      overwrite = 'false',
+      date = null
+    } = req.body;
+
+    // Validate overwrite parameters
+    if (overwrite === 'true' && !date) {
+      return res.status(400).json({
+        error: 'Date parameter is required when overwrite=true',
+        hint: 'Provide date in YYYY-MM-DD format'
+      });
+    }
+
+    // Validate date format if provided
+    if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      return res.status(400).json({
+        error: 'Invalid date format',
+        hint: 'Use YYYY-MM-DD format (e.g., 2025-10-24)'
+      });
+    }
+
+    log(`📄 [V2 Upload] Processing: ${req.file.originalname} as ${fileType}, source: ${sourceType || 'N/A'}, overwrite: ${overwrite}`);
+
+    let deletionStats = null;
+
+    // Clean existing data if overwrite enabled
+    if (overwrite === 'true' && date) {
+      deletionStats = await cleanDataForDate(date, fileType);
+      log(`✅ [Overwrite] Cleaned data for ${date}: PG=${deletionStats.pgDeleted}, Bank=${deletionStats.bankDeleted}, Total=${deletionStats.totalDeleted}`);
+    }
+
+    const result = await processFile(req.file, fileType, sourceType, preview === 'true');
+
     // Clean up
     fs.unlink(req.file.path, (err) => {
       if (err) console.error('Error deleting file:', err);
@@ -129,6 +170,8 @@ app.post('/api/upload/single', upload.single('file'), async (req, res) => {
     res.json({
       success: true,
       filename: req.file.originalname,
+      overwrite: overwrite === 'true',
+      deletionStats,
       ...result
     });
 
@@ -138,8 +181,46 @@ app.post('/api/upload/single', upload.single('file'), async (req, res) => {
   }
 });
 
+// Clean existing data for a specific date (for overwrite mode)
+async function cleanDataForDate(date, fileType) {
+  const client = await pool.connect();
+  let pgDeleted = 0, bankDeleted = 0;
+
+  try {
+    await client.query('BEGIN');
+
+    if (fileType === 'transactions' || fileType === 'pg_transactions' || fileType === 'pg_data') {
+      const result = await client.query(`
+        DELETE FROM sp_v2_transactions
+        WHERE DATE(transaction_date) = $1
+        AND source_type = 'MANUAL_UPLOAD'
+      `, [date]);
+      pgDeleted = result.rowCount;
+      log(`🧹 [Overwrite] Deleted ${pgDeleted} PG transactions for ${date}`);
+    }
+
+    if (fileType === 'bank_statements' || fileType === 'bank_data') {
+      const result = await client.query(`
+        DELETE FROM sp_v2_bank_statements
+        WHERE DATE(transaction_date) = $1
+        AND source_type = 'MANUAL_UPLOAD'
+      `, [date]);
+      bankDeleted = result.rowCount;
+      log(`🧹 [Overwrite] Deleted ${bankDeleted} bank statements for ${date}`);
+    }
+
+    await client.query('COMMIT');
+    return { pgDeleted, bankDeleted, totalDeleted: pgDeleted + bankDeleted };
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 // File processing function with V2 database integration
-async function processFile(file, fileType, includePreview = true) {
+async function processFile(file, fileType, sourceType = null, includePreview = true) {
   const ext = path.extname(file.originalname).toLowerCase();
   let data = [];
 
@@ -156,21 +237,30 @@ async function processFile(file, fileType, includePreview = true) {
     throw new Error('No data found in file');
   }
 
-  console.log(`📊 [V2 Upload] Parsed ${data.length} rows from ${file.originalname}`);
+  log(`📊 [V2 Upload] Parsed ${data.length} rows from ${file.originalname}`);
 
   // Auto-detect file type based on columns
   const detectedType = fileType === 'auto-detect' ? detectFileType(data[0]) : fileType;
-  
+
   // Convert V1 format to V2 if needed
   let processedData = data;
   try {
     const format = detectFormat(Object.keys(data[0]));
-    console.log(`📋 [V2 Upload] Detected format: ${format}`);
-    
+    log(`📋 [V2 Upload] Detected format: ${format}`);
+
     if (format === 'v1') {
-      const v1Type = detectedType === 'transactions' ? 'pg_transactions' : 'bank_statements';
-      processedData = convertV1CSVToV2(data, v1Type);
-      console.log(`✨ [V2 Upload] Converted ${data.length} V1 rows to V2 format`);
+      // Fix: Check for both 'transactions' and 'pg_transactions' variants
+      const isPgTransactions = detectedType === 'transactions' || detectedType === 'pg_transactions' || detectedType === 'pg_data';
+      const v1Type = isPgTransactions ? 'pg_transactions' : 'bank_statements';
+
+      // For bank statements, use sourceType as bank name for DB-driven mapping
+      const bankName = (!isPgTransactions && sourceType) ? sourceType : null;
+
+      log(`🔍 [V2 Upload] V1 Type Mapping: detectedType="${detectedType}" → v1Type="${v1Type}", bankName="${bankName || 'N/A'}"`);
+
+      // IMPORTANT: convertV1CSVToV2 is now async!
+      processedData = await convertV1CSVToV2(data, v1Type, bankName);
+      log(`✨ [V2 Upload] Converted ${data.length} V1 rows to V2 format`);
     }
   } catch (conversionError) {
     console.error(`❌ [V2 Upload] V1->V2 conversion failed:`, conversionError);
@@ -180,12 +270,12 @@ async function processFile(file, fileType, includePreview = true) {
   }
   
   // Validate and process data
-  console.log(`🔍 [V2 Upload] Calling validateData with fileType: "${detectedType}"`);
+  log(`🔍 [V2 Upload] Calling validateData with fileType: "${detectedType}"`);
   const { validRecords, errors } = validateData(processedData, detectedType);
   
-  console.log(`📊 [V2 Upload] Validation results: ${validRecords.length} valid, ${errors.length} errors`);
+  log(`📊 [V2 Upload] Validation results: ${validRecords.length} valid, ${errors.length} errors`);
   if (errors.length > 0) {
-    console.log(`❌ [V2 Upload] First error:`, errors[0]);
+    log(`❌ [V2 Upload] First error:`, errors[0]);
   }
   
   // Insert into V2 database
@@ -292,19 +382,32 @@ function validateData(data, fileType) {
 function validateTransaction(row, rowNumber) {
   // Map common column variations - V2 schema uses transaction_id after V1->V2 conversion
   const txnId = row.transaction_id || row.txn_id || row.pgw_ref || row.gateway_ref || row.pg_txn_id;
-  const amountRaw = row.amount_paise || row.amount || row.gross_amount || row.net_amount;
-  
+
+  // 🆕 Extract gross and net amounts separately (fix for PG transaction ambiguity)
+  const grossAmountRaw = row.gross_amount_paise || row.gross_amount || row.paid_amount;
+  const netAmountRaw = row.amount_paise || row.net_amount || row.payee_amount || row.amount;
+
   if (!txnId) {
     throw new Error('Missing transaction ID field');
   }
-  
-  const amount = parseFloat(amountRaw);
-  if (isNaN(amount) || amount <= 0) {
+
+  // Validate net amount (required - this is what merchant receives)
+  const netAmount = parseFloat(netAmountRaw);
+  if (isNaN(netAmount) || netAmount <= 0) {
     throw new Error('Invalid amount');
   }
 
   // If amount is already in paise (> 1000), use as-is, otherwise convert rupees to paise
-  const amountPaise = amount > 1000 ? Math.round(amount) : Math.round(amount * 100);
+  const netAmountPaise = netAmount > 1000 ? Math.round(netAmount) : Math.round(netAmount * 100);
+
+  // Process gross amount (optional - customer paid amount before PG commission)
+  let grossAmountPaise = null;
+  if (grossAmountRaw) {
+    const grossAmount = parseFloat(grossAmountRaw);
+    if (!isNaN(grossAmount) && grossAmount > 0) {
+      grossAmountPaise = grossAmount > 1000 ? Math.round(grossAmount) : Math.round(grossAmount * 100);
+    }
+  }
 
   // Map status to valid database values
   const rawStatus = (row.status || row.Status || 'SUCCESS').toUpperCase();
@@ -324,7 +427,8 @@ function validateTransaction(row, rowNumber) {
     merchant_id: row.merchant_id || 'UNKNOWN',
     pgw_ref: txnId,
     utr: row.utr || row.UTR || null,
-    amount_paise: amountPaise,
+    amount_paise: netAmountPaise,           // Net amount (merchant receives)
+    gross_amount_paise: grossAmountPaise,   // 🆕 Gross amount (customer pays)
     currency: row.currency || 'INR',
     payment_mode: row.payment_mode || row.payment_method || 'UPI',
     status: validStatus,
@@ -341,28 +445,66 @@ function validateTransaction(row, rowNumber) {
 function validateBankStatement(row, rowNumber) {
   // Map common column variations
   const utr = row.utr || row.UTR || row.utr_number;
-  const amountRaw = row.amount_paise || row.amount || row.CREDIT_AMT || row.NET_CR_AMT || row.credited_amount;
-  
-  if (!utr) {
-    throw new Error('Missing UTR field');
+  const bankRef = row.bank_ref || row.bankRef || row.reference_number || row.ref_no;
+
+  // 🆕 Extract ALL amount fields separately (fix for ambiguity issue)
+  const grossAmountRaw = row.gross_amount_paise || row.gross_amount || row.DOMESTIC_AMT || row.GROSS_AMT;
+  const netAmountRaw = row.amount_paise || row.net_amount || row.amount || row.CREDIT_AMT || row.NET_CR_AMT || row.credited_amount;
+  const bankFeeRaw = row.bank_fee_paise || row.bank_fee || row.bank_charges || row.BANK_CHARGES;
+  const bankGstRaw = row.bank_gst_paise || row.bank_gst || row.BANK_GST;
+
+  // Bank statements must have EITHER utr OR bank_ref as identifier
+  if (!utr && !bankRef) {
+    throw new Error('Missing identifier (UTR or bank_ref)');
   }
-  
-  const amount = parseFloat(amountRaw);
-  if (isNaN(amount) || amount <= 0) {
+
+  // Validate net amount (required)
+  const netAmount = parseFloat(netAmountRaw);
+  if (isNaN(netAmount) || netAmount <= 0) {
     throw new Error('Invalid amount');
   }
 
   // If amount is already in paise (> 1000), use as-is, otherwise convert rupees to paise
-  const amountPaise = amount > 1000 ? Math.round(amount) : Math.round(amount * 100);
+  const netAmountPaise = netAmount > 1000 ? Math.round(netAmount) : Math.round(netAmount * 100);
+
+  // Process gross amount (optional - may not be in all bank files)
+  let grossAmountPaise = null;
+  if (grossAmountRaw) {
+    const grossAmount = parseFloat(grossAmountRaw);
+    if (!isNaN(grossAmount) && grossAmount > 0) {
+      grossAmountPaise = grossAmount > 1000 ? Math.round(grossAmount) : Math.round(grossAmount * 100);
+    }
+  }
+
+  // Process bank fee (optional)
+  let bankFeePaise = null;
+  if (bankFeeRaw) {
+    const bankFee = parseFloat(bankFeeRaw);
+    if (!isNaN(bankFee) && bankFee >= 0) {
+      bankFeePaise = bankFee > 100 ? Math.round(bankFee) : Math.round(bankFee * 100);
+    }
+  }
+
+  // Process bank GST (optional)
+  let bankGstPaise = null;
+  if (bankGstRaw) {
+    const bankGst = parseFloat(bankGstRaw);
+    if (!isNaN(bankGst) && bankGst >= 0) {
+      bankGstPaise = bankGst > 100 ? Math.round(bankGst) : Math.round(bankGst * 100);
+    }
+  }
 
   return {
     id: uuidv4(),
     acquirer: row.bank_name || row.BANK || row.acquirer || 'UNKNOWN',
-    utr: utr,
-    amount_paise: amountPaise,
+    utr: utr || bankRef || null,  // Use bank_ref as fallback if no UTR
+    amount_paise: netAmountPaise,           // Net amount (credited to merchant)
+    gross_amount_paise: grossAmountPaise,   // 🆕 Gross amount (customer paid)
+    bank_fee_paise: bankFeePaise,           // 🆕 Bank fee
+    bank_gst_paise: bankGstPaise,           // 🆕 Bank GST
     credited_at: new Date(row.credited_at || row.VALUE_DATE || row.transaction_date || new Date()),
     cycle_date: new Date(row.cycle_date || row.VALUE_DATE || row.transaction_date || new Date()),
-    bank_reference: row.bank_ref || row.TXNID || row.bank_reference || null,
+    bank_reference: bankRef || row.TXNID || row.bank_reference || null,
     raw_data: {
       original_row: rowNumber,
       source_file: 'manual_upload',
@@ -408,13 +550,14 @@ async function insertTransactions(transactions) {
         }
 
         // Insert transaction into sp_v2_transactions
+        // 🆕 Include gross_amount_paise
         await client.query(`
-          INSERT INTO sp_v2_transactions 
-          (transaction_id, merchant_id, gateway_ref, utr, amount_paise, currency, payment_method, status, 
+          INSERT INTO sp_v2_transactions
+          (transaction_id, merchant_id, gateway_ref, utr, amount_paise, gross_amount_paise, currency, payment_method, status,
            transaction_date, transaction_timestamp, source_type, source_name)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
         `, [
-          txn.pgw_ref, txn.merchant_id, txn.pgw_ref, txn.utr, txn.amount_paise,
+          txn.pgw_ref, txn.merchant_id, txn.pgw_ref, txn.utr, txn.amount_paise, txn.gross_amount_paise,
           txn.currency, txn.payment_mode, txn.status,
           new Date(), new Date(), 'MANUAL_UPLOAD', 'manual_upload'
         ]);
@@ -430,7 +573,7 @@ async function insertTransactions(transactions) {
     }
 
     await client.query('COMMIT');
-    console.log(`✅ [V2 Upload] Transactions - Inserted: ${inserted}, Skipped: ${skipped}, Duplicates: ${duplicates}`);
+    log(`✅ [V2 Upload] Transactions - Inserted: ${inserted}, Skipped: ${skipped}, Duplicates: ${duplicates}`);
 
   } catch (error) {
     await client.query('ROLLBACK');
@@ -464,14 +607,25 @@ async function insertBankStatements(statements) {
         }
 
         // Insert bank statement into sp_v2_bank_statements
+        // 🆕 Include gross_amount_paise, bank_fee_paise, bank_gst_paise
         await client.query(`
-          INSERT INTO sp_v2_bank_statements 
-          (bank_ref, bank_name, utr, amount_paise, transaction_date, value_date, 
-           source_type, source_file, debit_credit)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+          INSERT INTO sp_v2_bank_statements
+          (bank_ref, bank_name, utr, amount_paise, gross_amount_paise, bank_fee_paise, bank_gst_paise,
+           transaction_date, value_date, source_type, source_file, debit_credit)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         `, [
-          stmt.bank_reference || stmt.id, stmt.acquirer, stmt.utr, stmt.amount_paise, 
-          stmt.credited_at, stmt.cycle_date, 'MANUAL_UPLOAD', 'manual_upload', 'CREDIT'
+          stmt.bank_reference || stmt.id,
+          stmt.acquirer,
+          stmt.utr,
+          stmt.amount_paise,                           // Net amount (credited to merchant)
+          stmt.gross_amount_paise || stmt.amount_paise, // Gross amount (fallback to net if not provided)
+          stmt.bank_fee_paise || null,                 // Bank fee (if provided in CSV)
+          stmt.bank_gst_paise || null,                 // Bank GST (if provided in CSV)
+          stmt.credited_at,
+          stmt.cycle_date,
+          'MANUAL_UPLOAD',
+          'manual_upload',
+          'CREDIT'
         ]);
 
         inserted++;
@@ -482,7 +636,7 @@ async function insertBankStatements(statements) {
     }
 
     await client.query('COMMIT');
-    console.log(`✅ [V2 Upload] Bank Statements - Inserted: ${inserted}, Skipped: ${skipped}, Duplicates: ${duplicates}`);
+    log(`✅ [V2 Upload] Bank Statements - Inserted: ${inserted}, Skipped: ${skipped}, Duplicates: ${duplicates}`);
 
   } catch (error) {
     await client.query('ROLLBACK');
@@ -517,19 +671,14 @@ app.get('/api/upload/stats', async (req, res) => {
   }
 });
 
-// Health check
-app.get('/api/health', (req, res) => {
-  res.json({ 
-    status: 'healthy', 
-    service: 'v2-file-upload',
-    timestamp: new Date().toISOString() 
-  });
-});
+// Health check with database connectivity test
+// createHealthCheckEndpoint(app, 'v2-file-upload', pool);
+app.get('/health', (req, res) => res.json({ status: 'ok', service: 'v2-file-upload' }));
 
 app.listen(PORT, () => {
-  console.log(`🚀 [V2 Upload Service] Running on port ${PORT}`);
-  console.log(`📁 Multiple file upload: POST http://localhost:${PORT}/api/upload/multiple`);
-  console.log(`📄 Single file upload: POST http://localhost:${PORT}/api/upload/single`);
+  log(`🚀 [V2 Upload Service] Running on port ${PORT}`);
+  log(`📁 Multiple file upload: POST http://localhost:${PORT}/api/upload/multiple`);
+  log(`📄 Single file upload: POST http://localhost:${PORT}/api/upload/single`);
 });
 
 module.exports = app;
