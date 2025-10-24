@@ -18,109 +18,89 @@ async function getKpisFromDatabase(from, to) {
   try {
     console.log(`[Real DB] Fetching KPIs from ${from} to ${to}`);
 
-    // Aggregate all reconciliation jobs that reconciled data in the date range
-    // FIXED (Oct 21): Use date_from/date_to instead of created_at
-    // This shows reconciliation metrics FOR the business date range,
-    // not jobs RUN during the date range
-    // Also use DISTINCT on job_id grouped by date to prevent duplicate counting
-    const jobQuery = `
+    // NEW APPROACH (Oct 24): Query sp_v2_transactions table directly for real-time data
+    // This replaces the old approach of using sp_v2_reconciliation_jobs snapshots
+    const transactionQuery = `
       SELECT
-        SUM(total_pg_records) as total_pg_records,
-        SUM(total_bank_records) as total_bank_records,
-        SUM(matched_records) as matched_records,
-        SUM(unmatched_pg) as unmatched_pg,
-        SUM(unmatched_bank) as unmatched_bank,
-        SUM(exception_records) as exception_records,
-        SUM(total_amount_paise) as total_amount_paise,
-        SUM(reconciled_amount_paise) as reconciled_amount_paise,
-        SUM(variance_amount_paise) as variance_amount_paise,
-        COUNT(*) as job_count
-      FROM (
-        SELECT DISTINCT ON (date_from, date_to)
-          total_pg_records,
-          total_bank_records,
-          matched_records,
-          unmatched_pg,
-          unmatched_bank,
-          exception_records,
-          total_amount_paise,
-          reconciled_amount_paise,
-          variance_amount_paise,
-          date_from,
-          date_to
-        FROM sp_v2_reconciliation_jobs
-        WHERE (date_from <= $2 AND date_to >= $1)
-        ORDER BY date_from, date_to, created_at DESC
-      ) AS unique_jobs
+        COUNT(*) as total_transactions,
+        COUNT(*) FILTER (WHERE status = 'RECONCILED') as matched_count,
+        COUNT(*) FILTER (WHERE status IN ('PENDING', 'UNMATCHED')) as unmatched_count,
+        COUNT(*) FILTER (WHERE status = 'EXCEPTION') as exception_count,
+        COALESCE(SUM(amount_paise), 0) as total_amount_paise,
+        COALESCE(SUM(amount_paise) FILTER (WHERE status = 'RECONCILED'), 0) as reconciled_amount_paise
+      FROM sp_v2_transactions
+      WHERE created_at::date BETWEEN $1 AND $2
     `;
 
-    const jobResult = await client.query(jobQuery, [from, to]);
-    const job = jobResult.rows[0];
+    const txnResult = await client.query(transactionQuery, [from, to]);
+    const txn = txnResult.rows[0];
 
-    if (!job || parseInt(job.job_count) === 0) {
-      console.log('[Real DB] No reconciliation jobs found in sp_v2_reconciliation_jobs');
-      console.log('[Real DB] FALLBACK: Trying sp_v2_reconciliation_results table...');
+    const totalTransactions = parseInt(txn.total_transactions) || 0;
+    const matchedCount = parseInt(txn.matched_count) || 0;
+    const unmatchedCount = parseInt(txn.unmatched_count) || 0;
+    const exceptionCount = parseInt(txn.exception_count) || 0;
+    const totalAmountPaise = BigInt(txn.total_amount_paise || '0');
+    const reconciledAmountPaise = BigInt(txn.reconciled_amount_paise || '0');
+    const variancePaise = totalAmountPaise - reconciledAmountPaise;
 
-      // PRODUCTION FALLBACK: Calculate KPIs from sp_v2_reconciliation_results
-      // Note: This table might use transaction_date or reconciliation_date instead of created_at
-      try {
-        const resultsQuery = `
-          SELECT
-            COUNT(*) FILTER (WHERE match_status = 'MATCHED') as matched_count,
-            COUNT(*) FILTER (WHERE match_status = 'UNMATCHED_PG') as unmatched_pg_count,
-            COUNT(*) FILTER (WHERE match_status = 'UNMATCHED_BANK') as unmatched_bank_count,
-            COUNT(*) FILTER (WHERE match_status = 'EXCEPTION') as exception_count,
-            SUM(pg_amount_paise) FILTER (WHERE pg_amount_paise IS NOT NULL) as total_amount_paise,
-            SUM(pg_amount_paise) FILTER (WHERE match_status = 'MATCHED') as reconciled_amount_paise,
-            COUNT(DISTINCT pg_transaction_id) FILTER (WHERE pg_transaction_id NOT LIKE 'BANK_%') as total_pg_records
-          FROM sp_v2_reconciliation_results
-          WHERE reconciliation_date BETWEEN $1 AND $2
-        `;
+    const matchRatePct = totalTransactions > 0
+      ? Math.round((matchedCount / totalTransactions) * 100)
+      : 0;
 
-        const resultsData = await client.query(resultsQuery, [from, to]);
-        const results = resultsData.rows[0];
+    console.log(`[Real DB] Transactions: ${matchedCount}/${totalTransactions} matched (${matchRatePct}%), ${unmatchedCount} unmatched, ${exceptionCount} exceptions`);
 
-        const totalPgRecords = parseInt(results.total_pg_records) || 0;
-        const matchedRecords = parseInt(results.matched_count) || 0;
-        const totalAmountPaise = BigInt(results.total_amount_paise || '0');
-        const reconciledAmountPaise = BigInt(results.reconciled_amount_paise || '0');
-        const variancePaise = totalAmountPaise - reconciledAmountPaise;
+    return {
+      totalTransactions,
+      matchedCount,
+      unmatchedPgCount: unmatchedCount, // All unmatched treated as PG unmatched
+      unmatchedBankCount: 0, // Can't distinguish from transaction table alone
+      exceptionsCount: exceptionCount,
+      totalAmountPaise: totalAmountPaise.toString(),
+      reconciledAmountPaise: reconciledAmountPaise.toString(),
+      variancePaise: variancePaise.toString(),
+      matchRatePct
+    };
+  } catch (error) {
+    console.error('[Real DB] Error fetching KPIs from transactions:', error.message);
 
-        if (totalPgRecords === 0) {
-          console.log('[Real DB] FALLBACK: No data in reconciliation results either, using zeros');
-          return {
-            totalTransactions: 0,
-            matchedCount: 0,
-            unmatchedPgCount: 0,
-            unmatchedBankCount: 0,
-            exceptionsCount: 0,
-            totalAmountPaise: '0',
-            reconciledAmountPaise: '0',
-            variancePaise: '0',
-            matchRatePct: 0
-          };
-        }
+    // FALLBACK: Try old approach with reconciliation jobs
+    console.log('[Real DB] FALLBACK: Trying sp_v2_reconciliation_jobs table...');
 
-        const matchRatePct = totalPgRecords > 0
-          ? Math.round((matchedRecords / totalPgRecords) * 100)
-          : 0;
+    try {
+      const jobQuery = `
+        SELECT
+          SUM(total_pg_records) as total_pg_records,
+          SUM(matched_records) as matched_records,
+          SUM(unmatched_pg) as unmatched_pg,
+          SUM(unmatched_bank) as unmatched_bank,
+          SUM(exception_records) as exception_records,
+          SUM(total_amount_paise) as total_amount_paise,
+          SUM(reconciled_amount_paise) as reconciled_amount_paise,
+          SUM(variance_amount_paise) as variance_amount_paise,
+          COUNT(*) as job_count
+        FROM (
+          SELECT DISTINCT ON (date_from, date_to)
+            total_pg_records,
+            matched_records,
+            unmatched_pg,
+            unmatched_bank,
+            exception_records,
+            total_amount_paise,
+            reconciled_amount_paise,
+            variance_amount_paise,
+            date_from,
+            date_to
+          FROM sp_v2_reconciliation_jobs
+          WHERE (date_from <= $2 AND date_to >= $1)
+          ORDER BY date_from, date_to, created_at DESC
+        ) AS unique_jobs
+      `;
 
-        console.log(`[Real DB] FALLBACK SUCCESS: ${matchedRecords}/${totalPgRecords} matched (${matchRatePct}%)`);
+      const jobResult = await client.query(jobQuery, [from, to]);
+      const job = jobResult.rows[0];
 
-        return {
-          totalTransactions: totalPgRecords,
-          matchedCount: matchedRecords,
-          unmatchedPgCount: parseInt(results.unmatched_pg_count) || 0,
-          unmatchedBankCount: parseInt(results.unmatched_bank_count) || 0,
-          exceptionsCount: parseInt(results.exception_count) || 0,
-          totalAmountPaise: totalAmountPaise.toString(),
-          reconciledAmountPaise: reconciledAmountPaise.toString(),
-          variancePaise: variancePaise.toString(),
-          matchRatePct
-        };
-      } catch (fallbackError) {
-        console.error('[Real DB] FALLBACK FAILED:', fallbackError.message);
-        console.log('[Real DB] Using zeros');
+      if (!job || parseInt(job.job_count) === 0) {
+        console.log('[Real DB] FALLBACK: No reconciliation jobs found, using zeros');
         return {
           totalTransactions: 0,
           matchedCount: 0,
@@ -133,30 +113,41 @@ async function getKpisFromDatabase(from, to) {
           matchRatePct: 0
         };
       }
+
+      const totalPgRecords = parseInt(job.total_pg_records) || 0;
+      const matchedRecords = parseInt(job.matched_records) || 0;
+      const matchRatePct = totalPgRecords > 0
+        ? Math.round((matchedRecords / totalPgRecords) * 100)
+        : 0;
+
+      console.log(`[Real DB] FALLBACK: Aggregated ${job.job_count} jobs: ${matchedRecords}/${totalPgRecords} matched (${matchRatePct}%)`);
+
+      return {
+        totalTransactions: totalPgRecords,
+        matchedCount: matchedRecords,
+        unmatchedPgCount: parseInt(job.unmatched_pg) || 0,
+        unmatchedBankCount: parseInt(job.unmatched_bank) || 0,
+        exceptionsCount: parseInt(job.exception_records) || 0,
+        totalAmountPaise: job.total_amount_paise?.toString() || '0',
+        reconciledAmountPaise: job.reconciled_amount_paise?.toString() || '0',
+        variancePaise: job.variance_amount_paise?.toString() || '0',
+        matchRatePct
+      };
+    } catch (fallbackError) {
+      console.error('[Real DB] FALLBACK FAILED:', fallbackError.message);
+      console.log('[Real DB] Using zeros');
+      return {
+        totalTransactions: 0,
+        matchedCount: 0,
+        unmatchedPgCount: 0,
+        unmatchedBankCount: 0,
+        exceptionsCount: 0,
+        totalAmountPaise: '0',
+        reconciledAmountPaise: '0',
+        variancePaise: '0',
+        matchRatePct: 0
+      };
     }
-
-    const totalPgRecords = parseInt(job.total_pg_records) || 0;
-    const matchedRecords = parseInt(job.matched_records) || 0;
-    const matchRatePct = totalPgRecords > 0
-      ? Math.round((matchedRecords / totalPgRecords) * 100)
-      : 0;
-
-    console.log(`[Real DB] Aggregated ${job.job_count} jobs: ${matchedRecords}/${totalPgRecords} matched (${matchRatePct}%)`);
-
-    return {
-      totalTransactions: totalPgRecords,
-      matchedCount: matchedRecords,
-      unmatchedPgCount: parseInt(job.unmatched_pg) || 0,
-      unmatchedBankCount: parseInt(job.unmatched_bank) || 0,
-      exceptionsCount: parseInt(job.exception_records) || 0,
-      totalAmountPaise: job.total_amount_paise?.toString() || '0',
-      reconciledAmountPaise: job.reconciled_amount_paise?.toString() || '0',
-      variancePaise: job.variance_amount_paise?.toString() || '0',
-      matchRatePct
-    };
-  } catch (error) {
-    console.error('[Real DB] Error fetching KPIs:', error.message);
-    throw error;
   } finally {
     client.release();
   }
