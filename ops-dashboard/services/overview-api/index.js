@@ -981,14 +981,34 @@ app.get('/api/overview', async (req, res) => {
         grossAmount: parseInt(kpiData.totalAmountPaise),
         reconciledAmount: parseInt(kpiData.reconciledAmountPaise),
         unreconciledAmount: parseInt(kpiData.variancePaise)
-      }
+      },
+      // Add bySource array for OverviewSimple.tsx component
+      bySource: [
+        {
+          source: "Connectors",
+          matchRate: sourceBreakdown.connector.pct,
+          matched: sourceBreakdown.connector.matched,
+          total: sourceBreakdown.connector.total,
+          exceptions: 0, // TODO: Add exceptions tracking per source
+          lastSync: null // TODO: Add connector sync time tracking
+        },
+        {
+          source: "Manual Upload",
+          matchRate: sourceBreakdown.manual.pct,
+          matched: sourceBreakdown.manual.matched,
+          total: sourceBreakdown.manual.total,
+          exceptions: 0,
+          lastSync: null
+        }
+      ]
     };
 
     console.log('[Overview API /api/overview] ✅ Real data (V2 structure):', {
       captured: result.pipeline.captured,
       breakdown: `${result.pipeline.inSettlement}/${result.pipeline.sentToBank}/${result.pipeline.credited}/${result.pipeline.unsettled}`,
       reconciliation: `matched=${result.reconciliation.matched}, exceptions=${result.reconciliation.exceptions}`,
-      bySource: `manual=${result.reconciliation.bySource.manual}, connector=${result.reconciliation.bySource.connector}`
+      bySource: `manual=${result.reconciliation.bySource.manual}, connector=${result.reconciliation.bySource.connector}`,
+      bySourceArray: `Connectors: ${result.bySource[0].matchRate}% (${result.bySource[0].matched}/${result.bySource[0].total}), Manual: ${result.bySource[1].matchRate}% (${result.bySource[1].matched}/${result.bySource[1].total})`
     });
 
     res.json(result);
