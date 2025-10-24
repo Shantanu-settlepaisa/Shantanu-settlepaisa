@@ -446,18 +446,31 @@ async function getFinancialAnalytics(from, to, merchantId = null, groupBy = null
   try {
     console.log(`[Real DB] Fetching financial analytics from ${from} to ${to}, merchantId=${merchantId}, groupBy=${groupBy}`);
 
-    // Build summary query with NULL handling for bank charges
+    // Build summary query with NULL/zero handling for bank charges
+    // If settlepaisa_revenue_paise is 0 or NULL, fallback to total_commission_paise
     const summaryQuery = `
       SELECT
         SUM(gross_amount_paise) as total_gmv,
         SUM(total_commission_paise) as total_mdr,
         SUM(COALESCE(total_bank_charges_paise, 0)) as total_bank_charges,
-        SUM(COALESCE(settlepaisa_revenue_paise, total_commission_paise, 0)) as total_revenue,
+        SUM(
+          CASE
+            WHEN COALESCE(settlepaisa_revenue_paise, 0) = 0
+            THEN total_commission_paise
+            ELSE settlepaisa_revenue_paise
+          END
+        ) as total_revenue,
         SUM(net_amount_paise) as total_net_settled,
         SUM(total_transactions) as total_txn_count,
         COUNT(DISTINCT merchant_id) as merchant_count,
         COUNT(*) as batch_count,
-        (SUM(COALESCE(settlepaisa_revenue_paise, total_commission_paise, 0))::FLOAT /
+        (SUM(
+          CASE
+            WHEN COALESCE(settlepaisa_revenue_paise, 0) = 0
+            THEN total_commission_paise
+            ELSE settlepaisa_revenue_paise
+          END
+        )::FLOAT /
          NULLIF(SUM(total_commission_paise), 0) * 100) as margin_percent
       FROM sp_v2_settlement_batches
       WHERE cycle_date BETWEEN $1 AND $2
