@@ -1167,7 +1167,6 @@ export function ManualUploadEnhanced() {
               )}
             </div>
           )}
-        </div>
       </div>
 
       {/* Summary Tiles - Only show after files are uploaded */}
