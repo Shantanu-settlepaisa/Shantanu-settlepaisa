@@ -446,18 +446,18 @@ async function getFinancialAnalytics(from, to, merchantId = null, groupBy = null
   try {
     console.log(`[Real DB] Fetching financial analytics from ${from} to ${to}, merchantId=${merchantId}, groupBy=${groupBy}`);
 
-    // Build summary query
+    // Build summary query with NULL handling for bank charges
     const summaryQuery = `
       SELECT
         SUM(gross_amount_paise) as total_gmv,
         SUM(total_commission_paise) as total_mdr,
-        SUM(total_bank_charges_paise) as total_bank_charges,
-        SUM(settlepaisa_revenue_paise) as total_revenue,
+        SUM(COALESCE(total_bank_charges_paise, 0)) as total_bank_charges,
+        SUM(COALESCE(settlepaisa_revenue_paise, total_commission_paise, 0)) as total_revenue,
         SUM(net_amount_paise) as total_net_settled,
         SUM(total_transactions) as total_txn_count,
         COUNT(DISTINCT merchant_id) as merchant_count,
         COUNT(*) as batch_count,
-        (SUM(settlepaisa_revenue_paise)::FLOAT /
+        (SUM(COALESCE(settlepaisa_revenue_paise, total_commission_paise, 0))::FLOAT /
          NULLIF(SUM(total_commission_paise), 0) * 100) as margin_percent
       FROM sp_v2_settlement_batches
       WHERE cycle_date BETWEEN $1 AND $2
@@ -472,6 +472,40 @@ async function getFinancialAnalytics(from, to, merchantId = null, groupBy = null
     const fromDate = new Date(from);
     const toDate = new Date(to);
     const daysDiff = Math.ceil((toDate - fromDate) / (1000 * 60 * 60 * 24)) + 1;
+
+    // Calculate previous period dates for delta comparison
+    const previousToDate = new Date(fromDate);
+    previousToDate.setDate(previousToDate.getDate() - 1);
+    const previousFromDate = new Date(previousToDate);
+    previousFromDate.setDate(previousFromDate.getDate() - daysDiff + 1);
+
+    const previousFrom = previousFromDate.toISOString().split('T')[0];
+    const previousTo = previousToDate.toISOString().split('T')[0];
+
+    console.log(`[Real DB] Querying previous period for comparison: ${previousFrom} to ${previousTo}`);
+
+    // Query previous period for delta calculation
+    const previousResult = await client.query(summaryQuery, [previousFrom, previousTo, merchantId]);
+    const previousSummary = previousResult.rows[0];
+
+    // Calculate delta percentages
+    const calculateDelta = (current, previous) => {
+      const currentVal = parseFloat(current) || 0;
+      const previousVal = parseFloat(previous) || 0;
+      if (previousVal === 0) return undefined; // No comparison possible
+      return parseFloat((((currentVal - previousVal) / previousVal) * 100).toFixed(1));
+    };
+
+    const deltas = {
+      gmvPct: calculateDelta(summary.total_gmv, previousSummary.total_gmv),
+      mdrPct: calculateDelta(summary.total_mdr, previousSummary.total_mdr),
+      bankChargesPct: calculateDelta(summary.total_bank_charges, previousSummary.total_bank_charges),
+      revenuePct: calculateDelta(summary.total_revenue, previousSummary.total_revenue),
+      marginPct: calculateDelta(summary.margin_percent, previousSummary.margin_percent),
+      netSettledPct: calculateDelta(summary.total_net_settled, previousSummary.total_net_settled)
+    };
+
+    console.log(`[Real DB] Deltas calculated: GMV=${deltas.gmvPct}%, MDR=${deltas.mdrPct}%, Revenue=${deltas.revenuePct}%`);
 
     // Build response
     const response = {
@@ -518,7 +552,8 @@ async function getFinancialAnalytics(from, to, merchantId = null, groupBy = null
             ? parseFloat((parseInt(summary.total_gmv || 0) / parseInt(summary.total_txn_count) / 100).toFixed(2))
             : 0
         }
-      }
+      },
+      deltas: deltas
     };
 
     // Add trends if groupBy is specified
