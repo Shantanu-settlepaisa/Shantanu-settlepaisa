@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'react'
-import { FileUp, Settings, Download, CheckCircle, AlertCircle } from 'lucide-react'
+import { FileUp, Settings, Download, CheckCircle, AlertCircle, Play } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { FileCard, type UploadedFile } from './recon/FileCard'
 import { ReconResultsTable, type ReconRow } from './recon/ReconResultsTable'
@@ -129,6 +129,7 @@ async function parseCSVFile(file: File): Promise<any[]> {
 
 export function ManualUploadEnhanced() {
   const queryClient = useQueryClient()
+  const INGEST_API_URL = import.meta.env.VITE_INGEST_API_URL || 'http://localhost:5106';
   const [cycleDate, setCycleDate] = useState(() => {
     const yesterday = new Date()
     yesterday.setDate(yesterday.getDate() - 1)
@@ -421,103 +422,7 @@ export function ManualUploadEnhanced() {
       }
     }
   }, [jobSummary, jobCounts, jobId]);
-  
-  // Trigger automatic reconciliation when both files are uploaded
-  useEffect(() => {
-    if (pgFiles.length > 0 && bankFiles.length > 0) {
-      const startRecon = async () => {
-        setIsLoading(true)
-        
-        try {
-          // cycleDate is already in YYYY-MM-DD format
-          const reconDate = cycleDate || new Date().toISOString().split('T')[0];
-          
-          console.log('[Manual Upload] Starting reconciliation for date:', reconDate);
-          console.log('[Manual Upload] PG File:', pgFiles[0].file.name);
-          console.log('[Manual Upload] Bank File:', bankFiles[0].file.name);
-          
-          // Get parsed CSV data
-          const pgData = pgFiles[0].parsedData || [];
-          const bankData = bankFiles[0].parsedData || [];
-          
-          console.log('[Manual Upload] Sending PG data:', pgData.length, 'records');
-          console.log('[Manual Upload] Sending bank data:', bankData.length, 'records');
-          
-          // Call the real recon API with uploaded data
-          const reconApiUrl = import.meta.env.VITE_RECON_API_URL || 'http://localhost:5103';
-          const response = await fetch(`${reconApiUrl}/recon/run`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-              date: reconDate,
-              dryRun: false,
-              pgTransactions: pgData,
-              bankRecords: bankData,
-              bankFilename: bankFiles[0].file.name  // Pass filename for bank detection
-            })
-          });
-          
-          if (!response.ok) {
-            throw new Error(`Recon API error: ${response.status}`);
-          }
-          
-          const data = await response.json();
-          console.log('[Manual Upload] Recon API response:', data);
-          
-          if (data.success && data.jobId) {
-            const newJobId = data.jobId;
-            setJobId(newJobId);
-            
-            // Extract counters from response
-            const counters = data.counters || {};
-            const matchedCount = counters.matched || 0;
-            const unmatchedPgCount = counters.unmatchedPg || 0;
-            const unmatchedBankCount = counters.unmatchedBank || 0;
-            const exceptionsCount = counters.exceptions || 0;
-            const totalCount = counters.pgFetched || (matchedCount + unmatchedPgCount);
-            
-            console.log('[Manual Upload] Job created:', newJobId);
-            console.log('[Manual Upload] Counters:', counters);
-            console.log('[Manual Upload] Setting breakdownCounts:', {
-              totalCount,
-              matchedCount,
-              unmatchedPgCount,
-              unmatchedBankCount,
-              exceptionsCount
-            });
-            
-            setBreakdownCounts({
-              totalCount,
-              matchedCount,
-              unmatchedPgCount,
-              unmatchedBankCount,
-              exceptionsCount
-            });
-            
-            // Create stats for display
-            console.log('[Manual Upload] Reconciliation completed successfully');
-          } else {
-            throw new Error('Invalid response from recon API');
-          }
-        } catch (error: any) {
-          console.error('[Manual Upload] Reconciliation failed:', error);
-          console.error('[Manual Upload] Error details:', error.message);
-        } finally {
-          setIsLoading(false);
-        }
-      };
-      
-      startRecon();
-    } else if (pgFiles.length === 0 && bankFiles.length === 0 && !jobId) {
-      // Only clear when BOTH files are removed AND there's no active job
-      console.log('Files cleared and no active job, showing empty state');
-      setReconResults([]);
-      setIsLoading(false);
-    }
-  }, [pgFiles, bankFiles, cycleDate])
-  
+
   // Trigger refetch when jobId changes  
   useEffect(() => {
     if (jobId) {
@@ -803,6 +708,84 @@ export function ManualUploadEnhanced() {
     }
   }, [])
 
+  // Manual reconciliation trigger
+  const handleRunRecon = useCallback(async () => {
+    console.log('[Manual Recon] Starting reconciliation...');
+    setIsLoading(true);
+
+    try {
+      const reconDate = cycleDate || new Date().toISOString().split('T')[0];
+
+      // Combine ALL bank files into single array
+      const allBankData = bankFiles.flatMap(file => file.parsedData || []);
+      const pgData = pgFiles[0]?.parsedData || [];
+
+      console.log('[Manual Recon] Running with:');
+      console.log('  - PG records:', pgData.length);
+      console.log('  - Bank records:', allBankData.length, `(from ${bankFiles.length} file(s))`);
+      console.log('  - Banks:', bankFiles.map(f => f.analysis?.schemaDetected || 'UNKNOWN').join(', '));
+
+      // Call the real recon API with uploaded data
+      const reconApiUrl = import.meta.env.VITE_RECON_API_URL || 'http://localhost:5103';
+      const response = await fetch(`${reconApiUrl}/recon/run`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          date: reconDate,
+          dryRun: false,
+          pgTransactions: pgData,
+          bankRecords: allBankData,
+          bankFilename: bankFiles[0]?.file.name || 'multiple_banks.csv'  // Pass first filename for detection
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Recon API error: ${response.status}`);
+      }
+
+      const data = await response.json();
+      console.log('[Manual Recon] API response:', data);
+
+      if (data.success && data.jobId) {
+        const newJobId = data.jobId;
+        setJobId(newJobId);
+
+        // Extract counters from response
+        const counters = data.counters || {};
+        const matchedCount = counters.matched || 0;
+        const unmatchedPgCount = counters.unmatchedPg || 0;
+        const unmatchedBankCount = counters.unmatchedBank || 0;
+        const exceptionsCount = counters.exceptions || 0;
+        const totalCount = counters.pgFetched || (matchedCount + unmatchedPgCount);
+
+        console.log('[Manual Recon] Job created:', newJobId);
+        console.log('[Manual Recon] Counters:', counters);
+
+        setBreakdownCounts({
+          totalCount,
+          matchedCount,
+          unmatchedPgCount,
+          unmatchedBankCount,
+          exceptionsCount
+        });
+
+        console.log('[Manual Recon] Reconciliation completed successfully');
+      } else {
+        throw new Error(data.error || 'Invalid response from recon API');
+      }
+    } catch (error: any) {
+      console.error('[Manual Recon] Reconciliation failed:', error);
+      console.error('[Manual Recon] Error details:', error.message);
+
+      // Show error to user
+      alert(`Reconciliation failed: ${error.message}`);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [pgFiles, bankFiles, cycleDate]);
+
   // Upload sample files from V2 API
   const handleUploadSampleFiles = async () => {
     try {
@@ -810,7 +793,7 @@ export function ManualUploadEnhanced() {
       console.log('Starting sample file upload...')
       
       // Get sample files from V2 API
-      const sampleResponse = await fetch('http://localhost:5106/api/upload/sample-files')
+      const sampleResponse = await fetch(`${INGEST_API_URL}/api/upload/sample-files`)
       const sampleData = await sampleResponse.json()
       console.log('Sample files response:', sampleData)
       
@@ -823,8 +806,8 @@ export function ManualUploadEnhanced() {
           console.log('Found PG and Bank files:', pgFile.file_name, bankFile.file_name)
           
           // Download file contents
-          const pgResponse = await fetch(`http://localhost:5106/api/upload/sample-files/${pgFile.file_id}/download`)
-          const bankResponse = await fetch(`http://localhost:5106/api/upload/sample-files/${bankFile.file_id}/download`)
+          const pgResponse = await fetch(`${INGEST_API_URL}/api/upload/sample-files/${pgFile.file_id}/download`)
+          const bankResponse = await fetch(`${INGEST_API_URL}/api/upload/sample-files/${bankFile.file_id}/download`)
           
           const pgContent = await pgResponse.text()
           const bankContent = await bankResponse.text()
@@ -1113,6 +1096,81 @@ export function ManualUploadEnhanced() {
         </div>
       </div>
 
+      {/* Run Reconciliation Button - NEW */}
+      {(pgFiles.length > 0 || bankFiles.length > 0) && (
+        <div className="px-6 py-4 border-t border-b bg-gray-50">
+          <div className="flex items-center justify-between gap-4">
+            {/* File Summary */}
+            <div className="flex-1">
+              <div className="text-sm font-medium text-gray-900 mb-1">
+                Ready to Reconcile
+              </div>
+              <div className="text-sm text-gray-600 space-y-0.5">
+                {pgFiles.length > 0 && (
+                  <div className="flex items-center gap-2">
+                    <CheckCircle className="h-3 w-3 text-green-600" />
+                    <span>PG: {pgFiles[0]?.parsedData?.length?.toLocaleString() || 0} transactions</span>
+                  </div>
+                )}
+                {bankFiles.length > 0 && (
+                  <div className="flex items-center gap-2">
+                    <CheckCircle className="h-3 w-3 text-green-600" />
+                    <span>
+                      Bank: {bankFiles.length} file{bankFiles.length !== 1 ? 's' : ''}, {' '}
+                      {bankFiles.reduce((sum, f) => sum + (f.parsedData?.length || 0), 0).toLocaleString()} statements
+                    </span>
+                  </div>
+                )}
+                {bankFiles.length > 1 && (
+                  <div className="ml-5 mt-1 text-xs text-gray-500">
+                    {bankFiles.map((f, idx) => (
+                      <div key={idx}>
+                        → {f.analysis?.schemaDetected || 'UNKNOWN'}: {f.parsedData?.length?.toLocaleString() || 0} records
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Run Recon Button */}
+            <Button
+              onClick={handleRunRecon}
+              disabled={pgFiles.length === 0 || bankFiles.length === 0 || isLoading}
+              size="lg"
+              className="min-w-[200px]"
+            >
+              {isLoading ? (
+                <>
+                  <div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></div>
+                  Running...
+                </>
+              ) : (
+                <>
+                  <Play className="h-4 w-4 mr-2" />
+                  Run Reconciliation
+                </>
+              )}
+            </Button>
+          </div>
+
+          {/* Validation Message */}
+          {(pgFiles.length === 0 || bankFiles.length === 0) && (
+            <div className="mt-3 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
+              {pgFiles.length === 0 && bankFiles.length === 0 && (
+                <>⚠️ Upload both PG transactions and Bank statements to run reconciliation</>
+              )}
+              {pgFiles.length === 0 && bankFiles.length > 0 && (
+                <>⚠️ Upload PG transactions file to continue</>
+              )}
+              {pgFiles.length > 0 && bankFiles.length === 0 && (
+                <>⚠️ Upload at least one Bank statement file to continue</>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Summary Tiles - Only show after files are uploaded */}
       {(pgFiles.length > 0 && bankFiles.length > 0) && (
         <div className="px-6 py-4">
@@ -1187,7 +1245,7 @@ export function ManualUploadEnhanced() {
                   try {
                     setIsLoading(true)
                     // Use the latest reconciliation job from V2 API
-                    const response = await fetch(`http://localhost:5106/api/reconciliation/results`)
+                    const response = await fetch(`${INGEST_API_URL}/api/reconciliation/results`)
                     const data = await response.json()
                     
                     if (data.reconciliationJobs && data.reconciliationJobs.length > 0) {
