@@ -1096,9 +1096,8 @@ export function ManualUploadEnhanced() {
         </div>
       </div>
 
-      {/* Run Reconciliation Button - NEW */}
-      {(pgFiles.length > 0 || bankFiles.length > 0) && (
-        <div className="px-6 py-4 border-t border-b bg-gray-50">
+      {/* Run Reconciliation Button - Always Visible */}
+      <div className="px-6 py-4 border-t border-b bg-gray-50">
           <div className="flex items-center justify-between gap-4">
             {/* File Summary */}
             <div className="flex-1">
@@ -1169,7 +1168,7 @@ export function ManualUploadEnhanced() {
             </div>
           )}
         </div>
-      )}
+      </div>
 
       {/* Summary Tiles - Only show after files are uploaded */}
       {(pgFiles.length > 0 && bankFiles.length > 0) && (
