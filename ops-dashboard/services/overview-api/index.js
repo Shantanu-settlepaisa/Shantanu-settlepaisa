@@ -953,6 +953,9 @@ app.get('/api/overview', async (req, res) => {
     // Get KPI data for reconciliation info
     const kpiData = await realDB.getKpisFromDatabase(startDate, endDate);
 
+    // Get real source breakdown from database
+    const sourceBreakdown = await realDB.getSourceBreakdownFromDatabase(startDate, endDate);
+
     // Return V2 nested structure expected by frontend
     const result = {
       pipeline: {
@@ -970,8 +973,8 @@ app.get('/api/overview', async (req, res) => {
         unmatched: kpiData.unmatchedPgCount + kpiData.unmatchedBankCount,
         exceptions: kpiData.exceptionsCount,
         bySource: {
-          manual: Math.floor(kpiData.totalTransactions * 0.3),
-          connector: Math.floor(kpiData.totalTransactions * 0.7)
+          manual: sourceBreakdown.manual.total,
+          connector: sourceBreakdown.connector.total
         }
       },
       financial: {
@@ -984,7 +987,8 @@ app.get('/api/overview', async (req, res) => {
     console.log('[Overview API /api/overview] ✅ Real data (V2 structure):', {
       captured: result.pipeline.captured,
       breakdown: `${result.pipeline.inSettlement}/${result.pipeline.sentToBank}/${result.pipeline.credited}/${result.pipeline.unsettled}`,
-      reconciliation: `matched=${result.reconciliation.matched}, exceptions=${result.reconciliation.exceptions}`
+      reconciliation: `matched=${result.reconciliation.matched}, exceptions=${result.reconciliation.exceptions}`,
+      bySource: `manual=${result.reconciliation.bySource.manual}, connector=${result.reconciliation.bySource.connector}`
     });
 
     res.json(result);
