@@ -24,7 +24,8 @@ export function ConnectorHealthMini({ filters, isLoading: parentLoading }: Conne
   const { data: connectors, isLoading } = useQuery({
     queryKey: ['connector-health-mini', filters],
     queryFn: async () => {
-      const response = await fetch('http://localhost:5108/api/connectors/health');
+      const API_URL = import.meta.env.VITE_OVERVIEW_API_URL || import.meta.env.VITE_API_BASE_URL || 'http://localhost:5108';
+      const response = await fetch(`${API_URL}/api/connectors/health`);
       if (!response.ok) return [];
       const result = await response.json();
       
@@ -46,7 +47,9 @@ export function ConnectorHealthMini({ filters, isLoading: parentLoading }: Conne
     queryKey: ['sftp-health'],
     queryFn: async () => {
       try {
-        const response = await fetch('http://localhost:5106/api/ingest/health', {
+        // SFTP ingestion API (optional - may not be available in all environments)
+        const INGEST_API_URL = import.meta.env.VITE_INGEST_API_URL || 'http://localhost:5106';
+        const response = await fetch(`${INGEST_API_URL}/api/ingest/health`, {
           headers: { 'X-User-Role': 'admin' }
         });
         if (!response.ok) return [];
@@ -127,7 +130,8 @@ export function ConnectorHealthMini({ filters, isLoading: parentLoading }: Conne
   };
 
   const handleConnectorClick = (connectorId: string) => {
-    navigate(`/ops/connectors/${connectorId}`);
+    // Navigate to connectors list page (detail page not yet implemented)
+    navigate('/ops/connectors');
   };
 
   return (
