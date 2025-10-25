@@ -229,22 +229,13 @@ function transformV2ToKpis(v2Data: any): Kpis {
 }
 
 function transformV2ToTopReasons(v2Data: any): TopReason[] {
-  console.log('🔄 [V2 Hooks] Transforming V2 data to TopReasons:', v2Data);
+  // This fallback should only be used if the API call fails
+  // Return empty array instead of hardcoded mock data
+  console.warn('⚠️ [V2 Hooks] Using fallback - API call failed, returning empty exception reasons');
+  console.log('🔄 [V2 Hooks] V2 data received:', v2Data);
 
-  // Handle /api/overview structure
-  const reconData = v2Data.reconciliation || {};
-  const hasRealData = v2Data.source === 'V2_DATABASE' || v2Data.pipeline !== undefined;
-
-  const exceptionCount = hasRealData ? (reconData.exceptions || 0) : 28;
-  
-  console.log('🎯 [V2 Hooks] TopReasons exception count:', exceptionCount);
-  
-  return [
-    { reasonCode: 'MISSING_UTR', count: Math.floor(exceptionCount * 0.4) },
-    { reasonCode: 'DUPLICATE_UTR', count: Math.floor(exceptionCount * 0.3) },
-    { reasonCode: 'AMOUNT_MISMATCH', count: Math.floor(exceptionCount * 0.2) },
-    { reasonCode: 'DATE_MISMATCH', count: Math.floor(exceptionCount * 0.1) },
-  ].filter(r => r.count > 0);
+  // Return empty array - better to show nothing than wrong data
+  return [];
 }
 
 function transformV2ToPipeline(v2Data: any): PipelineSummary {
