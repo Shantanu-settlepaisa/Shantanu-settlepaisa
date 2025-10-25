@@ -205,8 +205,9 @@ export default function Overview() {
         {/* Exceptions Card */}
         <ExceptionsCard
           totalExceptions={kpis?.recon.exceptionsCount || 0}
+          topReasonsData={topReasons}
           filters={filters}
-          isLoading={isLoading}
+          isLoading={isLoading || reasonsLoading}
         />
 
         {/* Connector Health Mini */}
