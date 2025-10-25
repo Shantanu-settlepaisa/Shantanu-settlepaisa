@@ -2324,6 +2324,18 @@ export class OpsApiExtended {
     return response.data
   }
 
+  async deleteConnector(id: string): Promise<any> {
+    if (USE_MOCK_API) {
+      return {
+        success: true,
+        message: 'Connector deleted successfully'
+      }
+    }
+
+    const response = await apiClient.delete(`http://localhost:5103/connectors/${id}`)
+    return response.data
+  }
+
   async backfillConnector(id: string, params: { startDate: string; endDate: string; force?: boolean }): Promise<any> {
     if (USE_MOCK_API) {
       return {

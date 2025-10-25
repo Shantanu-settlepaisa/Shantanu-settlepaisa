@@ -1,12 +1,12 @@
 import { useState, useEffect } from 'react'
-import { 
-  Plus, 
-  Search, 
-  RefreshCw, 
-  Play, 
-  Pause, 
-  AlertCircle, 
-  CheckCircle, 
+import {
+  Plus,
+  Search,
+  RefreshCw,
+  Play,
+  Pause,
+  AlertCircle,
+  CheckCircle,
   Clock,
   Wifi,
   WifiOff,
@@ -14,7 +14,8 @@ import {
   TestTube,
   Calendar,
   History,
-  Cable
+  Cable,
+  Trash2
 } from 'lucide-react'
 import { opsApiExtended } from '@/lib/ops-api-extended'
 import { ConnectorFormModal } from '@/components/connectors/ConnectorFormModal'
@@ -115,6 +116,20 @@ export default function ConnectorsPage() {
   const handleBackfill = (connector: Connector) => {
     setSelectedConnector(connector)
     setBackfillOpen(true)
+  }
+
+  const handleDeleteConnector = async (connector: Connector) => {
+    if (!confirm(`Are you sure you want to delete "${connector.name}"? This action cannot be undone.`)) {
+      return
+    }
+    try {
+      await opsApiExtended.deleteConnector(connector.id)
+      alert(`${connector.name} has been deleted successfully`)
+      await loadConnectors()
+    } catch (error) {
+      console.error('Failed to delete connector:', error)
+      alert('Failed to delete connector')
+    }
   }
 
   const getHealthIcon = (status?: ConnectorHealthStatus) => {
@@ -273,8 +288,8 @@ export default function ConnectorsPage() {
                   </div>
                 </div>
 
-                {/* Action Buttons */}
-                <div className="grid grid-cols-3 gap-2">
+                {/* Action Buttons - 4x2 Grid Layout */}
+                <div className="grid grid-cols-4 gap-2">
                   <button
                     onClick={() => handleTestConnector(connector)}
                     className="px-2 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50 flex items-center justify-center gap-1"
@@ -314,7 +329,7 @@ export default function ConnectorsPage() {
                   <button
                     onClick={() => handleToggleStatus(connector)}
                     className={`px-2 py-1.5 text-xs font-medium rounded flex items-center justify-center gap-1 ${
-                      connector.status === 'ACTIVE' 
+                      connector.status === 'ACTIVE'
                         ? 'bg-red-50 text-red-700 border border-red-200 hover:bg-red-100'
                         : 'bg-green-50 text-green-700 border border-green-200 hover:bg-green-100'
                     }`}
@@ -330,6 +345,13 @@ export default function ConnectorsPage() {
                         Resume
                       </>
                     )}
+                  </button>
+                  <button
+                    onClick={() => handleDeleteConnector(connector)}
+                    className="px-2 py-1.5 text-xs font-medium bg-red-50 text-red-700 border border-red-200 rounded hover:bg-red-100 flex items-center justify-center gap-1"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                    Delete
                   </button>
                 </div>
               </div>
