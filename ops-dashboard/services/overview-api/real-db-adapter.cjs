@@ -246,39 +246,27 @@ async function getExceptionSeverityFromDatabase(from, to) {
   try {
     console.log(`[Real DB] Fetching exception severity from ${from} to ${to}`);
 
+    // Query sp_v2_transactions instead of sp_v2_reconciliation_results
+    // Note: exception_severity column doesn't exist, so we default all to 'high'
     const severityQuery = `
       SELECT
-        exception_severity,
         COUNT(*) as count
-      FROM sp_v2_reconciliation_results
-      WHERE match_status = 'EXCEPTION'
+      FROM sp_v2_transactions
+      WHERE status = 'EXCEPTION'
         AND created_at::date BETWEEN $1 AND $2
-      GROUP BY exception_severity
     `;
 
     const result = await client.query(severityQuery, [from, to]);
 
+    const totalExceptions = parseInt(result.rows[0]?.count) || 0;
+
+    // Since exception_severity doesn't exist in the table, mark all as 'high' severity
     const severitySplit = {
       critical: 0,
-      high: 0,
+      high: totalExceptions,  // All exceptions marked as high severity
       medium: 0,
       low: 0
     };
-
-    result.rows.forEach(row => {
-      const severity = row.exception_severity?.toLowerCase();
-      const count = parseInt(row.count) || 0;
-
-      if (severity === 'critical') {
-        severitySplit.critical = count;
-      } else if (severity === 'high') {
-        severitySplit.high = count;
-      } else if (severity === 'medium') {
-        severitySplit.medium = count;
-      } else if (severity === 'low') {
-        severitySplit.low = count;
-      }
-    });
 
     console.log(`[Real DB] Exception severity: C=${severitySplit.critical}, H=${severitySplit.high}, M=${severitySplit.medium}, L=${severitySplit.low}`);
 
@@ -300,15 +288,16 @@ async function getTopExceptionReasonsFromDatabase(from, to, limit = 5) {
   try {
     console.log(`[Real DB] Fetching top exception reasons from ${from} to ${to}`);
 
+    // Query sp_v2_transactions instead of sp_v2_reconciliation_results
+    // Use exception_reason column (not exception_reason_code)
     const reasonsQuery = `
       SELECT
-        exception_reason_code,
-        exception_severity,
+        exception_reason,
         COUNT(*) as count
-      FROM sp_v2_reconciliation_results
-      WHERE match_status = 'EXCEPTION'
+      FROM sp_v2_transactions
+      WHERE status = 'EXCEPTION'
         AND created_at::date BETWEEN $1 AND $2
-      GROUP BY exception_reason_code, exception_severity
+      GROUP BY exception_reason
       ORDER BY count DESC
       LIMIT $3
     `;
@@ -316,10 +305,10 @@ async function getTopExceptionReasonsFromDatabase(from, to, limit = 5) {
     const result = await client.query(reasonsQuery, [from, to, limit]);
 
     const topReasons = result.rows.map(row => ({
-      code: row.exception_reason_code || 'UNKNOWN',
-      label: formatReasonCode(row.exception_reason_code),
+      code: row.exception_reason || 'UNKNOWN',
+      label: formatReasonCode(row.exception_reason),
       count: parseInt(row.count) || 0,
-      severity: row.exception_severity?.toLowerCase() || 'medium'
+      severity: 'high'  // Default to high since exception_severity column doesn't exist
     }));
 
     console.log(`[Real DB] Found ${topReasons.length} exception reasons`);
