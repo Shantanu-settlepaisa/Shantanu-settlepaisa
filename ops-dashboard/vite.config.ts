@@ -32,11 +32,11 @@ export default defineConfig(({ mode }) => ({
         changeOrigin: true,
       },
       '/api': {
-        target: 'http://localhost:5106',
+        target: 'http://localhost:5108',
         changeOrigin: true,
       },
       '/ops/api': {
-        target: 'http://localhost:5106',
+        target: 'http://localhost:5108',
         changeOrigin: true,
       }
     },

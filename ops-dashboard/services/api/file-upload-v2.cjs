@@ -20,10 +20,10 @@ const PORT = process.env.PORT || 5107;
 // Database connection with production-ready pool configuration
 const pool = new Pool({
   user: process.env.DATABASE_USER || 'postgres',
-  host: process.env.DATABASE_HOST || 'settlepaisa-staging.c9u0agyyg6q9.ap-south-1.rds.amazonaws.com',
+  host: process.env.DATABASE_HOST || 'localhost',
   database: process.env.DATABASE_NAME || 'settlepaisa_v2',
-  password: process.env.DATABASE_PASSWORD || 'SettlePaisa2024',
-  port: parseInt(process.env.DATABASE_PORT || '5432'),
+  password: process.env.DATABASE_PASSWORD || 'settlepaisa123',
+  port: parseInt(process.env.DATABASE_PORT || '5433'),
   max: 20,
   min: 2,
   idleTimeoutMillis: 30000,

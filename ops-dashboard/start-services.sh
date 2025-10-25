@@ -63,13 +63,13 @@ else
     echo "Check /tmp/recon-api.log for errors"
 fi
 
-# Start Overview API (port 5105)
-echo -n "Starting Overview API on port 5105..."
+# Start Overview API (port 5108)
+echo -n "Starting Overview API on port 5108..."
 cd /Users/shantanusingh/ops-dashboard/services/overview-api
-node index.js > /tmp/overview-api.log 2>&1 &
+PORT=5108 node index.js > /tmp/overview-api.log 2>&1 &
 OVERVIEW_PID=$!
 sleep 2
-if check_port 5105; then
+if check_port 5108; then
     echo -e "${GREEN} ✓${NC}"
 else
     echo -e "${RED} ✗${NC}"
@@ -114,7 +114,7 @@ echo "---------------"
 check_port 5101 && echo -e "PG API:                ${GREEN}Running${NC} on port 5101" || echo -e "PG API:                ${RED}Not running${NC}"
 check_port 5102 && echo -e "Bank API:              ${GREEN}Running${NC} on port 5102" || echo -e "Bank API:              ${RED}Not running${NC}"
 check_port 5103 && echo -e "Recon API:             ${GREEN}Running${NC} on port 5103" || echo -e "Recon API:             ${RED}Not running${NC}"
-check_port 5105 && echo -e "Overview API:          ${GREEN}Running${NC} on port 5105" || echo -e "Overview API:          ${RED}Not running${NC}"
+check_port 5108 && echo -e "Overview API:          ${GREEN}Running${NC} on port 5108" || echo -e "Overview API:          ${RED}Not running${NC}"
 if [ "${FEATURE_BANK_SFTP_INGESTION}" = "true" ]; then
     check_port 5106 && echo -e "Ingest API:            ${GREEN}Running${NC} on port 5106" || echo -e "Ingest API:            ${RED}Not running${NC}"
 fi
