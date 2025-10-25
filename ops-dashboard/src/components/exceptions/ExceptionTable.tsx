@@ -15,21 +15,16 @@ interface ExceptionTableProps {
   selectedIds: string[]
   onSelectionChange: (ids: string[]) => void
   onExceptionClick: (exception: Exception) => void
-  hasMore: boolean
-  onLoadMore: () => void
 }
 
-export function ExceptionTable({ 
-  exceptions, 
+export function ExceptionTable({
+  exceptions,
   selectedIds,
   onSelectionChange,
-  onExceptionClick,
-  hasMore,
-  onLoadMore
+  onExceptionClick
 }: ExceptionTableProps) {
   const tableRef = useRef<HTMLDivElement>(null)
   const selectAllRef = useRef<HTMLInputElement>(null)
-  const [isLoadingMore, setIsLoadingMore] = useState(false)
 
   // Set indeterminate state for select all checkbox
   useEffect(() => {
@@ -38,26 +33,6 @@ export function ExceptionTable({
       selectAllRef.current.indeterminate = isIndeterminate
     }
   }, [selectedIds, exceptions])
-
-  // Handle scroll for pagination
-  useEffect(() => {
-    const handleScroll = () => {
-      if (!tableRef.current || isLoadingMore || !hasMore) return
-      
-      const { scrollTop, scrollHeight, clientHeight } = tableRef.current
-      if (scrollTop + clientHeight >= scrollHeight - 100) {
-        setIsLoadingMore(true)
-        onLoadMore()
-        setTimeout(() => setIsLoadingMore(false), 1000)
-      }
-    }
-
-    const element = tableRef.current
-    if (element) {
-      element.addEventListener('scroll', handleScroll)
-      return () => element.removeEventListener('scroll', handleScroll)
-    }
-  }, [hasMore, isLoadingMore, onLoadMore])
 
   const handleSelectAll = (checked: boolean) => {
     if (checked) {
@@ -285,21 +260,6 @@ export function ExceptionTable({
           })}
         </tbody>
       </table>
-      
-      {isLoadingMore && (
-        <div className="p-4 text-center">
-          <div className="inline-flex items-center">
-            <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin mr-2"></div>
-            Loading more...
-          </div>
-        </div>
-      )}
-      
-      {!hasMore && exceptions.length > 0 && (
-        <div className="p-4 text-center text-sm text-gray-500">
-          No more exceptions to load
-        </div>
-      )}
       
       {exceptions.length === 0 && (
         <div className="p-8 text-center">

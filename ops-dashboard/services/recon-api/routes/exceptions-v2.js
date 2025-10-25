@@ -5,11 +5,15 @@ const { Parser } = require('json2csv');
 const router = express.Router();
 
 const pool = new Pool({
-  host: 'localhost',
-  port: 5433,
-  database: 'settlepaisa_v2',
-  user: 'postgres',
-  password: 'settlepaisa123'
+  user: process.env.DB_USER || 'postgres',
+  host: process.env.DB_HOST || 'settlepaisa-staging.c9u0agyyg6q9.ap-south-1.rds.amazonaws.com',
+  database: process.env.DB_NAME || 'settlepaisa_v2',
+  password: process.env.DB_PASSWORD || 'SettlePaisa2024',
+  port: process.env.DB_PORT || 5432,
+  max: 20,
+  min: 2,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 5000,
 });
 
 // =====================================================

@@ -51,33 +51,29 @@ export default function Exceptions() {
   const [bulkModalOpen, setBulkModalOpen] = useState(false)
   const [exportModalOpen, setExportModalOpen] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
-  const [cursor, setCursor] = useState<string | undefined>()
-  const [allExceptions, setAllExceptions] = useState<Exception[]>([])
+  const [currentPage, setCurrentPage] = useState(1)
+  const [totalPages, setTotalPages] = useState(1)
+  const ITEMS_PER_PAGE = 50
 
   // Fetch exceptions
   const { data: exceptionsData, isLoading, refetch } = useQuery({
-    queryKey: ['exceptions', query, cursor],
-    queryFn: () => opsApiExtended.getExceptions({ ...query, q: searchTerm, cursor, limit: 50 }),
+    queryKey: ['exceptions', query, currentPage, searchTerm],
+    queryFn: () => opsApiExtended.getExceptions({
+      ...query,
+      q: searchTerm,
+      limit: ITEMS_PER_PAGE,
+      offset: (currentPage - 1) * ITEMS_PER_PAGE
+    }),
     refetchInterval: 30000, // Refresh every 30 seconds
     keepPreviousData: true
   })
 
-  // Accumulate exceptions as we paginate
+  // Calculate total pages when data changes
   useEffect(() => {
-    if (exceptionsData?.items) {
-      if (!cursor) {
-        // First page - replace all
-        setAllExceptions(exceptionsData.items)
-      } else {
-        // Subsequent pages - append
-        setAllExceptions(prev => {
-          const existingIds = new Set(prev.map(e => e.id))
-          const newItems = exceptionsData.items.filter(e => !existingIds.has(e.id))
-          return [...prev, ...newItems]
-        })
-      }
+    if (exceptionsData?.counts?.total) {
+      setTotalPages(Math.ceil(exceptionsData.counts.total / ITEMS_PER_PAGE))
     }
-  }, [exceptionsData, cursor])
+  }, [exceptionsData])
 
   // Fetch saved views
   const { data: savedViews } = useQuery({
@@ -114,22 +110,20 @@ export default function Exceptions() {
   const handleViewSelect = (view: SavedView) => {
     setSelectedView(view)
     setQuery(view.query)
-    setCursor(undefined)
+    setCurrentPage(1) // Reset to page 1
   }
 
   // Handle filter change
   const handleFilterChange = (newQuery: ExceptionQuery) => {
     setQuery(newQuery)
-    setCursor(undefined)
+    setCurrentPage(1) // Reset to page 1
     setSelectedView(null)
-    setAllExceptions([]) // Reset accumulated data
   }
 
   // Handle search
   const handleSearch = (term: string) => {
     setSearchTerm(term)
-    setCursor(undefined)
-    setAllExceptions([]) // Reset accumulated data
+    setCurrentPage(1) // Reset to page 1
   }
 
   // Handle exception click
@@ -255,14 +249,101 @@ export default function Exceptions() {
             </div>
           </div>
         ) : (
-          <ExceptionTable
-            exceptions={allExceptions}
-            selectedIds={selectedExceptions}
-            onSelectionChange={setSelectedExceptions}
-            onExceptionClick={handleExceptionClick}
-            hasMore={exceptionsData?.hasMore || false}
-            onLoadMore={() => setCursor(exceptionsData?.cursor)}
-          />
+          <>
+            <ExceptionTable
+              exceptions={exceptionsData?.items || []}
+              selectedIds={selectedExceptions}
+              onSelectionChange={setSelectedExceptions}
+              onExceptionClick={handleExceptionClick}
+            />
+
+            {/* Pagination Controls */}
+            {exceptionsData && totalPages > 1 && (
+              <div className="bg-white border-t border-gray-200 px-6 py-4">
+                <div className="flex items-center justify-between">
+                  <div className="text-sm text-gray-700">
+                    Showing <span className="font-medium">{((currentPage - 1) * ITEMS_PER_PAGE) + 1}</span> to{' '}
+                    <span className="font-medium">
+                      {Math.min(currentPage * ITEMS_PER_PAGE, exceptionsData.counts?.total || 0)}
+                    </span> of{' '}
+                    <span className="font-medium">{exceptionsData.counts?.total || 0}</span> exceptions
+                  </div>
+
+                  <div className="flex items-center space-x-2">
+                    {/* Previous Button */}
+                    <button
+                      onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                      disabled={currentPage === 1}
+                      className="px-3 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Previous
+                    </button>
+
+                    {/* Page Numbers */}
+                    <div className="flex items-center space-x-1">
+                      {/* First page */}
+                      {currentPage > 3 && (
+                        <>
+                          <button
+                            onClick={() => setCurrentPage(1)}
+                            className="px-3 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+                          >
+                            1
+                          </button>
+                          {currentPage > 4 && <span className="px-2 text-gray-500">...</span>}
+                        </>
+                      )}
+
+                      {/* Pages around current */}
+                      {Array.from({ length: totalPages }, (_, i) => i + 1)
+                        .filter(page => {
+                          return page === currentPage ||
+                                 page === currentPage - 1 ||
+                                 page === currentPage + 1 ||
+                                 (page === currentPage - 2 && currentPage <= 3) ||
+                                 (page === currentPage + 2 && currentPage >= totalPages - 2)
+                        })
+                        .map(page => (
+                          <button
+                            key={page}
+                            onClick={() => setCurrentPage(page)}
+                            className={`px-3 py-2 border rounded-md text-sm font-medium ${
+                              page === currentPage
+                                ? 'bg-blue-600 text-white border-blue-600'
+                                : 'border-gray-300 text-gray-700 bg-white hover:bg-gray-50'
+                            }`}
+                          >
+                            {page}
+                          </button>
+                        ))}
+
+                      {/* Last page */}
+                      {currentPage < totalPages - 2 && (
+                        <>
+                          {currentPage < totalPages - 3 && <span className="px-2 text-gray-500">...</span>}
+                          <button
+                            onClick={() => setCurrentPage(totalPages)}
+                            className="px-3 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+                          >
+                            {totalPages}
+                          </button>
+                        </>
+                      )}
+                    </div>
+
+                    {/* Next Button */}
+                    <button
+                      onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                      disabled={currentPage === totalPages}
+                      className="px-3 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </>
         )}
       </div>
 
