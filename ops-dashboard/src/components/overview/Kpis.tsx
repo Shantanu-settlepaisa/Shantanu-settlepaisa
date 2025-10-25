@@ -62,7 +62,6 @@ function KpiCard({
   sparkline,
   color = 'blue',
   icon: Icon,
-  onClick,
 }: {
   title: string;
   value: string | number;
@@ -72,7 +71,6 @@ function KpiCard({
   sparkline?: number[];
   color?: string;
   icon?: any;
-  onClick?: () => void;
 }) {
   const isPositive = trendPct && trendPct > 0;
   const TrendIcon = isPositive ? ArrowUpRight : ArrowDownRight;
@@ -95,9 +93,8 @@ function KpiCard({
     <TooltipProvider>
       <Tooltip>
         <TooltipTrigger asChild>
-          <div 
-            className="flex-1 min-w-[200px] bg-white rounded-lg ring-1 ring-slate-200 shadow-sm p-4 hover:shadow-md transition-all cursor-pointer"
-            onClick={onClick}
+          <div
+            className="flex-1 min-w-[200px] bg-white rounded-lg ring-1 ring-slate-200 shadow-sm p-4"
           >
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center gap-2">
@@ -162,8 +159,7 @@ export function Kpis({ kpis, isLoading, filters }: KpisProps) {
       subtitle: `${kpis.recon.matchedCount.toLocaleString('en-IN')} of ${kpis.totals.transactionsCount.toLocaleString('en-IN')} transactions`,
       tooltip: "Percentage of transactions successfully matched with bank records",
       color: "green",
-      icon: CheckCircle,
-      onClick: () => handleDrillThrough('/ops/reconciliation', { status: 'matched' })
+      icon: CheckCircle
     },
     {
       title: "Total Amount",
@@ -171,8 +167,7 @@ export function Kpis({ kpis, isLoading, filters }: KpisProps) {
       subtitle: `${kpis.totals.transactionsCount.toLocaleString('en-IN')} transactions processed`,
       tooltip: "Total transaction amount in selected period",
       color: "blue",
-      icon: IndianRupee,
-      onClick: () => handleDrillThrough('/ops/transactions')
+      icon: IndianRupee
     },
     {
       title: "Reconciled Amount",
@@ -180,8 +175,7 @@ export function Kpis({ kpis, isLoading, filters }: KpisProps) {
       subtitle: `${kpis.recon.matchedCount.toLocaleString('en-IN')} transactions matched`,
       tooltip: "Total amount of successfully reconciled transactions",
       color: "green",
-      icon: CheckCircle,
-      onClick: () => handleDrillThrough('/ops/reconciliation', { status: 'matched' })
+      icon: CheckCircle
     },
     {
       title: "Variance",
@@ -189,8 +183,7 @@ export function Kpis({ kpis, isLoading, filters }: KpisProps) {
       subtitle: `${kpis.recon.unmatchedPgCount + kpis.recon.exceptionsCount} unreconciled`,
       tooltip: "Amount difference between total and reconciled transactions",
       color: "amber",
-      icon: AlertCircle,
-      onClick: () => handleDrillThrough('/ops/reconciliation', { status: 'unmatched' })
+      icon: AlertCircle
     },
     {
       title: "Exceptions",
@@ -198,8 +191,7 @@ export function Kpis({ kpis, isLoading, filters }: KpisProps) {
       subtitle: "Requiring manual review",
       tooltip: "Transactions with data quality issues requiring attention",
       color: "red",
-      icon: AlertCircle,
-      onClick: () => handleDrillThrough('/ops/exceptions')
+      icon: AlertCircle
     }
   ];
 
@@ -211,8 +203,7 @@ export function Kpis({ kpis, isLoading, filters }: KpisProps) {
       subtitle: `Last: ${new Date(kpis.settlements.lastCycleISO || '').toLocaleDateString('en-IN')}`,
       tooltip: "Number of settlement batches processed",
       color: "blue",
-      icon: TrendingUp,
-      onClick: () => handleDrillThrough('/ops/settlements')
+      icon: TrendingUp
     },
     {
       title: "Net to Merchants",
@@ -220,8 +211,7 @@ export function Kpis({ kpis, isLoading, filters }: KpisProps) {
       subtitle: "After fees and deductions",
       tooltip: "Total amount credited to merchant accounts",
       color: "green",
-      icon: IndianRupee,
-      onClick: () => handleDrillThrough('/ops/settlements')
+      icon: IndianRupee
     }
   ] : [];
 
@@ -238,7 +228,6 @@ export function Kpis({ kpis, isLoading, filters }: KpisProps) {
           tooltip={card.tooltip}
           color={card.color}
           icon={card.icon}
-          onClick={card.onClick}
         />
       ))}
     </div>
