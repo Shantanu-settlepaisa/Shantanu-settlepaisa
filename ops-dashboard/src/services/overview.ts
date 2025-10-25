@@ -389,14 +389,42 @@ async function transformV2DatabaseResponse(v2Data: any, window: OverviewWindow):
     );
   }
 
-  // Top reasons - using placeholder data (backend doesn't provide this yet)
-  const topReasons: TopReason[] = [
-    { code: 'UTR_MISSING', label: 'Missing UTR', impactedTxns: Math.round(exceptions * 0.39), pct: 39 },
-    { code: 'AMT_MISMATCH', label: 'Amount Mismatch', impactedTxns: Math.round(exceptions * 0.20), pct: 20 },
-    { code: 'DUP_UTR', label: 'Duplicate UTR', impactedTxns: Math.round(exceptions * 0.17), pct: 17 },
-    { code: 'BANK_MISSING', label: 'Not in Bank File', impactedTxns: Math.round(exceptions * 0.15), pct: 15 },
-    { code: 'STATUS_PENDING', label: 'Status Pending', impactedTxns: Math.round(exceptions * 0.10), pct: 10 }
-  ];
+  // Top reasons - fetch real data from backend API
+  let topReasons: TopReason[] = [];
+  try {
+    const overviewApiUrl = import.meta.env.VITE_OVERVIEW_API_URL || 'http://localhost:5108';
+    const topReasonsResponse = await fetch(`${overviewApiUrl}/api/exceptions/top-reasons-detailed?from=${window.from}&to=${window.to}&limit=5`);
+    if (topReasonsResponse.ok) {
+      const topReasonsData = await topReasonsResponse.json();
+      topReasons = topReasonsData.map((reason: any) => ({
+        code: reason.code || 'UNKNOWN',
+        label: reason.label || 'Unknown',
+        impactedTxns: reason.count || 0,
+        pct: exceptions > 0 ? Math.round((reason.count / exceptions) * 100) : 0
+      }));
+      console.log('✅ [V2] Real exception top reasons loaded:', topReasons);
+    } else {
+      console.warn('⚠️ [V2] Top reasons API failed, using fallback');
+      // Fallback to mock data if API fails
+      topReasons = [
+        { code: 'UTR_MISSING', label: 'Missing UTR', impactedTxns: Math.round(exceptions * 0.39), pct: 39 },
+        { code: 'AMT_MISMATCH', label: 'Amount Mismatch', impactedTxns: Math.round(exceptions * 0.20), pct: 20 },
+        { code: 'DUP_UTR', label: 'Duplicate UTR', impactedTxns: Math.round(exceptions * 0.17), pct: 17 },
+        { code: 'BANK_MISSING', label: 'Not in Bank File', impactedTxns: Math.round(exceptions * 0.15), pct: 15 },
+        { code: 'STATUS_PENDING', label: 'Status Pending', impactedTxns: Math.round(exceptions * 0.10), pct: 10 }
+      ];
+    }
+  } catch (error) {
+    console.warn('⚠️ [V2] Failed to fetch top reasons:', error);
+    // Fallback to mock data on error
+    topReasons = [
+      { code: 'UTR_MISSING', label: 'Missing UTR', impactedTxns: Math.round(exceptions * 0.39), pct: 39 },
+      { code: 'AMT_MISMATCH', label: 'Amount Mismatch', impactedTxns: Math.round(exceptions * 0.20), pct: 20 },
+      { code: 'DUP_UTR', label: 'Duplicate UTR', impactedTxns: Math.round(exceptions * 0.17), pct: 17 },
+      { code: 'BANK_MISSING', label: 'Not in Bank File', impactedTxns: Math.round(exceptions * 0.15), pct: 15 },
+      { code: 'STATUS_PENDING', label: 'Status Pending', impactedTxns: Math.round(exceptions * 0.10), pct: 10 }
+    ];
+  }
 
   // Fetch real connectors health from V2 API
   let connectorsHealth: ConnectorsHealthItem[] = [];
