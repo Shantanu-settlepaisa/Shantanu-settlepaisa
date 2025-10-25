@@ -120,28 +120,27 @@ interface V2OverviewResponse {
  */
 function transformV2ToKpis(v2Data: any): Kpis {
   console.log('🔄 [V2 Hooks] Transforming V2 data to KPIs:', v2Data);
-  
-  // Extract data from actual V2 API structure
-  const pipeline = v2Data.pipeline || {};
-  const reconciliation = v2Data.reconciliation || {};
-  const financial = v2Data.financial || {};
-  // Check if we have real API data (even if 0 transactions) by checking for source field
+
+  // Handle /api/overview structure (pipeline + reconciliation + financial)
+  const pipelineData = v2Data.pipeline || {};
+  const reconData = v2Data.reconciliation || {};
+  const financialData = v2Data.financial || {};
+
+  // Check if we have real API data
   const hasRealData = v2Data.source === 'V2_DATABASE' || v2Data.pipeline !== undefined;
-  
+
   if (hasRealData) {
-    // CORRECT FORMULAS:
-    const totalTransactions = reconciliation.total || 0;
-    const matchedTransactions = reconciliation.matched || 0;
-    const unmatchedTransactions = reconciliation.unmatched || 0;
-    const exceptionsCount = reconciliation.exceptions || 0;
-    
-    // Financial amounts - use API-provided values directly
-    const totalAmount = financial.grossAmount || 0;
-    const reconciledAmount = financial.reconciledAmount || 0;
-    const variance = financial.unreconciledAmount || (totalAmount - reconciledAmount);
-    
-    // Match rate calculation
+    // Extract from /api/overview structure
+    const totalTransactions = pipelineData.captured || 0;
+    const matchedTransactions = reconData.matched || 0;
+    const unmatchedTransactions = reconData.unmatched || 0;
+    const exceptionsCount = reconData.exceptions || 0;
     const matchRatePct = totalTransactions > 0 ? Math.round((matchedTransactions / totalTransactions) * 100) : 0;
+
+    // Financial amounts from /api/overview financial data
+    const totalAmount = financialData.grossAmount || 0;
+    const reconciledAmount = financialData.reconciledAmount || 0;
+    const variance = financialData.unreconciledAmount || 0;
     
     console.log('💰 [V2 Hooks] KPI Calculations:', {
       totalTransactions,
@@ -175,12 +174,12 @@ function transformV2ToKpis(v2Data: any): Kpis {
       connectorHealth: [
         {
           connector: 'Connectors',
-          status: reconciliation.bySource?.connector > 0 ? 'ok' : 'degraded',
+          status: reconData.bySource?.connector > 0 ? 'ok' : 'degraded',
           lastSyncISO: v2Data.lastUpdated || new Date().toISOString(),
         },
         {
           connector: 'Manual Upload',
-          status: reconciliation.bySource?.manual > 0 ? 'ok' : 'degraded',
+          status: reconData.bySource?.manual > 0 ? 'ok' : 'degraded',
           lastSyncISO: v2Data.lastUpdated || new Date().toISOString(),
         }
       ],
@@ -231,12 +230,12 @@ function transformV2ToKpis(v2Data: any): Kpis {
 
 function transformV2ToTopReasons(v2Data: any): TopReason[] {
   console.log('🔄 [V2 Hooks] Transforming V2 data to TopReasons:', v2Data);
-  
-  // Extract data from actual V2 API structure
-  const reconciliation = v2Data.reconciliation || {};
-  const pipeline = v2Data.pipeline || {};
+
+  // Handle /api/overview structure
+  const reconData = v2Data.reconciliation || {};
   const hasRealData = v2Data.source === 'V2_DATABASE' || v2Data.pipeline !== undefined;
-  const exceptionCount = hasRealData ? (reconciliation.exceptions || reconciliation.unmatched || 0) : 28;
+
+  const exceptionCount = hasRealData ? (reconData.exceptions || 0) : 28;
   
   console.log('🎯 [V2 Hooks] TopReasons exception count:', exceptionCount);
   
@@ -250,23 +249,22 @@ function transformV2ToTopReasons(v2Data: any): TopReason[] {
 
 function transformV2ToPipeline(v2Data: any): PipelineSummary {
   console.log('🔄 [V2 Hooks] Transforming V2 data to Pipeline:', v2Data);
-  
-  // Extract data from actual V2 API structure
-  const pipeline = v2Data.pipeline || {};
-  const reconciliation = v2Data.reconciliation || {};
-  const settlements = v2Data.settlements || {};
+
+  // Handle /api/overview structure
+  const pipelineData = v2Data.pipeline || {};
+  const reconData = v2Data.reconciliation || {};
   const hasRealData = v2Data.source === 'V2_DATABASE' || v2Data.pipeline !== undefined;
-  
+
   if (hasRealData) {
-    // Use pipeline data directly from V2 API - no fallback to avoid 0 being treated as falsy
-    const ingested = pipeline.captured ?? pipeline.totalTransactions ?? 0;
-    const inSettlement = pipeline.inSettlement ?? 0;
-    const sentToBank = pipeline.sentToBank ?? 0;
-    const credited = pipeline.credited ?? 0;
-    const unsettled = pipeline.unsettled ?? 0;
-    
-    // Keep reconciled for backwards compatibility
-    const reconciled = reconciliation.matched ?? 0;
+    // Extract from /api/overview structure
+    const ingested = pipelineData.captured ?? 0;
+    const inSettlement = pipelineData.inSettlement ?? 0;
+    const sentToBank = pipelineData.sentToBank ?? 0;
+    const credited = pipelineData.credited ?? 0;
+    const unsettled = pipelineData.unsettled ?? 0;
+
+    // Use matched count from reconciliation data
+    const reconciled = reconData.matched ?? 0;
     
     console.log('📊 [V2 Hooks] Pipeline data from API:', {
       ingested,
@@ -298,24 +296,27 @@ function transformV2ToPipeline(v2Data: any): PipelineSummary {
 
 function transformV2ToReconSources(v2Data: any): ReconSourceSummary {
   console.log('🔄 [V2 Hooks] Transforming V2 data to ReconSources:', v2Data);
-  
-  // Extract data from actual V2 API structure
-  const reconciliation = v2Data.reconciliation || {};
-  const hasRealData = v2Data.source === 'V2_DATABASE' || v2Data.reconciliation !== undefined;
-  
+
+  // Handle /api/overview structure
+  const pipelineData = v2Data.pipeline || {};
+  const reconData = v2Data.reconciliation || {};
+  const hasRealData = v2Data.source === 'V2_DATABASE' || v2Data.pipeline !== undefined;
+
   if (hasRealData) {
-    // CORRECT RECONCILIATION SOURCE FORMULAS:
-    const totalTxns = reconciliation.total || 0;
-    const matchedTxns = reconciliation.matched || 0;
-    const unmatchedTxns = reconciliation.unmatched || 0;
-    const exceptionTxns = reconciliation.exceptions || 0;
+    // Extract from /api/overview structure
+    const totalTxns = pipelineData.captured || 0;
+    const matchedTxns = reconData.matched || 0;
+    const unmatchedTxns = reconData.unmatched || 0;
+    const exceptionTxns = reconData.exceptions || 0;
     const matchedPct = totalTxns > 0 ? Math.round((matchedTxns / totalTxns) * 100) : 0;
-    
-    // Get by-source data from V2 API
-    const bySource = reconciliation.bySource || {};
+
+    // Get by-source data from /api/overview
+    const bySource = reconData.bySource || {};
     const manualTxns = bySource.manual || 0;
     const connectorTxns = bySource.connector || 0;
-    const apiTxns = bySource.api || 0;
+    // Estimate matched per source (proportional to total)
+    const manualMatched = totalTxns > 0 ? Math.round((manualTxns / totalTxns) * matchedTxns) : 0;
+    const connectorMatched = matchedTxns - manualMatched;
     
     console.log('🎯 [V2 Hooks] ReconSources Calculations:', {
       totalTxns,
@@ -323,18 +324,14 @@ function transformV2ToReconSources(v2Data: any): ReconSourceSummary {
       unmatchedTxns,
       exceptionTxns,
       matchedPct,
-      bySource: { manualTxns, connectorTxns, apiTxns }
+      bySource: { manualTxns, manualMatched, connectorTxns, connectorMatched }
     });
-    
+
     // Calculate per-source exception counts (proportional to total)
-    // Exceptions are separate from unmatched - they are actual errors/conflicts
     const manualExceptions = totalTxns > 0 ? Math.round((manualTxns / totalTxns) * exceptionTxns) : 0;
     const connectorExceptions = exceptionTxns - manualExceptions;
-    
-    // Calculate matched/unmatched per source based on overall ratio
-    const matchRatio = totalTxns > 0 ? matchedTxns / totalTxns : 0;
-    const manualMatched = Math.round(manualTxns * matchRatio);
-    const connectorMatched = Math.round(connectorTxns * matchRatio);
+
+    // Calculate unmatched per source
     const manualUnmatched = manualTxns - manualMatched - manualExceptions;
     const connectorUnmatched = connectorTxns - connectorMatched - connectorExceptions;
     
@@ -457,8 +454,28 @@ export function useTopReasons(filters: KpiFilters) {
   return useQuery({
     queryKey: ['top-reasons', filters],
     queryFn: async () => {
-      const v2Data = await fetchV2Analytics(filters);
-      return transformV2ToTopReasons(v2Data);
+      // Call the real API endpoint for exception top reasons
+      const apiUrl = import.meta.env.VITE_OVERVIEW_API_URL || 'http://localhost:5108';
+      const url = `${apiUrl}/api/exceptions/top-reasons-detailed?from=${filters.from}&to=${filters.to}&limit=5`;
+
+      console.log('📡 [V2 Hooks] Fetching top reasons from:', url);
+
+      const response = await fetch(url);
+      if (!response.ok) {
+        console.warn('⚠️ [V2 Hooks] Top reasons API failed, using fallback');
+        // Fallback to old behavior if API fails
+        const v2Data = await fetchV2Analytics(filters);
+        return transformV2ToTopReasons(v2Data);
+      }
+
+      const data = await response.json();
+      console.log('✅ [V2 Hooks] Received top reasons data:', data);
+
+      // Transform API response to TopReason format
+      return data.map((reason: any) => ({
+        reasonCode: reason.code || 'UNKNOWN',
+        count: reason.count || 0
+      }));
     },
     refetchInterval: 60000, // Poll every 60 seconds (less frequent)
     staleTime: 30000,
