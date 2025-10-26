@@ -2,7 +2,11 @@
  * Centralized environment configuration with validation
  * Used by all backend services
  */
-require('dotenv').config();
+const path = require('path');
+
+// Load .env from overview-api directory (contains all service env vars)
+// Using explicit path ensures dotenv finds .env regardless of PM2's working directory
+require('dotenv').config({ path: path.join(__dirname, '../overview-api/.env') });
 
 // Validation helper
 function requireEnv(key, fallback = null) {
