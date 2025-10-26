@@ -1,8 +1,9 @@
 const { Pool } = require('pg');
+const path = require('path');
 
-// Load environment variables
+// Load environment variables from .env file in this directory
 // Note: This ensures DB_PORT and other env vars are loaded before Pool creation
-require('dotenv').config();
+require('dotenv').config({ path: path.join(__dirname, '.env') });
 
 // Database connection pool
 const pool = new Pool({
