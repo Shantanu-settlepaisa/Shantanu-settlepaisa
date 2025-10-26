@@ -549,11 +549,11 @@ async function runReconciliation(params) {
 async function fetchPGFromDatabase(params, jobId) {
   const { Pool } = require('pg');
   const pool = new Pool({
-    user: 'postgres',
-    host: 'localhost',
-    database: 'settlepaisa_v2',
-    password: 'settlepaisa123',
-    port: 5433,
+    host: process.env.DB_HOST || '13.201.179.44',
+    port: process.env.DB_PORT || 5432,
+    database: process.env.DB_NAME || 'sp_v2_staging',
+    user: process.env.DB_USER || 'sp_v2_user',
+    password: process.env.DB_PASSWORD || 'sp_v2_password',
   });
 
   try {
@@ -607,11 +607,11 @@ async function fetchPGFromDatabase(params, jobId) {
 async function fetchBankFromDatabase(params, jobId) {
   const { Pool } = require('pg');
   const pool = new Pool({
-    user: 'postgres',
-    host: 'localhost',
-    database: 'settlepaisa_v2',
-    password: 'settlepaisa123',
-    port: 5433,
+    host: process.env.DB_HOST || '13.201.179.44',
+    port: process.env.DB_PORT || 5432,
+    database: process.env.DB_NAME || 'sp_v2_staging',
+    user: process.env.DB_USER || 'sp_v2_user',
+    password: process.env.DB_PASSWORD || 'sp_v2_password',
   });
 
   try {
@@ -2086,7 +2086,60 @@ async function persistResults(results, jobId = 'UNKNOWN', job = {}, params = {})
         }
       }
       console.log(`[Persistence] Saved ${results.exceptions.length} EXCEPTION results`);
-      
+
+      // NEW (Oct 26): Update sp_v2_transactions.status to sync with reconciliation results
+      // This ensures the Overview API KPIs show correct match rates
+      console.log('[Persistence] Updating sp_v2_transactions status based on reconciliation results...');
+
+      // Update MATCHED transactions
+      if (results.matched.length > 0) {
+        const matchedTxnIds = results.matched.map(m => m.pg?.transaction_id || m.pg?.pgw_ref).filter(Boolean);
+        if (matchedTxnIds.length > 0) {
+          const matchedUpdateResult = await client.query(`
+            UPDATE sp_v2_transactions
+            SET status = 'RECONCILED',
+                updated_at = NOW()
+            WHERE transaction_id = ANY($1)
+              AND status != 'RECONCILED'
+          `, [matchedTxnIds]);
+          console.log(`[Persistence] Updated ${matchedUpdateResult.rowCount} transactions to RECONCILED`);
+        }
+      }
+
+      // Update UNMATCHED_PG transactions
+      if (results.unmatchedPg.length > 0) {
+        const unmatchedTxnIds = results.unmatchedPg.map(u => u.transaction_id || u.pgw_ref).filter(Boolean);
+        if (unmatchedTxnIds.length > 0) {
+          const unmatchedUpdateResult = await client.query(`
+            UPDATE sp_v2_transactions
+            SET status = 'UNMATCHED',
+                updated_at = NOW()
+            WHERE transaction_id = ANY($1)
+              AND status != 'UNMATCHED'
+          `, [unmatchedTxnIds]);
+          console.log(`[Persistence] Updated ${unmatchedUpdateResult.rowCount} transactions to UNMATCHED`);
+        }
+      }
+
+      // Update EXCEPTION transactions
+      if (results.exceptions.length > 0) {
+        const exceptionTxnIds = results.exceptions
+          .map(e => e.pg?.transaction_id || e.pg?.pgw_ref)
+          .filter(Boolean);
+        if (exceptionTxnIds.length > 0) {
+          const exceptionUpdateResult = await client.query(`
+            UPDATE sp_v2_transactions
+            SET status = 'EXCEPTION',
+                updated_at = NOW()
+            WHERE transaction_id = ANY($1)
+              AND status != 'EXCEPTION'
+          `, [exceptionTxnIds]);
+          console.log(`[Persistence] Updated ${exceptionUpdateResult.rowCount} transactions to EXCEPTION`);
+        }
+      }
+
+      console.log('[Persistence] ✅ Transaction statuses updated successfully');
+
       await client.query('COMMIT');
       console.log(`[Persistence] ✅ Transaction COMMITTED successfully`);
 
