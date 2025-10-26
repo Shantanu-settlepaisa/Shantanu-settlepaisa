@@ -16,6 +16,10 @@ const bankMappingsRoutes = require('./routes/bank-mappings')
 const pgTransactionsRoutes = require('./routes/pg-transactions')
 const connectorsRoutes = require('./routes/connectors')
 
+// Security: Authentication middleware (CRIT-001, HIGH-006)
+const { authenticate, opsStaffOnly } = require('../overview-api/middleware/authMiddleware.cjs')
+const { corsOptions } = require('../config/corsConfig.cjs')
+
 // Development logging (gated in production)
 const isDev = config.app.nodeEnv !== 'production'
 const log = (...args) => isDev && console.log(...args)
@@ -25,7 +29,10 @@ const PG_API_URL = process.env.PG_API_URL || 'http://localhost:5101';
 const BANK_API_URL = process.env.BANK_API_URL || 'http://localhost:5102';
 
 const app = express()
-app.use(cors())
+
+// Security: Restrict CORS to whitelisted origins (HIGH-001)
+app.use(cors(corsOptions))
+
 app.use(express.json())
 
 // Database pool for health checks with production-ready configuration
@@ -62,7 +69,8 @@ let lastHealthCheck = null
 const HEALTH_CHECK_CACHE_MS = 5000
 
 // New reconciliation endpoint using job runner
-app.post('/recon/run', async (req, res) => {
+// Security: Requires authentication and ops staff role (CRIT-001)
+app.post('/recon/run', authenticate, opsStaffOnly, async (req, res) => {
   const { date, cycle_date, merchantId, merchant_id, acquirerId, dryRun, limit, test, pgTransactions, bankRecords, bankFilename } = req.body
   // Support both naming conventions: date/cycle_date and merchantId/merchant_id
   const reconDate = date || cycle_date
@@ -108,7 +116,8 @@ app.post('/recon/run', async (req, res) => {
 })
 
 // Get job status
-app.get('/recon/jobs/:jobId', (req, res) => {
+// Security: Requires authentication (CRIT-001)
+app.get('/recon/jobs/:jobId', authenticate, opsStaffOnly, (req, res) => {
   const job = getJob(req.params.jobId)
   if (!job) {
     return res.status(404).json({ error: 'Job not found' })
@@ -117,7 +126,8 @@ app.get('/recon/jobs/:jobId', (req, res) => {
 })
 
 // Get job logs
-app.get('/recon/jobs/:jobId/logs', (req, res) => {
+// Security: Requires authentication (CRIT-001)
+app.get('/recon/jobs/:jobId/logs', authenticate, opsStaffOnly, (req, res) => {
   const logs = getJobLogs(req.params.jobId)
   if (!logs || logs.length === 0) {
     return res.status(404).json({ error: 'No logs found for job' })

@@ -14,6 +14,7 @@ import {
 import { toast } from 'sonner';
 import { formatIndianCurrency } from '@/lib/utils';
 import { Link } from 'react-router-dom';
+import reconClient from '@/services/recon-service';
 
 // Reason chip component
 function ReasonChip({ reasonCode, reasonDetail }: { reasonCode: string; reasonDetail?: string }) {
@@ -86,22 +87,18 @@ export function ManualUploadUnified() {
       formData.append('cycleDate', new Date().toISOString().split('T')[0]);
       formData.append('template', selectedTemplate);
 
-      const response = await fetch('http://localhost:5103/ops/recon/manual/upload', {
-        method: 'POST',
-        body: formData
-      });
-
-      if (!response.ok) throw new Error('Upload failed');
-      return response.json();
+      // Use authenticated recon client (Phase 1 Security)
+      const response = await reconClient.post('/ops/recon/manual/upload', formData);
+      return response.data;
     },
     onSuccess: async (data) => {
       toast.success('Reconciliation completed', {
         description: `Match rate: ${data.summary.matchRate}%`
       });
       
-      // Fetch detailed results
-      const response = await fetch(`http://localhost:5103/api/reconcile/${data.resultId}`);
-      const results = await response.json();
+      // Fetch detailed results (Phase 1 Security - authenticated)
+      const response = await reconClient.get(`/api/reconcile/${data.resultId}`);
+      const results = response.data;
       setReconResults(results);
     },
     onError: (error: any) => {

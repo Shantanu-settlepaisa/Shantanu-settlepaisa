@@ -8,6 +8,8 @@ import ManualUploadTiles from './recon/ManualUploadTiles'
 import { useReconJobSummary, useReconJobCounts, useReconJobResults } from '../hooks/useReconJobSummary'
 import { useQueryClient } from '@tanstack/react-query'
 import axios from 'axios'
+import reconClient from '@/services/recon-service'
+import uploadClient from '@/services/upload-service'
 
 
 // Helper to detect PG schema from headers
@@ -454,13 +456,10 @@ export function ManualUploadEnhanced() {
         console.log(`🔄 [Overwrite] Will delete existing PG data for ${cycleDate} before upload`);
       }
 
-      const uploadApiUrl = import.meta.env.VITE_UPLOAD_API_URL || 'http://localhost:5107';
-      const response = await fetch(`${uploadApiUrl}/api/upload/multiple`, {
-        method: 'POST',
-        body: formData
-      });
-      
-      const data = await response.json();
+      // Use authenticated upload client (Phase 1 Security)
+      const response = await uploadClient.post('/api/upload/multiple', formData);
+
+      const data = response.data;
       console.log('V2 Upload response:', data);
 
       if (data.success) {
@@ -553,8 +552,8 @@ export function ManualUploadEnhanced() {
     setPgFetchStatus(null);
     
     try {
-      const reconApiUrl = import.meta.env.VITE_RECON_API_URL || 'http://localhost:5103';
-      const response = await axios.get(`${reconApiUrl}/pg-transactions/fetch`, {
+      // Use authenticated recon client (Phase 1 Security)
+      const response = await reconClient.get('/pg-transactions/fetch', {
         params: {
           cycle_date: cycleDate,
           merchant_id: merchant !== 'All Merchants' ? merchant : undefined
@@ -645,13 +644,10 @@ export function ManualUploadEnhanced() {
         console.log(`🔄 [Overwrite] Will delete existing Bank data for ${cycleDate} before upload`);
       }
 
-      const uploadApiUrl = import.meta.env.VITE_UPLOAD_API_URL || 'http://localhost:5107';
-      const response = await fetch(`${uploadApiUrl}/api/upload/multiple`, {
-        method: 'POST',
-        body: formData
-      });
-      
-      const data = await response.json();
+      // Use authenticated upload client (Phase 1 Security)
+      const response = await uploadClient.post('/api/upload/multiple', formData);
+
+      const data = response.data;
       console.log('V2 Bank Upload response:', data);
 
       if (data.success) {
@@ -754,27 +750,16 @@ export function ManualUploadEnhanced() {
       console.log('  - Bank records:', allBankData.length, `(from ${bankFiles.length} file(s))`);
       console.log('  - Banks:', bankFiles.map(f => f.analysis?.schemaDetected || 'UNKNOWN').join(', '));
 
-      // Call the real recon API with uploaded data
-      const reconApiUrl = import.meta.env.VITE_RECON_API_URL || 'http://localhost:5103';
-      const response = await fetch(`${reconApiUrl}/recon/run`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          date: reconDate,
-          dryRun: false,
-          pgTransactions: pgData,
-          bankRecords: allBankData,
-          bankFilename: bankFiles[0]?.file.name || 'multiple_banks.csv'  // Pass first filename for detection
-        })
+      // Call the real recon API with uploaded data (Phase 1 Security - authenticated)
+      const response = await reconClient.post('/recon/run', {
+        date: reconDate,
+        dryRun: false,
+        pgTransactions: pgData,
+        bankRecords: allBankData,
+        bankFilename: bankFiles[0]?.file.name || 'multiple_banks.csv'  // Pass first filename for detection
       });
 
-      if (!response.ok) {
-        throw new Error(`Recon API error: ${response.status}`);
-      }
-
-      const data = await response.json();
+      const data = response.data;
       console.log('[Manual Recon] API response:', data);
 
       if (data.success && data.jobId) {

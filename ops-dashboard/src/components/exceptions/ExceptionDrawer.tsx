@@ -1,10 +1,10 @@
 import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { 
-  X, 
-  User, 
-  Clock, 
-  AlertCircle, 
+import {
+  X,
+  User,
+  Clock,
+  AlertCircle,
   CheckCircle,
   Archive,
   RefreshCw,
@@ -15,6 +15,7 @@ import {
 import { formatCompactINR, formatDateTime } from '@/lib/utils'
 import { opsApiExtended } from '@/lib/ops-api-extended'
 import type { Exception, ExceptionDetail } from '@/types/exceptions'
+import reconClient from '@/services/recon-service'
 
 interface ExceptionDrawerProps {
   exception: Exception
@@ -60,19 +61,15 @@ export function ExceptionDrawer({ exception, isOpen, onClose, onUpdate }: Except
 
   const handleAction = async (action: string, params?: any) => {
     if (action === 'resolve') {
-      // Call our real API
+      // Call our real API (Phase 1 Security - authenticated)
       try {
-        const response = await fetch(`http://localhost:5103/exceptions/${exception.id}/resolve`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            resolvedBy: 'current_user',
-            resolution: 'Manually verified',
-            notes: actionNote
-          })
+        const response = await reconClient.post(`/exceptions/${exception.id}/resolve`, {
+          resolvedBy: 'current_user',
+          resolution: 'Manually verified',
+          notes: actionNote
         });
-        
-        const data = await response.json();
+
+        const data = response.data;
         
         if (data.success) {
           // Invalidate queries to refresh data

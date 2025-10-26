@@ -6,6 +6,10 @@ const SettlementCalculator = require('./settlement-calculator.cjs');
 const { calculateMerchantSettlement, completeSettlementProcessing } = require('./settlement-calculator-with-deductions.cjs');
 // const { createHealthCheckEndpoint } = require('../health-check');
 
+// Security: Authentication middleware (CRIT-003)
+const { authenticate, canApprove, opsStaffOnly } = require('../overview-api/middleware/authMiddleware.cjs');
+const { corsOptions } = require('../config/corsConfig.cjs');
+
 // Development logging (gated in production)
 const isDev = config.app.nodeEnv !== 'production';
 const log = (...args) => isDev && console.log(...args);
@@ -32,11 +36,13 @@ pool.on('error', (err) => console.error('[Settlement Pool Error]', err));
 const calculator = new SettlementCalculator();
 
 // Middleware
-app.use(cors());
+// Security: Restrict CORS to whitelisted origins (HIGH-001)
+app.use(cors(corsOptions));
 app.use(express.json());
 
 // Get commission tier for merchant
-app.get('/api/commission-tier/:merchantId', async (req, res) => {
+// Security: Requires authentication (CRIT-003)
+app.get('/api/commission-tier/:merchantId', authenticate, opsStaffOnly, async (req, res) => {
   try {
     const { merchantId } = req.params;
     const tier = await calculator.getCommissionTier(merchantId);
@@ -59,7 +65,8 @@ app.get('/api/commission-tier/:merchantId', async (req, res) => {
 });
 
 // Calculate settlement for specific transactions
-app.post('/api/calculate-settlement', async (req, res) => {
+// Security: Requires authentication (CRIT-003)
+app.post('/api/calculate-settlement', authenticate, opsStaffOnly, async (req, res) => {
   try {
     const { transactions, merchantId, batchDate } = req.body;
     
@@ -93,7 +100,8 @@ app.post('/api/calculate-settlement', async (req, res) => {
 });
 
 // Calculate settlement with refund and chargeback deductions
-app.post('/api/settlements/calculate-with-deductions', async (req, res) => {
+// Security: Requires authentication and approval permission (CRIT-003)
+app.post('/api/settlements/calculate-with-deductions', authenticate, canApprove, async (req, res) => {
   try {
     const { merchantId, cycleDate } = req.body;
 

@@ -1,14 +1,15 @@
 import { useState, useEffect } from 'react'
-import { 
-  CheckCircle, 
-  XCircle, 
-  AlertTriangle, 
+import {
+  CheckCircle,
+  XCircle,
+  AlertTriangle,
   Download,
   TrendingUp,
   TrendingDown,
   FileText,
   RefreshCw
 } from 'lucide-react'
+import reconClient from '@/services/recon-service'
 
 interface ReconciliationResult {
   id: string
@@ -41,17 +42,15 @@ export function ReconciliationResults({ resultId }: { resultId?: string }) {
     try {
       setLoading(true)
       if (resultId) {
-        // Fetch specific result
-        const response = await fetch(`http://localhost:5103/api/reconcile/${resultId}`)
-        const data = await response.json()
-        setSelectedResult(data)
+        // Fetch specific result (Phase 1 Security - authenticated)
+        const response = await reconClient.get(`/api/reconcile/${resultId}`)
+        setSelectedResult(response.data)
       } else {
-        // Fetch all results
-        const response = await fetch('http://localhost:5103/api/reconcile')
-        const data = await response.json()
-        setResults(data)
-        if (data.length > 0 && !selectedResult) {
-          setSelectedResult(data[0])
+        // Fetch all results (Phase 1 Security - authenticated)
+        const response = await reconClient.get('/api/reconcile')
+        setResults(response.data)
+        if (response.data.length > 0 && !selectedResult) {
+          setSelectedResult(response.data[0])
         }
       }
     } catch (error) {
@@ -64,16 +63,13 @@ export function ReconciliationResults({ resultId }: { resultId?: string }) {
   const runReconciliation = async () => {
     try {
       const cycleDate = new Date().toISOString().split('T')[0]
-      const response = await fetch('http://localhost:5103/api/reconcile', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          cycleDate,
-          pgSource: 'PG Demo API',
-          bankSource: 'AXIS Bank SFTP'
-        })
+      // Use authenticated recon client (Phase 1 Security)
+      const response = await reconClient.post('/api/reconcile', {
+        cycleDate,
+        pgSource: 'PG Demo API',
+        bankSource: 'AXIS Bank SFTP'
       })
-      const data = await response.json()
+      const data = response.data
       if (data.success) {
         await fetchResults()
       }

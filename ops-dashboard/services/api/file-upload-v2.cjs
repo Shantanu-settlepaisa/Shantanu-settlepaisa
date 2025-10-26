@@ -11,6 +11,10 @@ const path = require('path');
 const { convertV1CSVToV2, detectFormat } = require('./v1-column-mapper');
 // const { createHealthCheckEndpoint } = require('../health-check');
 
+// Security: Authentication middleware (CRIT-002)
+const { authenticate, opsStaffOnly } = require('../overview-api/middleware/authMiddleware.cjs');
+const { corsOptions } = require('../config/corsConfig.cjs');
+
 // Development logging (gated in production)
 const isDev = config.app.nodeEnv !== 'production';
 const log = (...args) => isDev && console.log(...args);
@@ -34,7 +38,8 @@ const pool = new Pool({
 pool.on('error', (err) => console.error('[Upload Pool Error]', err));
 
 // Middleware
-app.use(cors());
+// Security: Restrict CORS to whitelisted origins (HIGH-001)
+app.use(cors(corsOptions));
 app.use(express.json());
 
 // Configure multer for file uploads
@@ -48,27 +53,43 @@ const storage = multer.diskStorage({
   },
   filename: (req, file, cb) => {
     const timestamp = Date.now();
-    const ext = path.extname(file.originalname);
-    cb(null, `${timestamp}_${file.originalname}`);
+    // Security: Sanitize filename to prevent path traversal (CRIT-002)
+    const sanitizedName = path.basename(file.originalname)
+      .replace(/[^a-zA-Z0-9._-]/g, '_')
+      .substring(0, 200);
+    const ext = path.extname(sanitizedName);
+    cb(null, `${timestamp}_${sanitizedName}`);
   }
 });
 
-const upload = multer({ 
+const upload = multer({
   storage,
   limits: { fileSize: 100 * 1024 * 1024 }, // 100MB limit
   fileFilter: (req, file, cb) => {
-    const allowedTypes = ['.csv', '.xlsx', '.xls'];
+    // Security: Validate MIME type (not just extension) (CRIT-002)
+    const allowedMimes = [
+      'text/csv',
+      'text/plain',
+      'application/csv',
+      'application/vnd.ms-excel',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    ];
+
+    const allowedExtensions = ['.csv', '.xlsx', '.xls'];
     const ext = path.extname(file.originalname).toLowerCase();
-    if (allowedTypes.includes(ext)) {
+
+    // Check both MIME type AND extension for security
+    if (allowedMimes.includes(file.mimetype) && allowedExtensions.includes(ext)) {
       cb(null, true);
     } else {
-      cb(new Error('Only CSV and Excel files are allowed'));
+      cb(new Error(`Invalid file type. Expected CSV/Excel, got MIME: ${file.mimetype}, Extension: ${ext}`));
     }
   }
 });
 
 // Enhanced File Upload Endpoint - Multiple Files
-app.post('/api/upload/multiple', upload.array('files', 10), async (req, res) => {
+// Security: Requires authentication and ops staff role (CRIT-002)
+app.post('/api/upload/multiple', authenticate, opsStaffOnly, upload.array('files', 10), async (req, res) => {
   try {
     log('📁 [V2 Upload] Received files:', req.files?.map(f => f.originalname));
     
@@ -121,7 +142,8 @@ app.post('/api/upload/multiple', upload.array('files', 10), async (req, res) => 
 });
 
 // Single File Upload with Type Detection + Upload Session Tracking
-app.post('/api/upload/single', upload.single('file'), async (req, res) => {
+// Security: Requires authentication and ops staff role (CRIT-002)
+app.post('/api/upload/single', authenticate, opsStaffOnly, upload.single('file'), async (req, res) => {
   const client = await pool.connect();
   let uploadSessionId = null;
 

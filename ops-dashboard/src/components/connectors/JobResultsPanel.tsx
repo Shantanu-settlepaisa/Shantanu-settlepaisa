@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import axios from 'axios';
-import { 
-  CheckCircle, 
-  XCircle, 
+import {
+  CheckCircle,
+  XCircle,
   AlertCircle,
   TrendingUp,
   TrendingDown,
@@ -14,6 +14,7 @@ import {
 import { ReconResultsTable } from '../recon/ReconResultsTable';
 import type { JobSummary } from '@/shared/reconMap';
 import { formatINR, toUiStatus } from '@/shared/reconMap';
+import reconClient from '@/services/recon-service';
 
 interface JobResultsPanelProps {
   jobId: string;
@@ -23,11 +24,11 @@ interface JobResultsPanelProps {
 export function JobResultsPanel({ jobId, onClose }: JobResultsPanelProps) {
   const [activeTab, setActiveTab] = useState<'all' | 'matched' | 'exceptions'>('all');
   
-  // Fetch job summary
+  // Fetch job summary (Phase 1 Security - authenticated)
   const { data: summary, isLoading: loadingSummary } = useQuery<JobSummary>({
     queryKey: ['recon-job-summary', jobId],
     queryFn: async () => {
-      const response = await axios.get(`http://localhost:5103/recon/jobs/${jobId}/summary`);
+      const response = await reconClient.get(`/recon/jobs/${jobId}/summary`);
       return response.data;
     },
     refetchInterval: 10000
@@ -44,9 +45,10 @@ export function JobResultsPanel({ jobId, onClose }: JobResultsPanelProps) {
       const params = new URLSearchParams();
       if (statusFilter) params.append('status', statusFilter);
       params.append('limit', '100');
-      
-      const response = await axios.get(
-        `http://localhost:5103/recon/jobs/${jobId}/results?${params}`
+
+      // Use authenticated recon client (Phase 1 Security)
+      const response = await reconClient.get(
+        `/recon/jobs/${jobId}/results?${params}`
       );
       return response.data;
     },
