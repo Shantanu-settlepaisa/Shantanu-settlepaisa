@@ -23,11 +23,11 @@ async function getKpisFromDatabase(from, to) {
     const transactionQuery = `
       SELECT
         COUNT(*) as total_transactions,
-        COUNT(*) FILTER (WHERE status = 'RECONCILED') as matched_count,
+        COUNT(*) FILTER (WHERE status IN ('RECONCILED', 'SETTLED')) as matched_count,
         COUNT(*) FILTER (WHERE status IN ('PENDING', 'UNMATCHED')) as unmatched_count,
         COUNT(*) FILTER (WHERE status = 'EXCEPTION') as exception_count,
         COALESCE(SUM(amount_paise), 0) as total_amount_paise,
-        COALESCE(SUM(amount_paise) FILTER (WHERE status = 'RECONCILED'), 0) as reconciled_amount_paise
+        COALESCE(SUM(amount_paise) FILTER (WHERE status IN ('RECONCILED', 'SETTLED')), 0) as reconciled_amount_paise
       FROM sp_v2_transactions
       WHERE created_at::date BETWEEN $1 AND $2
     `;
@@ -335,7 +335,7 @@ async function getSourceBreakdownFromDatabase(from, to) {
       SELECT
         source_type,
         COUNT(*) as total,
-        COUNT(*) FILTER (WHERE status = 'RECONCILED') as matched,
+        COUNT(*) FILTER (WHERE status IN ('RECONCILED', 'SETTLED')) as matched,
         COUNT(*) FILTER (WHERE status = 'EXCEPTION') as exceptions,
         COUNT(*) FILTER (WHERE status IN ('PENDING', 'UNMATCHED')) as unmatched
       FROM sp_v2_transactions
