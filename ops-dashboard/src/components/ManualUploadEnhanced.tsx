@@ -509,9 +509,30 @@ export function ManualUploadEnhanced() {
       } else {
         console.error('❌ [V2 Upload] Failed to upload files:', data.error);
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('❌ [V2 Upload] Upload error:', error);
-      
+
+      // Check if error is due to settled transactions blocking overwrite
+      const errorMessage = error.response?.data?.error || error.message || '';
+
+      if (errorMessage.includes('SETTLED') || errorMessage.includes('CREDITED') || errorMessage.includes('settlement batch')) {
+        alert(
+          `⚠️ Cannot Overwrite - Transactions Already Settled\n\n` +
+          `Some transactions for ${cycleDate} have already been included in settlement batches. ` +
+          `Deleting them would create orphaned settlement records and break financial audit trails.\n\n` +
+          `Details:\n${errorMessage}\n\n` +
+          `To fix this:\n` +
+          `1. Go to Settlements page\n` +
+          `2. Find and cancel/void settlement batch for ${cycleDate}\n` +
+          `3. Then try overwrite again\n\n` +
+          `Or contact finance team for manual adjustment instead of overwrite.`
+        );
+        return; // Don't show fallback UI on settlement error
+      }
+
+      // Show generic error for other upload failures
+      alert(`Upload failed: ${errorMessage}`);
+
       // Fallback: create file objects for UI display even if API fails
       const uploadedFiles: UploadedFile[] = await Promise.all(
         files.map(async (file, index) => {
@@ -697,9 +718,31 @@ export function ManualUploadEnhanced() {
       } else {
         console.error('❌ [V2 Upload] Failed to upload bank files:', data.error);
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('❌ [V2 Upload] Bank upload error:', error);
-      
+
+      // Check if error is due to reconciled bank statements blocking overwrite
+      const errorMessage = error.response?.data?.error || error.message || '';
+
+      if (errorMessage.includes('reconciled') || errorMessage.includes('reconciliation')) {
+        alert(
+          `⚠️ Cannot Overwrite - Bank Statements Already Reconciled\n\n` +
+          `Some bank statements for ${cycleDate} have already been used in reconciliation. ` +
+          `Deleting them would orphan reconciliation matches.\n\n` +
+          `Details:\n${errorMessage}\n\n` +
+          `To fix this:\n` +
+          `1. The system will automatically clean up reconciliation data\n` +
+          `2. You can safely retry the upload\n\n` +
+          `If issue persists, contact support.`
+        );
+        return; // Don't show fallback UI on recon error
+      }
+
+      // Show generic error for other upload failures
+      if (errorMessage) {
+        alert(`Upload failed: ${errorMessage}`);
+      }
+
       // Fallback: create file objects for UI display even if API fails
       const uploadedFiles: UploadedFile[] = await Promise.all(
         files.map(async (file, index) => {

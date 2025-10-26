@@ -216,7 +216,7 @@ app.post('/api/upload/single', authenticate, opsStaffOnly, upload.single('file')
     // Clean existing data if overwrite enabled
     if (overwrite === 'true' && date) {
       deletionStats = await cleanDataForDate(date, fileType, client);
-      log(`✅ [Overwrite] Cleaned data for ${date}: PG=${deletionStats.pgDeleted}, Bank=${deletionStats.bankDeleted}, Total=${deletionStats.totalDeleted}`);
+      log(`✅ [Overwrite] Cleaned data for ${date}: PG=${deletionStats.pgDeleted}, Bank=${deletionStats.bankDeleted}, Recon=${deletionStats.reconDeleted || 0}, Total=${deletionStats.totalDeleted}`);
     }
 
     // Process file with session tracking
@@ -295,29 +295,188 @@ app.post('/api/upload/single', authenticate, opsStaffOnly, upload.single('file')
 });
 
 // Clean existing data for a specific date (for overwrite mode)
+// CRITICAL: Implements settlement protection to prevent data corruption
 async function cleanDataForDate(date, fileType, client = null) {
   const shouldReleaseClient = !client;
   if (!client) {
     client = await pool.connect();
   }
 
-  let pgDeleted = 0, bankDeleted = 0;
+  let pgDeleted = 0, bankDeleted = 0, reconDeleted = 0;
 
   try {
     const needsTransaction = shouldReleaseClient;
     if (needsTransaction) await client.query('BEGIN');
 
     if (fileType === 'transactions' || fileType === 'pg_transactions' || fileType === 'pg_data') {
+      // SAFETY CHECK 1: Block deletion of SETTLED/CREDITED transactions
+      // These transactions are part of completed settlement batches - deleting them would:
+      // - Create orphaned settlement batches with invalid totals
+      // - Break financial audit trails
+      // - Cause accounting discrepancies if money was already transferred
+      const settledCheck = await client.query(`
+        SELECT
+          COUNT(*) as count,
+          (
+            SELECT STRING_AGG(transaction_id, ', ')
+            FROM (
+              SELECT transaction_id
+              FROM sp_v2_transactions
+              WHERE DATE(transaction_date) = $1
+              AND source_type = 'MANUAL_UPLOAD'
+              AND status IN ('SETTLED', 'CREDITED')
+              ORDER BY transaction_id
+              LIMIT 10
+            ) sub
+          ) as sample_txn_ids,
+          STRING_AGG(DISTINCT status, ', ') as statuses
+        FROM sp_v2_transactions
+        WHERE DATE(transaction_date) = $1
+        AND source_type = 'MANUAL_UPLOAD'
+        AND status IN ('SETTLED', 'CREDITED')
+      `, [date]);
+
+      if (parseInt(settledCheck.rows[0].count) > 0) {
+        const count = settledCheck.rows[0].count;
+        const sampleIds = settledCheck.rows[0].sample_txn_ids;
+        const statuses = settledCheck.rows[0].statuses;
+
+        throw new Error(
+          `Cannot overwrite: ${count} transaction${count > 1 ? 's' : ''} ` +
+          `${count > 1 ? 'are' : 'is'} already ${statuses}. ` +
+          `These transactions are part of completed settlement batches and cannot be deleted. ` +
+          `Sample transaction IDs: ${sampleIds}. ` +
+          `To fix: Cancel settlement batches first, or contact finance team for manual adjustment.`
+        );
+      }
+
+      // SAFETY CHECK 2: Block deletion of transactions linked to settlement items
+      // Even if status is not SETTLED, the FK constraint means these are in settlement batches
+      const settlementLinkedCheck = await client.query(`
+        SELECT
+          COUNT(DISTINCT t.id) as count,
+          (
+            SELECT STRING_AGG(DISTINCT sb.id::text, ', ')
+            FROM (
+              SELECT DISTINCT sb.id
+              FROM sp_v2_transactions t
+              JOIN sp_v2_settlement_items si ON t.transaction_id = si.transaction_id
+              JOIN sp_v2_settlement_batches sb ON si.settlement_batch_id = sb.id
+              WHERE DATE(t.transaction_date) = $1
+              AND t.source_type = 'MANUAL_UPLOAD'
+              LIMIT 3
+            ) sub
+          ) as batch_ids
+        FROM sp_v2_transactions t
+        JOIN sp_v2_settlement_items si ON t.transaction_id = si.transaction_id
+        JOIN sp_v2_settlement_batches sb ON si.settlement_batch_id = sb.id
+        WHERE DATE(t.transaction_date) = $1
+        AND t.source_type = 'MANUAL_UPLOAD'
+      `, [date]);
+
+      if (parseInt(settlementLinkedCheck.rows[0].count) > 0) {
+        const count = settlementLinkedCheck.rows[0].count;
+        const batchIds = settlementLinkedCheck.rows[0].batch_ids;
+
+        throw new Error(
+          `Cannot overwrite: ${count} transaction${count > 1 ? 's' : ''} ` +
+          `${count > 1 ? 'are' : 'is'} linked to settlement batch${batchIds.includes(',') ? 'es' : ''}: ${batchIds}. ` +
+          `Please void/cancel the settlement batch${batchIds.includes(',') ? 'es' : ''} first before overwriting.`
+        );
+      }
+
+      log(`✅ [Safety Check] No settled or settlement-linked transactions found for ${date}`);
+
+      // STEP 1: Clean up reconciliation data (safe to delete - these are derived data)
+      // Check if tables exist first to avoid transaction abort
+      const tableCheck = await client.query(`
+        SELECT table_name
+        FROM information_schema.tables
+        WHERE table_schema = 'public'
+        AND table_name IN ('sp_v2_reconciliation_results', 'sp_v2_recon_matches')
+      `);
+      const existingTables = tableCheck.rows.map(r => r.table_name);
+
+      if (existingTables.includes('sp_v2_reconciliation_results')) {
+        const reconDeleteResult = await client.query(`
+          DELETE FROM sp_v2_reconciliation_results
+          WHERE job_id IN (
+            SELECT DISTINCT rr.job_id
+            FROM sp_v2_reconciliation_results rr
+            WHERE rr.pg_transaction_id IN (
+              SELECT transaction_id
+              FROM sp_v2_transactions
+              WHERE DATE(transaction_date) = $1
+              AND source_type = 'MANUAL_UPLOAD'
+            )
+          )
+        `, [date]);
+        reconDeleted = reconDeleteResult.rowCount || 0;
+
+        if (reconDeleted > 0) {
+          log(`🧹 [Overwrite] Deleted ${reconDeleted} reconciliation results for ${date}`);
+        }
+      } else {
+        log(`⚠️  [Overwrite] Table sp_v2_reconciliation_results does not exist, skipping cleanup`);
+        reconDeleted = 0;
+      }
+
+      // STEP 2: Delete reconciliation matches (if any)
+      if (existingTables.includes('sp_v2_recon_matches')) {
+        const matchDeleteResult = await client.query(`
+          DELETE FROM sp_v2_recon_matches
+          WHERE pg_transaction_id IN (
+            SELECT transaction_id
+            FROM sp_v2_transactions
+            WHERE DATE(transaction_date) = $1
+            AND source_type = 'MANUAL_UPLOAD'
+          )
+        `, [date]);
+
+        if (matchDeleteResult.rowCount > 0) {
+          log(`🧹 [Overwrite] Deleted ${matchDeleteResult.rowCount} reconciliation matches for ${date}`);
+        }
+      } else {
+        log(`⚠️  [Overwrite] Table sp_v2_recon_matches does not exist, skipping cleanup`);
+      }
+
+      // STEP 3: Now safe to delete transactions (only PENDING, UNMATCHED, EXCEPTION)
+      // Note: We already verified above that no SETTLED/CREDITED transactions exist
       const result = await client.query(`
         DELETE FROM sp_v2_transactions
         WHERE DATE(transaction_date) = $1
         AND source_type = 'MANUAL_UPLOAD'
+        AND status IN ('PENDING', 'UNMATCHED', 'EXCEPTION', 'RECONCILED')
       `, [date]);
       pgDeleted = result.rowCount;
       log(`🧹 [Overwrite] Deleted ${pgDeleted} PG transactions for ${date}`);
     }
 
     if (fileType === 'bank_statements' || fileType === 'bank_data') {
+      // For bank statements, similar safety check
+      // Check if any bank statements are linked to reconciliation results
+      const bankReconCheck = await client.query(`
+        SELECT COUNT(DISTINCT bs.id) as count
+        FROM sp_v2_bank_statements bs
+        JOIN sp_v2_reconciliation_results rr ON bs.utr = rr.utr
+        WHERE DATE(bs.transaction_date) = $1
+        AND bs.source_type = 'MANUAL_UPLOAD'
+      `, [date]);
+
+      if (parseInt(bankReconCheck.rows[0].count) > 0) {
+        log(`⚠️  [Overwrite] ${bankReconCheck.rows[0].count} bank statements are reconciled - will clean up recon data`);
+
+        // Delete reconciliation results for these bank statements
+        await client.query(`
+          DELETE FROM sp_v2_reconciliation_results
+          WHERE utr IN (
+            SELECT utr FROM sp_v2_bank_statements
+            WHERE DATE(transaction_date) = $1
+            AND source_type = 'MANUAL_UPLOAD'
+          )
+        `, [date]);
+      }
+
       const result = await client.query(`
         DELETE FROM sp_v2_bank_statements
         WHERE DATE(transaction_date) = $1
@@ -328,7 +487,12 @@ async function cleanDataForDate(date, fileType, client = null) {
     }
 
     if (needsTransaction) await client.query('COMMIT');
-    return { pgDeleted, bankDeleted, totalDeleted: pgDeleted + bankDeleted };
+    return {
+      pgDeleted,
+      bankDeleted,
+      reconDeleted,
+      totalDeleted: pgDeleted + bankDeleted
+    };
   } catch (error) {
     if (shouldReleaseClient) await client.query('ROLLBACK');
     throw error;
