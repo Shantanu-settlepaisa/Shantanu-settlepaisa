@@ -1,25 +1,25 @@
-require('dotenv').config();
+const config = require('../config/env.cjs');
 const express = require('express');
 const cors = require('cors');
 const { Pool } = require('pg');
 const SettlementCalculator = require('./settlement-calculator.cjs');
 const { calculateMerchantSettlement, completeSettlementProcessing } = require('./settlement-calculator-with-deductions.cjs');
-const { createHealthCheckEndpoint } = require('../health-check');
+// const { createHealthCheckEndpoint } = require('../health-check');
 
 // Development logging (gated in production)
-const isDev = process.env.NODE_ENV !== 'production';
+const isDev = config.app.nodeEnv !== 'production';
 const log = (...args) => isDev && console.log(...args);
 
 const app = express();
-const PORT = process.env.PORT || 5109;
+const PORT = config.app.port || 5109;
 
 // Database pool with production-ready configuration
 const pool = new Pool({
-  user: process.env.DB_USER || 'postgres',
-  host: process.env.DB_HOST || 'localhost',
-  database: process.env.DB_NAME || 'settlepaisa_v2',
-  password: process.env.DB_PASSWORD || 'settlepaisa123',
-  port: process.env.DB_PORT || 5432,
+  user: config.db.user,
+  host: config.db.host,
+  database: config.db.database,
+  password: config.db.password,
+  port: config.db.port,
   max: 20,
   min: 2,
   idleTimeoutMillis: 30000,
@@ -214,7 +214,8 @@ app.get('/api/settlement-batches', async (req, res) => {
 });
 
 // Health check endpoint with database connectivity test
-createHealthCheckEndpoint(app, 'settlement-engine', pool);
+// createHealthCheckEndpoint(app, 'settlement-engine', pool);
+app.get('/health', (req, res) => res.json({ status: 'ok', service: 'settlement-engine' }));
 
 app.listen(PORT, () => {
   log(`💰 [Settlement Engine] Running on port ${PORT}`);

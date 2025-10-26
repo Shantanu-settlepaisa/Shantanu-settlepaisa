@@ -1,5 +1,6 @@
 import { BySourceItem, formatIndianCurrency } from '@/services/overview';
 import { ArrowRight, Clock, AlertCircle } from 'lucide-react';
+import { safeDivide, safePercentage } from '@/lib/mathUtils';
 
 interface BySourceProps {
   data: BySourceItem[];
@@ -35,11 +36,11 @@ export function BySource({ data, isLoading, onSourceClick }: BySourceProps) {
       <div className="space-y-4">
         {data.map((item) => {
           const isConnector = item.source !== 'MANUAL';
-          const barWidth = item.pipeline.captured > 0 ? (item.pipeline.captured / maxValue) * 100 : 0;
-          
+          const barWidth = safeDivide(item.pipeline.captured, maxValue, 0) * 100;
+
           // Calculate matched count: captured - unsettled (since pipeline stages are cumulative)
           const matchedCount = (item.pipeline?.captured || 0) - (item.pipeline?.unsettled || 0);
-          const actualMatchRate = (item.pipeline?.captured || 0) > 0 ? Math.round((matchedCount / (item.pipeline?.captured || 1)) * 100) : 0;
+          const actualMatchRate = safePercentage(matchedCount, item.pipeline?.captured || 0);
           
           return (
             <div
@@ -76,19 +77,19 @@ export function BySource({ data, isLoading, onSourceClick }: BySourceProps) {
                   <div className="flex h-full">
                     <div
                       className="bg-green-500 transition-all duration-500"
-                      style={{ width: `${(item.pipeline.credited / item.pipeline.captured) * barWidth}%` }}
+                      style={{ width: `${safeDivide(item.pipeline.credited, item.pipeline.captured, 0) * barWidth}%` }}
                     />
                     <div
                       className="bg-blue-400 transition-all duration-500"
-                      style={{ width: `${((item.pipeline.sentToBank - item.pipeline.credited) / item.pipeline.captured) * barWidth}%` }}
+                      style={{ width: `${safeDivide(item.pipeline.sentToBank - item.pipeline.credited, item.pipeline.captured, 0) * barWidth}%` }}
                     />
                     <div
                       className="bg-amber-400 transition-all duration-500"
-                      style={{ width: `${((item.pipeline.inSettlement - item.pipeline.sentToBank) / item.pipeline.captured) * barWidth}%` }}
+                      style={{ width: `${safeDivide(item.pipeline.inSettlement - item.pipeline.sentToBank, item.pipeline.captured, 0) * barWidth}%` }}
                     />
                     <div
                       className="bg-red-400 transition-all duration-500"
-                      style={{ width: `${(item.pipeline.unsettled / item.pipeline.captured) * barWidth}%` }}
+                      style={{ width: `${safeDivide(item.pipeline.unsettled, item.pipeline.captured, 0) * barWidth}%` }}
                     />
                   </div>
                 </div>

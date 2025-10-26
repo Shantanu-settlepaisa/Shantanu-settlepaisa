@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { formatIndianCurrency } from '@/services/overview';
 import { Info } from 'lucide-react';
+import { safeDivide } from '@/lib/mathUtils';
 
 // Types for the new prop structure
 interface PipelineExclusive {
@@ -52,10 +53,10 @@ export function SettlementPipeline(props: SettlementPipelineProps) {
   const onSegmentClick = props.onSegmentClick;
   
   const totalCaptured = captured || 1;
-  
+
   // Calculate percentages for width
   const getWidth = (value: number) => {
-    return totalCaptured > 0 ? (value / totalCaptured) * 100 : 0;
+    return safeDivide(value, totalCaptured, 0) * 100;
   };
 
   const formatNumber = (num: number): string => {
@@ -99,7 +100,7 @@ export function SettlementPipeline(props: SettlementPipelineProps) {
       key: 'unsettled',
       value: unsettled,
       color: 'bg-red-500',
-      label: 'Exceptions',
+      label: 'Unsettled',
       emoji: '🟥'
     }
   ];
@@ -157,15 +158,15 @@ export function SettlementPipeline(props: SettlementPipelineProps) {
                     <li className="flex gap-2">
                       <span>🟥</span>
                       <div>
-                        <b>Exceptions</b> — Reconciliation <i>failed or settlement rejected</i> 
-                        (e.g., amount mismatch, missing UTR, duplicate entry). Needs Ops review.
+                        <b>Unsettled</b> — Transactions <i>not yet in settlement pipeline</i>
+                        (may be pending, unmatched, or waiting for next settlement cycle).
                       </div>
                     </li>
                   </ul>
                   
                   <div className="text-xs text-gray-500 border-t pt-2 mt-2">
-                    <b>How to read:</b> Each segment is mutually-exclusive. 
-                    <b> Captured = Reconciled + Settled + Credited to Merchant + Exceptions</b> 
+                    <b>How to read:</b> Each segment is mutually-exclusive.
+                    <b> Captured = Reconciled + Settled + Credited to Merchant + Unsettled</b>
                     (selected date range).
                   </div>
                 </div>
@@ -192,7 +193,7 @@ export function SettlementPipeline(props: SettlementPipelineProps) {
                 className={`${segment.color} relative flex items-center justify-center transition-all duration-300 hover:opacity-90 cursor-pointer`}
                 style={{ width: `${Math.max(width, 0.1)}%` }}
                 onClick={() => onSegmentClick?.(segment.key)}
-                title={`${segment.label}: ${formatNumber(segment.value)} (${((segment.value / totalCaptured) * 100).toFixed(1)}%)`}
+                title={`${segment.label}: ${formatNumber(segment.value)} (${(safeDivide(segment.value, totalCaptured, 0) * 100).toFixed(1)}%)`}
               >
                 {width > 5 && (
                   <span className="text-white text-sm font-medium px-2">
@@ -216,7 +217,7 @@ export function SettlementPipeline(props: SettlementPipelineProps) {
                 <span className="text-sm text-gray-600">
                   {segment.label}
                   <span className="ml-1 text-gray-400">
-                    ({((segment.value / totalCaptured) * 100).toFixed(1)}%)
+                    ({(safeDivide(segment.value, totalCaptured, 0) * 100).toFixed(1)}%)
                   </span>
                 </span>
               </div>
@@ -234,7 +235,7 @@ export function SettlementPipeline(props: SettlementPipelineProps) {
             </div>
             <div className="text-sm text-gray-500">{segment.label}</div>
             <div className="text-xs text-gray-400">
-              {((segment.value / totalCaptured) * 100).toFixed(1)}%
+              {(safeDivide(segment.value, totalCaptured, 0) * 100).toFixed(1)}%
             </div>
           </div>
         ))}

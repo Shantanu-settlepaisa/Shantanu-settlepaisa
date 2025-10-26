@@ -80,7 +80,7 @@ export function SettlementPipeline({
       key: 'UNSETTLED',
       count: unsettled,
       color: 'bg-red-500',
-      label: 'Exceptions',
+      label: 'Unsettled',
     },
   ];
 
@@ -113,7 +113,7 @@ export function SettlementPipeline({
                     <p>🟦 <b>Reconciled</b> - Transactions matched with bank statements, ready for settlement</p>
                     <p>🟧 <b>Settled</b> - Settlement batch created with fees/TDS calculated</p>
                     <p>🟩 <b>Credited to Merchant</b> - Final payout completed to merchant account</p>
-                    <p>🟥 <b>Exceptions</b> - Reconciliation failed or settlement rejected, needs review</p>
+                    <p>🟥 <b>Unsettled</b> - Not yet in settlement pipeline, may be pending or unmatched</p>
                   </div>
                 </TooltipContent>
               </Tooltip>

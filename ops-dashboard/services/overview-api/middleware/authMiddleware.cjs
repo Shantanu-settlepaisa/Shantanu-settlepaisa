@@ -18,11 +18,12 @@
  *   router.post('/approve-settlement', authenticate, authorize(['ADMIN', 'OPS_MANAGER']), handler);
  */
 
+const config = require('../../config/env.cjs');
 const jwt = require('jsonwebtoken');
 const logger = require('../lib/logger.cjs');
 const { getDbPool } = require('../real-db-adapter.cjs');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-this-in-production';
+const JWT_SECRET = config.auth.jwtSecret;
 
 /**
  * Authenticate middleware

@@ -19,6 +19,7 @@ import ReactECharts from 'echarts-for-react';
 import * as echarts from 'echarts';
 import { PaymentModeSummary } from '@/components/Analytics/PaymentModeSummary';
 import { FailureReasonsSummary } from '@/components/Analytics/FailureReasonsSummary';
+import { safeParseFloat } from '@/lib/mathUtils';
 
 // Professional color palette
 const CHART_COLORS = {
@@ -245,14 +246,14 @@ export default function AnalyticsV3() {
     
     // Build stages array with only meaningful distinct stages
     const stageData = [
-      { name: 'Captured', value: parseFloat(funnelData.funnel.captured.percentage), color: CHART_COLORS.primary },
-      { name: 'Reconciled', value: parseFloat(funnelData.funnel.reconciled.percentage), color: CHART_COLORS.info },
-      { name: 'Settled', value: parseFloat(funnelData.funnel.settled.percentage), color: CHART_COLORS.success },
+      { name: 'Captured', value: safeParseFloat(funnelData.funnel.captured.percentage), color: CHART_COLORS.primary },
+      { name: 'Reconciled', value: safeParseFloat(funnelData.funnel.reconciled.percentage), color: CHART_COLORS.info },
+      { name: 'Settled', value: safeParseFloat(funnelData.funnel.settled.percentage), color: CHART_COLORS.success },
     ];
-    
+
     // Only add "Paid Out" if it's different from "Settled" (has actual payout data)
-    const paidOutPct = parseFloat(funnelData.funnel.paid_out.percentage);
-    const settledPct = parseFloat(funnelData.funnel.settled.percentage);
+    const paidOutPct = safeParseFloat(funnelData.funnel.paid_out.percentage);
+    const settledPct = safeParseFloat(funnelData.funnel.settled.percentage);
     if (paidOutPct > 0 && paidOutPct !== settledPct) {
       stageData.push({ name: 'Paid Out', value: paidOutPct, color: CHART_COLORS.purple });
     }

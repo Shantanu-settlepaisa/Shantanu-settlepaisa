@@ -1,11 +1,12 @@
 const { Pool } = require('pg');
+const config = require('../config/env.cjs');
 
 const v2Pool = new Pool({
-  user: 'postgres',
-  host: 'localhost',
-  database: 'settlepaisa_v2',
-  password: 'settlepaisa123',
-  port: 5433,
+  user: config.db.user,
+  host: config.db.host,
+  database: config.db.database,
+  password: config.db.password,
+  port: config.db.port,
 });
 
 class SettlementCalculatorV2 {

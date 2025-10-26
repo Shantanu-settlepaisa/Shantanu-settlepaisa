@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 
-const API_BASE = 'http://localhost:5108';
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5108';
 
 interface FinancialSummary {
   gmv: {
@@ -56,6 +56,14 @@ interface FinancialAnalyticsResponse {
     days: number;
   };
   summary: FinancialSummary;
+  deltas?: {
+    gmvPct?: number;
+    mdrPct?: number;
+    bankChargesPct?: number;
+    revenuePct?: number;
+    marginPct?: number;
+    netSettledPct?: number;
+  };
   trends?: TrendPoint[];
 }
 

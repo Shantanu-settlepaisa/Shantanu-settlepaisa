@@ -6,6 +6,7 @@ import { useFinancialAnalytics } from '@/hooks/useFinancialAnalytics';
 import { TrendingUp, TrendingDown, Minus, Download, DollarSign, CreditCard, Building2, Target, BarChart3, Wallet } from 'lucide-react';
 import ReactECharts from 'echarts-for-react';
 import { format } from 'date-fns';
+import { safeParseInt, safeToFixed } from '@/lib/mathUtils';
 
 // Color palette
 const COLORS = {
@@ -111,9 +112,9 @@ export default function FinancialDashboard() {
     if (!data?.trends) return {};
 
     const dates = data.trends.map((p) => format(new Date(p.date), 'MMM d'));
-    const revenue = data.trends.map((p) => parseInt(p.revenue) / 100);
+    const revenue = data.trends.map((p) => safeParseInt(p.revenue) / 100);
     const margin = data.trends.map((p) => p.marginPercent);
-    const bankCharges = data.trends.map((p) => parseInt(p.bankCharges) / 100);
+    const bankCharges = data.trends.map((p) => safeParseInt(p.bankCharges) / 100);
 
     return {
       tooltip: {
@@ -124,9 +125,9 @@ export default function FinancialDashboard() {
           return `
             <div style="padding: 8px;">
               <div style="font-weight: 600; margin-bottom: 4px;">${date}</div>
-              <div style="color: ${COLORS.revenue};">Revenue: ₹${(parseInt(point.revenue) / 100).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div>
+              <div style="color: ${COLORS.revenue};">Revenue: ₹${(safeParseInt(point.revenue) / 100).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div>
               <div style="color: ${COLORS.margin};">Margin: ${point.marginPercent.toFixed(2)}%</div>
-              <div style="color: ${COLORS.bankCharges};">Bank Charges: ₹${(parseInt(point.bankCharges) / 100).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div>
+              <div style="color: ${COLORS.bankCharges};">Bank Charges: ₹${(safeParseInt(point.bankCharges) / 100).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div>
             </div>
           `;
         }
@@ -197,16 +198,6 @@ export default function FinancialDashboard() {
     };
   }, [data]);
 
-  // Mock delta values (would come from API comparing to previous period)
-  const mockDeltas = {
-    gmv: 12.5,
-    mdr: 8.2,
-    bankCharges: -5.0,
-    revenue: 15.3,
-    margin: -0.5,
-    netSettled: 11.2
-  };
-
   if (error) {
     return (
       <div className="p-8">
@@ -242,42 +233,42 @@ export default function FinancialDashboard() {
             title="GMV"
             value={data?.summary.gmv.formatted || '₹0'}
             icon={<DollarSign className="w-4 h-4" />}
-            delta={mockDeltas.gmv}
+            delta={data?.deltas?.gmvPct}
             loading={isLoading}
           />
           <KpiCard
             title="MDR Collected"
             value={data?.summary.mdrCollected.formatted || '₹0'}
             icon={<CreditCard className="w-4 h-4" />}
-            delta={mockDeltas.mdr}
+            delta={data?.deltas?.mdrPct}
             loading={isLoading}
           />
           <KpiCard
             title="Bank Charges"
             value={data?.summary.bankChargesPaid.formatted || '₹0'}
             icon={<Building2 className="w-4 h-4" />}
-            delta={mockDeltas.bankCharges}
+            delta={data?.deltas?.bankChargesPct}
             loading={isLoading}
           />
           <KpiCard
             title="SettlePaisa Revenue"
             value={data?.summary.settlepaisaRevenue.formatted || '₹0'}
             icon={<Target className="w-4 h-4" />}
-            delta={mockDeltas.revenue}
+            delta={data?.deltas?.revenuePct}
             loading={isLoading}
           />
           <KpiCard
             title="Gross Margin"
-            value={data ? `${data.summary.grossMarginPercent.toFixed(2)}%` : '0%'}
+            value={data ? `${safeToFixed(data.summary.grossMarginPercent, 2)}%` : '0%'}
             icon={<BarChart3 className="w-4 h-4" />}
-            delta={mockDeltas.margin}
+            delta={data?.deltas?.marginPct}
             loading={isLoading}
           />
           <KpiCard
             title="Net Settled"
             value={data?.summary.netSettled.formatted || '₹0'}
             icon={<Wallet className="w-4 h-4" />}
-            delta={mockDeltas.netSettled}
+            delta={data?.deltas?.netSettledPct}
             loading={isLoading}
           />
         </div>

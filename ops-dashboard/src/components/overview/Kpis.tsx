@@ -4,6 +4,7 @@ import { useAuthStore } from '@/lib/auth';
 import { paiseToCompactINR, formatPercentage, safePercentage } from '@/lib/currency';
 import { Kpis as KpisType, generateDrillThroughParams, hasFinanceAccess } from '@/hooks/opsOverview';
 import { KpiFilters } from '@/hooks/opsOverview';
+import { safeDivide } from '@/lib/mathUtils';
 import {
   Tooltip,
   TooltipContent,
@@ -20,14 +21,14 @@ interface KpisProps {
 // Sparkline component
 function Sparkline({ data, color = 'blue' }: { data?: number[]; color?: string }) {
   if (!data || data.length === 0) return null;
-  
+
   const max = Math.max(...data);
   const min = Math.min(...data);
   const range = max - min || 1;
-  
+
   const points = data.map((value, index) => {
-    const x = (index / (data.length - 1)) * 100;
-    const y = 50 - ((value - min) / range) * 40;
+    const x = safeDivide(index, data.length - 1, 0) * 100;
+    const y = 50 - safeDivide(value - min, range, 0.5) * 40;
     return `${x},${y}`;
   }).join(' ');
 

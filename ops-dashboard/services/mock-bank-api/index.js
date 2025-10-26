@@ -17,10 +17,10 @@ function generateBankRecon(bank, cycle, seed = 'settlepaisa-bank') {
   const records = [];
   const cycleDate = cycle.replace(/-/g, '');
   
-  // Fixed amounts that match PG data (in paise)
+  // Fixed amounts that match PG data (in rupees)
   const matchingAmounts = [
-    150000, 250000, 350000, 450000, 550000,
-    650000, 750000, 850000, 950000, 1050000
+    1500, 2500, 3500, 4500, 5500,
+    6500, 7500, 8500, 9500, 10500
   ];
   
   // Generate 20 records total for realistic demo
@@ -49,7 +49,7 @@ function generateBankRecon(bank, cycle, seed = 'settlepaisa-bank') {
     records.push({
       TRANSACTION_ID: `TXN${cycleDate}${String(i).padStart(3, '0')}`,
       UTR: `UTR${cycleDate}${String(i).padStart(3, '0')}`,
-      AMOUNT: Math.floor(200000 + rng() * 800000),
+      AMOUNT: Math.floor(2000 + rng() * 8000),
       DATE: cycle
     });
   }
@@ -76,10 +76,13 @@ app.get('/api/bank/axis/recon', async (req, res) => {
   
   try {
     const result = await pool.query(`
-      SELECT 
+      SELECT
         bank_ref as TRANSACTION_ID,
         utr as UTR,
-        amount_paise as AMOUNT,
+        amount_paise / 100.0 as AMOUNT,
+        gross_amount_paise / 100.0 as GROSS_AMT,
+        bank_fee_paise / 100.0 as BANK_FEE,
+        bank_gst_paise / 100.0 as BANK_GST,
         transaction_date as DATE,
         bank_name,
         remarks

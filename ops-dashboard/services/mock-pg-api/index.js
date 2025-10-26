@@ -24,10 +24,10 @@ function generateTransactions(cycle, seed = 'settlepaisa') {
   // Generate exactly 25 transactions for better demo
   const cycleDate = cycle.replace(/-/g, '');
   
-  // Fixed amounts that will match with bank data (in paise)
+  // Fixed amounts that will match with bank data (in rupees)
   const matchingAmounts = [
-    150000, 250000, 350000, 450000, 550000,
-    650000, 750000, 850000, 950000, 1050000
+    1500, 2500, 3500, 4500, 5500,
+    6500, 7500, 8500, 9500, 10500
   ];
   
   // First 10: Perfect matches with bank
@@ -63,19 +63,19 @@ function generateTransactions(cycle, seed = 'settlepaisa') {
     transaction_id: `TXN${cycleDate}016`,
     rrn: `RRN${cycleDate}016`,
     utr: '', // Missing UTR
-    amount: 350000,
+    amount: 3500,
     captured_at: `${cycle}T14:00:00Z`,
     payment_method: 'UPI',
     bank: 'AXIS',
     merchant_id: 'MERCH001'
   });
-  
+
   // Add duplicate UTR transaction (will generate exception)
   transactions.push({
     transaction_id: `TXN${cycleDate}017`,
     rrn: `RRN${cycleDate}017`,
     utr: `UTR${cycleDate}001`, // Duplicate UTR
-    amount: 150000,
+    amount: 1500,
     captured_at: `${cycle}T14:30:00Z`,
     payment_method: 'UPI',
     bank: 'AXIS',
@@ -88,7 +88,7 @@ function generateTransactions(cycle, seed = 'settlepaisa') {
       transaction_id: `TXN${cycleDate}${String(i).padStart(3, '0')}`,
       rrn: `RRN${cycleDate}${String(i).padStart(3, '0')}`,
       utr: `UTR${cycleDate}${String(i).padStart(3, '0')}`,
-      amount: Math.floor(100000 + rng() * 900000),
+      amount: Math.floor(1000 + rng() * 9000),
       captured_at: `${cycle}T${String(8 + (i % 12)).padStart(2, '0')}:30:00Z`,
       payment_method: paymentMethods[Math.floor(rng() * 4)],
       bank: 'AXIS',
@@ -139,10 +139,11 @@ app.get('/api/pg/transactions', async (req, res) => {
   
   try {
     const result = await pool.query(`
-      SELECT 
+      SELECT
         transaction_id,
         merchant_id,
-        amount_paise as amount,
+        amount_paise / 100.0 as amount,
+        gross_amount_paise / 100.0 as gross_amount,
         transaction_date,
         transaction_timestamp as captured_at,
         payment_method,

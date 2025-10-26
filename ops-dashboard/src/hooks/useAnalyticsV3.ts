@@ -1,8 +1,9 @@
 import { useQuery } from '@tanstack/react-query';
 import axios from 'axios';
 import { format } from 'date-fns';
+import { safeDivide, safeParseInt } from '@/lib/mathUtils';
 
-const API_BASE = 'http://localhost:5105/api/analytics';
+const API_BASE = `${import.meta.env.VITE_API_BASE_URL || 'http://localhost:5108'}/api/analytics`;
 
 export interface AnalyticsScope {
   from: string;
@@ -68,16 +69,18 @@ export function useGmvTrendV3(scope: AnalyticsScope) {
       
       // Transform to expected format with rolling averages
       const points = data.trend.map((item: any, idx: number, arr: any[]) => {
-        const capturedPaise = parseInt(item.captured?.amountPaise || '0');
-        const settledPaise = parseInt(item.settled?.amountPaise || '0');
+        const capturedPaise = safeParseInt(item.captured?.amountPaise || '0');
+        const settledPaise = safeParseInt(item.settled?.amountPaise || '0');
         const capturedCount = item.captured?.count || 0;
         const settledCount = item.settled?.count || 0;
-        
+
         // Calculate 7-day rolling average
         const start = Math.max(0, idx - 6);
         const window = arr.slice(start, idx + 1);
-        const capturedAvg = window.reduce((sum: number, d: any) => sum + parseInt(d.captured?.amountPaise || '0'), 0) / window.length;
-        const settledAvg = window.reduce((sum: number, d: any) => sum + parseInt(d.settled?.amountPaise || '0'), 0) / window.length;
+        const capturedSum = window.reduce((sum: number, d: any) => sum + safeParseInt(d.captured?.amountPaise || '0'), 0);
+        const settledSum = window.reduce((sum: number, d: any) => sum + safeParseInt(d.settled?.amountPaise || '0'), 0);
+        const capturedAvg = safeDivide(capturedSum, window.length, 0);
+        const settledAvg = safeDivide(settledSum, window.length, 0);
         
         return {
           date: item.date,
@@ -85,9 +88,9 @@ export function useGmvTrendV3(scope: AnalyticsScope) {
           settledPaise,
           capturedPaiseAvg7: Math.floor(capturedAvg),
           settledPaiseAvg7: Math.floor(settledAvg),
-          capturedCount,
-          settledCount,
-          settlementRate: capturedCount > 0 ? (settledCount / capturedCount * 100) : 0
+          capturedTxns: capturedCount,
+          settledTxns: settledCount,
+          settlementRate: safeDivide(settledCount, capturedCount, 0) * 100
         };
       });
       

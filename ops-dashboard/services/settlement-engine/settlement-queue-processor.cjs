@@ -1,14 +1,14 @@
-require('dotenv').config();
+const config = require('../config/env.cjs');
 const { Pool } = require('pg');
 const { SettlementCalculatorV3 } = require('./settlement-calculator-v3.cjs');
 const { calculateMerchantSettlement: calculateWithDeductions, completeSettlementProcessing } = require('./settlement-calculator-with-deductions.cjs');
 
 const v2Pool = new Pool({
-  user: process.env.DB_USER || 'postgres',
-  host: process.env.DB_HOST || 'localhost',
-  database: process.env.DB_NAME || 'settlepaisa_v2',
-  password: process.env.DB_PASSWORD || 'settlepaisa123',
-  port: process.env.DB_PORT || 5433,
+  user: config.db.user,
+  host: config.db.host,
+  database: config.db.database,
+  password: config.db.password,
+  port: config.db.port,
 });
 
 class SettlementQueueProcessor {

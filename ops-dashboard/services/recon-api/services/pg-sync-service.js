@@ -3,11 +3,11 @@ const { mapV1ToV2 } = require('../utils/v1-column-mapper');
 const { Pool } = require('pg');
 
 const pool = new Pool({
-  host: 'localhost',
-  port: 5433,
-  user: 'postgres',
-  password: 'settlepaisa123',
-  database: 'settlepaisa_v2'
+  host: process.env.DB_HOST || 'localhost',
+  port: parseInt(process.env.DB_PORT || '5433'),
+  user: process.env.DB_USER || 'postgres',
+  password: process.env.DB_PASSWORD || 'settlepaisa123',
+  database: process.env.DB_NAME || 'settlepaisa_v2'
 });
 
 function getSabPaisaAPIBase() {

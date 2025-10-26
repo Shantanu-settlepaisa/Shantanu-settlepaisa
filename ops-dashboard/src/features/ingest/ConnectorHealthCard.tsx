@@ -51,7 +51,7 @@ interface FileExpectation {
   received_at: string | null;
 }
 
-const API_BASE = 'http://localhost:5106'; // Direct URL for Ingest API
+const API_BASE = import.meta.env.VITE_INGEST_API_URL || 'http://localhost:5106'; // Ingest API
 
 export const ConnectorHealthCard: React.FC = () => {
   const [selectedBank, setSelectedBank] = useState<string | null>(null);

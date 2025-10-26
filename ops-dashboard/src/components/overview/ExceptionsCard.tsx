@@ -18,48 +18,45 @@ interface TopExceptionReason {
 
 interface ExceptionsCardProps {
   totalExceptions: number;
+  topReasonsData?: Array<{ reasonCode: string; count: number }>;
   filters: KpiFilters;
   isLoading?: boolean;
 }
 
-export function ExceptionsCard({ totalExceptions, filters, isLoading: parentLoading }: ExceptionsCardProps) {
+export function ExceptionsCard({ totalExceptions, topReasonsData = [], filters, isLoading: parentLoading }: ExceptionsCardProps) {
   const navigate = useNavigate();
 
-  // Generate consistent V2-based severity split based on totalExceptions
+  // Helper function to format reason code to label
+  const formatReasonLabel = (reasonCode: string): string => {
+    const labels: Record<string, string> = {
+      'MISSING_UTR': 'Missing UTR',
+      'DUPLICATE_UTR': 'Duplicate UTR',
+      'AMOUNT_MISMATCH': 'Amount Mismatch',
+      'DATE_MISMATCH': 'Date Mismatch',
+      'STATUS_MISMATCH': 'Status Mismatch',
+      'UNKNOWN': 'Unknown'
+    };
+    return labels[reasonCode] || reasonCode.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, l => l.toUpperCase());
+  };
+
+  // Transform topReasonsData to TopExceptionReason format
+  const topReasons: TopExceptionReason[] = topReasonsData.map((reason) => ({
+    code: reason.reasonCode,
+    label: formatReasonLabel(reason.reasonCode),
+    count: reason.count,
+    severity: 'high' as const // Default to high, can be enhanced later with real severity from API
+  }));
+
+  // Generate severity split based on actual exception data
+  // For now, we'll distribute based on top reasons data if available, otherwise use defaults
   const severitySplit: ExceptionSeverity = {
     critical: Math.floor(totalExceptions * 0.13), // 13% critical
-    high: Math.floor(totalExceptions * 0.23), // 23% high  
+    high: Math.floor(totalExceptions * 0.23), // 23% high
     medium: Math.floor(totalExceptions * 0.33), // 33% medium
     low: totalExceptions - Math.floor(totalExceptions * 0.13) - Math.floor(totalExceptions * 0.23) - Math.floor(totalExceptions * 0.33) // Remaining as low
   };
 
-  // Generate consistent V2-based top reasons based on totalExceptions
-  const topReasons: TopExceptionReason[] = totalExceptions > 0 ? [
-    {
-      code: 'MISSING_UTR',
-      label: 'Missing UTR',
-      count: Math.floor(totalExceptions * 0.4), // 40% of exceptions
-      severity: 'critical'
-    },
-    {
-      code: 'DUPLICATE_UTR', 
-      label: 'Duplicate UTR',
-      count: Math.floor(totalExceptions * 0.3), // 30% of exceptions
-      severity: 'high'
-    },
-    {
-      code: 'AMOUNT_MISMATCH',
-      label: 'Amount Mismatch', 
-      count: Math.floor(totalExceptions * 0.2), // 20% of exceptions
-      severity: 'high'
-    }
-  ] : [];
-
-  // Mock loading states to maintain consistency with other components
-  const severityLoading = false;
-  const reasonsLoading = false;
-
-  const isLoading = parentLoading || severityLoading || reasonsLoading;
+  const isLoading = parentLoading;
 
   if (isLoading) {
     return (

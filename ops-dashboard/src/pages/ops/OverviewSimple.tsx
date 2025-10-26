@@ -1,17 +1,21 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Activity, RefreshCw, Pause, Play, AlertCircle, CheckCircle, IndianRupee, FileText, Calendar } from 'lucide-react';
+import { Activity, RefreshCw, Pause, Play, AlertCircle, CheckCircle, IndianRupee, FileText, Calendar, Upload } from 'lucide-react';
 import { SettlementPipeline } from '@/components/SettlementPipeline';
 import { fetchOverview } from '@/services/overview';
 import { ConnectorHealthCardSimple } from '@/features/ingest/ConnectorHealthCardSimple';
+import { RefundUploadModal } from '@/components/ops/RefundUploadModal';
+import { ChargebackUploadModal } from '@/components/ops/ChargebackUploadModal';
 
 type DateRange = 'today' | 'yesterday' | 'last7days' | 'last30days' | 'custom';
 
 export default function OverviewSimple() {
   const [live, setLive] = useState(true);
-  const [dateRange, setDateRange] = useState<DateRange>('today');
+  const [dateRange, setDateRange] = useState<DateRange>('last30days');
   const [customFromDate, setCustomFromDate] = useState('');
   const [customToDate, setCustomToDate] = useState('');
+  const [refundModalOpen, setRefundModalOpen] = useState(false);
+  const [chargebackModalOpen, setChargebackModalOpen] = useState(false);
 
   // Calculate date range based on selection
   const getDateRange = () => {
@@ -64,6 +68,19 @@ export default function OverviewSimple() {
           <button onClick={() => refetch()} className="mt-4 px-4 py-2 bg-blue-600 text-white rounded">
             Retry
           </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Show loading screen while fetching data
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-screen bg-gray-50">
+        <div className="text-center">
+          <RefreshCw className="w-12 h-12 text-blue-500 mx-auto mb-4 animate-spin" />
+          <p className="text-lg font-medium text-gray-700">Loading dashboard metrics...</p>
+          <p className="text-sm text-gray-500 mt-2">Fetching data from database</p>
         </div>
       </div>
     );
@@ -141,6 +158,18 @@ export default function OverviewSimple() {
           </button>
           <button onClick={() => refetch()} className="px-3 py-1 border border-gray-300 rounded text-sm">
             <RefreshCw className="w-3 h-3 inline mr-1" /> Refresh
+          </button>
+          <button
+            onClick={() => setRefundModalOpen(true)}
+            className="px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700"
+          >
+            <Upload className="w-3 h-3 inline mr-1" /> Upload Refunds
+          </button>
+          <button
+            onClick={() => setChargebackModalOpen(true)}
+            className="px-3 py-1 bg-purple-600 text-white rounded text-sm hover:bg-purple-700"
+          >
+            <Upload className="w-3 h-3 inline mr-1" /> Upload Chargebacks
           </button>
         </div>
       </div>
@@ -303,13 +332,26 @@ export default function OverviewSimple() {
       <div className="bg-white p-6 rounded-lg shadow">
         <h3 className="text-lg font-semibold mb-4">Cash Impact Summary</h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="bg-blue-50 p-4 rounded-lg">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-blue-600">Total Amount</p>
+                <p className="text-xl font-bold text-blue-700">
+                  ₹{overview?.kpis?.totalAmount?.amount ? (overview.kpis.totalAmount.amount / 100).toLocaleString('en-IN') : '0'}
+                </p>
+                <p className="text-xs text-gray-500 mt-1">{overview?.kpis?.totalAmount?.txnCount || 0} transactions</p>
+              </div>
+              <IndianRupee className="w-8 h-8 text-blue-500" />
+            </div>
+          </div>
           <div className="bg-green-50 p-4 rounded-lg">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-green-600">Successfully Reconciled</p>
+                <p className="text-sm text-green-600">Reconciled Amount</p>
                 <p className="text-xl font-bold text-green-700">
-                  ₹{overview?.kpis?.creditedToMerchant?.amount ? (overview.kpis.creditedToMerchant.amount / 100).toLocaleString() : '0'}
+                  ₹{overview?.kpis?.reconciledAmount?.amount ? (overview.kpis.reconciledAmount.amount / 100).toLocaleString('en-IN') : '0'}
                 </p>
+                <p className="text-xs text-gray-500 mt-1">{overview?.kpis?.reconciledAmount?.txnCount || 0} matched</p>
               </div>
               <CheckCircle className="w-8 h-8 text-green-500" />
             </div>
@@ -317,27 +359,27 @@ export default function OverviewSimple() {
           <div className="bg-orange-50 p-4 rounded-lg">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-orange-600">Pending Resolution</p>
+                <p className="text-sm text-orange-600">Variance (Unreconciled)</p>
                 <p className="text-xl font-bold text-orange-700">
-                  ₹{overview?.kpis?.unmatchedValue?.amount ? (overview.kpis.unmatchedValue.amount / 100).toLocaleString() : '0'}
+                  ₹{overview?.kpis?.unmatchedValue?.amount ? (overview.kpis.unmatchedValue.amount / 100).toLocaleString('en-IN') : '0'}
                 </p>
+                <p className="text-xs text-gray-500 mt-1">{overview?.kpis?.unmatchedValue?.txnCount || 0} unmatched</p>
               </div>
               <AlertCircle className="w-8 h-8 text-orange-500" />
             </div>
           </div>
-          <div className="bg-blue-50 p-4 rounded-lg">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-blue-600">Total Volume</p>
-                <p className="text-xl font-bold text-blue-700">
-                  {overview?.pipeline?.captured || 0} txns
-                </p>
-              </div>
-              <IndianRupee className="w-8 h-8 text-blue-500" />
-            </div>
-          </div>
         </div>
       </div>
+
+      {/* Upload Modals */}
+      <RefundUploadModal
+        isOpen={refundModalOpen}
+        onClose={() => setRefundModalOpen(false)}
+      />
+      <ChargebackUploadModal
+        isOpen={chargebackModalOpen}
+        onClose={() => setChargebackModalOpen(false)}
+      />
     </div>
   );
 }

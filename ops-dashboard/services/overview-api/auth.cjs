@@ -11,6 +11,7 @@
  * POST /api/auth/verify-token - Verify JWT token validity
  */
 
+const config = require('../config/env.cjs');
 const express = require('express');
 const jwt = require('jsonwebtoken');
 const { hashPassword, verifyPassword, validatePasswordStrength } = require('./lib/passwordUtils.cjs');
@@ -20,7 +21,7 @@ const { getDbPool } = require('./real-db-adapter.cjs');
 const router = express.Router();
 
 // JWT configuration
-const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-this-in-production';
+const JWT_SECRET = config.auth.jwtSecret;
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '8h';
 const REFRESH_TOKEN_EXPIRES_IN = process.env.REFRESH_TOKEN_EXPIRES_IN || '7d';
 

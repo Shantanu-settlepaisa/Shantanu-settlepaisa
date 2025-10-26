@@ -1,3 +1,4 @@
+const config = require('../config/env.cjs');
 const express = require('express')
 const cors = require('cors')
 const { v4: uuidv4 } = require('uuid')
@@ -16,7 +17,7 @@ const pgTransactionsRoutes = require('./routes/pg-transactions')
 const connectorsRoutes = require('./routes/connectors')
 
 // Development logging (gated in production)
-const isDev = process.env.NODE_ENV !== 'production'
+const isDev = config.app.nodeEnv !== 'production'
 const log = (...args) => isDev && console.log(...args)
 
 // Environment-driven API URLs for inter-service communication
@@ -29,11 +30,11 @@ app.use(express.json())
 
 // Database pool for health checks with production-ready configuration
 const pool = new Pool({
-  user: process.env.DB_USER || 'postgres',
-  host: process.env.DB_HOST || 'localhost',
-  database: process.env.DB_NAME || 'settlepaisa_v2',
-  password: process.env.DB_PASSWORD || 'settlepaisa123',
-  port: process.env.DB_PORT || 5433,
+  user: config.db.user,
+  host: config.db.host,
+  database: config.db.database,
+  password: config.db.password,
+  port: config.db.port,
   max: 20,
   min: 2,
   idleTimeoutMillis: 30000,

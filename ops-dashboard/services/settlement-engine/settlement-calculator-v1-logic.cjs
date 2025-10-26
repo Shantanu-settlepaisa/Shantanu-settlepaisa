@@ -1,19 +1,20 @@
 const { Pool } = require('pg');
+const config = require('../config/env.cjs');
 
 const sabpaisaPool = new Pool({
-  user: process.env.SABPAISA_DB_USER || 'settlepaisainternal',
-  host: process.env.SABPAISA_DB_HOST || '3.108.237.99',
-  database: process.env.SABPAISA_DB_NAME || 'settlepaisa',
-  password: process.env.SABPAISA_DB_PASSWORD || 'sabpaisa123',
-  port: process.env.SABPAISA_DB_PORT || 5432,
+  user: config.sabpaisaDb.user,
+  host: config.sabpaisaDb.host,
+  database: config.sabpaisaDb.database,
+  password: config.sabpaisaDb.password,
+  port: config.sabpaisaDb.port,
 });
 
 const v2Pool = new Pool({
-  user: process.env.DB_USER || 'postgres',
-  host: process.env.DB_HOST || 'localhost',
-  database: process.env.DB_NAME || 'settlepaisa_v2',
-  password: process.env.DB_PASSWORD || 'settlepaisa123',
-  port: process.env.DB_PORT || 5433,
+  user: config.db.user,
+  host: config.db.host,
+  database: config.db.database,
+  password: config.db.password,
+  port: config.db.port,
 });
 
 class SettlementCalculatorV1Logic {
@@ -162,7 +163,7 @@ class SettlementCalculatorV1Logic {
   async getMerchantConfig(merchantId) {
     try {
       // Mock config for test merchants
-      if (merchantId.startsWith('TEST_') || merchantId.startsWith('MERCH_')) {
+      if (merchantId.startsWith('TEST_') || merchantId.startsWith('MERCH_') || merchantId.startsWith('MERCH')) {
         console.log(`[Settlement] Using mock config for test merchant: ${merchantId}`);
         return {
           merchantid: 999999,
@@ -244,7 +245,7 @@ class SettlementCalculatorV1Logic {
   async getMDRRates(clientCode, paymodeId) {
     try {
       // Mock MDR rates for test merchants
-      if (clientCode.startsWith('TEST_') || clientCode.startsWith('MERCH_')) {
+      if (clientCode.startsWith('TEST_') || clientCode.startsWith('MERCH_') || clientCode.startsWith('MERCH')) {
         return {
           convcharges: '0',
           convchargestype: 'percentage',
@@ -347,32 +348,67 @@ class SettlementCalculatorV1Logic {
 
   async persistSettlement(settlementBatch) {
     const client = await v2Pool.connect();
-    
+
     try {
       await client.query('BEGIN');
-      
+
+      // 🆕 STEP 1: Calculate total bank charges from transactions
+      console.log(`   💳 [Bank Fees] Calculating for ${settlementBatch.client_code}, cycle ${settlementBatch.cycle_date}...`);
+
+      const bankChargesQuery = `
+        SELECT
+          COALESCE(SUM(bank_fee_paise), 0) as total_bank_fees,
+          COUNT(*) FILTER (WHERE bank_fee_paise IS NOT NULL AND bank_fee_paise > 0) as transactions_with_fees
+        FROM sp_v2_transactions
+        WHERE merchant_id = $1
+          AND DATE(transaction_date) = $2
+          AND status = 'RECONCILED'
+      `;
+
+      const bankChargesResult = await client.query(bankChargesQuery, [
+        settlementBatch.client_code,
+        settlementBatch.cycle_date
+      ]);
+
+      const totalBankChargesPaise = parseInt(bankChargesResult.rows[0].total_bank_fees) || 0;
+      const transactionsWithFees = parseInt(bankChargesResult.rows[0].transactions_with_fees) || 0;
+
+      console.log(`   💰 [Bank Fees] Total: ₹${(totalBankChargesPaise / 100).toFixed(2)} (${transactionsWithFees}/${settlementBatch.total_transactions} transactions)`);
+
+      // 🆕 STEP 2: Calculate SettlePaisa's net revenue
+      const totalCommission = settlementBatch.total_convcharges + settlementBatch.total_ep_charges;
+      const totalCommissionPaise = Math.round(totalCommission * 100);
+      const settlepaisaRevenuePaise = totalCommissionPaise - totalBankChargesPaise;
+
+      console.log(`   📊 [Revenue Split]:`);
+      console.log(`      • Total MDR Collected: ₹${(totalCommissionPaise / 100).toFixed(2)}`);
+      console.log(`      • Bank's Share: ₹${(totalBankChargesPaise / 100).toFixed(2)} (${totalCommissionPaise > 0 ? ((totalBankChargesPaise / totalCommissionPaise) * 100).toFixed(1) : 0}%)`);
+      console.log(`      • SettlePaisa Revenue: ₹${(settlepaisaRevenuePaise / 100).toFixed(2)} (${totalCommissionPaise > 0 ? ((settlepaisaRevenuePaise / totalCommissionPaise) * 100).toFixed(1) : 0}%)`);
+
+      // 🆕 STEP 3: Insert batch with bank charges tracking
       const batchQuery = `
-        INSERT INTO sp_v2_settlement_batches 
-        (merchant_id, merchant_name, cycle_date, total_transactions, 
-         gross_amount_paise, total_commission_paise, total_gst_paise, 
-         total_reserve_paise, net_amount_paise, status, created_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
+        INSERT INTO sp_v2_settlement_batches
+        (merchant_id, merchant_name, cycle_date, total_transactions,
+         gross_amount_paise, total_commission_paise, total_gst_paise,
+         total_reserve_paise, total_bank_charges_paise, settlepaisa_revenue_paise,
+         net_amount_paise, status, created_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW())
         RETURNING id
       `;
       
-      const totalCommission = settlementBatch.total_convcharges + settlementBatch.total_ep_charges;
-      
       const batchResult = await client.query(batchQuery, [
-        settlementBatch.client_code,
-        settlementBatch.merchant_name,
-        settlementBatch.cycle_date,
-        settlementBatch.total_transactions,
-        Math.round(settlementBatch.gross_amount * 100),
-        Math.round(totalCommission * 100),
-        Math.round(settlementBatch.total_gst * 100),
-        Math.round(settlementBatch.total_rolling_reserve * 100),
-        Math.round(settlementBatch.net_settlement_amount * 100),
-        settlementBatch.status
+        settlementBatch.client_code,                                  // $1
+        settlementBatch.merchant_name,                                // $2
+        settlementBatch.cycle_date,                                   // $3
+        settlementBatch.total_transactions,                           // $4
+        Math.round(settlementBatch.gross_amount * 100),               // $5: gross_amount_paise
+        totalCommissionPaise,                                         // $6: total_commission_paise
+        Math.round(settlementBatch.total_gst * 100),                  // $7: total_gst_paise
+        Math.round(settlementBatch.total_rolling_reserve * 100),      // $8: total_reserve_paise
+        totalBankChargesPaise,                                        // $9: total_bank_charges_paise (NEW)
+        settlepaisaRevenuePaise,                                      // $10: settlepaisa_revenue_paise (NEW)
+        Math.round(settlementBatch.net_settlement_amount * 100),      // $11: net_amount_paise
+        settlementBatch.status                                        // $12: status
       ]);
       
       const batchId = batchResult.rows[0].id;

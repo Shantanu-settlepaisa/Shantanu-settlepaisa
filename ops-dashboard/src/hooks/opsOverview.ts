@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { safePercentage } from '@/lib/mathUtils';
 
 // Type definitions matching backend contract
 export interface KpiFilters {
@@ -135,7 +136,7 @@ function transformV2ToKpis(v2Data: any): Kpis {
     const matchedTransactions = reconData.matched || 0;
     const unmatchedTransactions = reconData.unmatched || 0;
     const exceptionsCount = reconData.exceptions || 0;
-    const matchRatePct = totalTransactions > 0 ? Math.round((matchedTransactions / totalTransactions) * 100) : 0;
+    const matchRatePct = safePercentage(matchedTransactions, totalTransactions);
 
     // Financial amounts from /api/overview financial data
     const totalAmount = financialData.grossAmount || 0;
@@ -206,7 +207,7 @@ function transformV2ToKpis(v2Data: any): Kpis {
         variancePaise: variance.toString(),
       },
       recon: {
-        matchRatePct: Math.round((matchedTxns / totalTxns) * 100), // 36.2%
+        matchRatePct: safePercentage(matchedTxns, totalTxns),
         matchedCount: matchedTxns,
         unmatchedPgCount: Math.floor(unmatchedTxns / 2), // 15
         unmatchedBankCount: Math.ceil(unmatchedTxns / 2), // 15
@@ -299,7 +300,7 @@ function transformV2ToReconSources(v2Data: any): ReconSourceSummary {
     const matchedTxns = reconData.matched || 0;
     const unmatchedTxns = reconData.unmatched || 0;
     const exceptionTxns = reconData.exceptions || 0;
-    const matchedPct = totalTxns > 0 ? Math.round((matchedTxns / totalTxns) * 100) : 0;
+    const matchedPct = safePercentage(matchedTxns, totalTxns);
 
     // Get by-source data from /api/overview
     const bySource = reconData.bySource || {};
@@ -345,7 +346,7 @@ function transformV2ToReconSources(v2Data: any): ReconSourceSummary {
         unmatchedPgCount: Math.max(0, connectorUnmatched),
         unmatchedBankCount: 0,
         exceptionsCount: connectorExceptions,
-        matchedPct: connectorTxns > 0 ? Math.round((connectorMatched / connectorTxns) * 100) : 0,
+        matchedPct: safePercentage(connectorMatched, connectorTxns),
       },
       manualUpload: {
         totalTransactions: manualTxns,
@@ -353,7 +354,7 @@ function transformV2ToReconSources(v2Data: any): ReconSourceSummary {
         unmatchedPgCount: Math.max(0, manualUnmatched),
         unmatchedBankCount: 0,
         exceptionsCount: manualExceptions,
-        matchedPct: manualTxns > 0 ? Math.round((manualMatched / manualTxns) * 100) : 0,
+        matchedPct: safePercentage(manualMatched, manualTxns),
       },
     };
   } else {
