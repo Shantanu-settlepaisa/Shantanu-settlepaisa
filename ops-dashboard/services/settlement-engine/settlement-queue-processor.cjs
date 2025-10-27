@@ -337,6 +337,29 @@ class SettlementQueueProcessor {
   }
   
   async persistSettlementBatch(client, settlementBatch, transactions) {
+    // DUPLICATE PREVENTION: Check if batch already exists for this merchant + cycle_date
+    const existingBatch = await client.query(`
+      SELECT id, status, created_at, gross_amount_paise
+      FROM sp_v2_settlement_batches
+      WHERE merchant_id = $1
+        AND DATE(cycle_date) = DATE($2::date)
+        AND status IN ('CALCULATED', 'PENDING_APPROVAL', 'APPROVED')
+      LIMIT 1
+    `, [settlementBatch.merchant_id, settlementBatch.cycle_date]);
+
+    if (existingBatch.rows.length > 0) {
+      const existing = existingBatch.rows[0];
+      console.log(`[Settlement Queue] ⚠️  DUPLICATE PREVENTED: Batch already exists for merchant ${settlementBatch.merchant_id} on ${settlementBatch.cycle_date}`);
+      console.log(`[Settlement Queue]     Existing batch ID: ${existing.id}`);
+      console.log(`[Settlement Queue]     Status: ${existing.status}`);
+      console.log(`[Settlement Queue]     Created: ${existing.created_at}`);
+      console.log(`[Settlement Queue]     Amount: ₹${(existing.gross_amount_paise / 100).toFixed(2)}`);
+      console.log(`[Settlement Queue]     Returning existing batch ID instead of creating duplicate`);
+
+      // Return existing batch ID to prevent duplicate processing
+      return existing.id;
+    }
+
     // Insert settlement batch with deduction tracking
     const batchResult = await client.query(`
       INSERT INTO sp_v2_settlement_batches (
@@ -375,6 +398,7 @@ class SettlementQueueProcessor {
     ]);
 
     const batchId = batchResult.rows[0].id;
+    console.log(`[Settlement Queue] ✅ Created NEW settlement batch ${batchId} for ${settlementBatch.merchant_id}`);
     
     // Insert settlement items with calculated fees
     for (const txn of transactions) {
