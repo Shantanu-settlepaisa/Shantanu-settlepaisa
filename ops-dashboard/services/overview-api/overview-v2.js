@@ -101,15 +101,17 @@ app.get('/api/overview', async (req, res) => {
     const client = await pool.connect();
     
     // Build date filter based on query params
-    let whereClause = "WHERE transaction_date >= CURRENT_DATE - INTERVAL '30 days'";
+    // Default to today only (not last 30 days) to show accurate daily overview
+    let whereClause = "WHERE DATE(transaction_date) = CURRENT_DATE";
     let queryParams = [];
     
     if (from && to) {
       const fromDate = new Date(from);
       const toDate = new Date(to);
-      
+
       if (!isNaN(fromDate) && !isNaN(toDate)) {
-        whereClause = "WHERE transaction_date >= $1 AND transaction_date <= $2";
+        // Use DATE() function for accurate date-only comparison
+        whereClause = "WHERE DATE(transaction_date) >= $1 AND DATE(transaction_date) <= $2";
         queryParams = [fromDate.toISOString().split('T')[0], toDate.toISOString().split('T')[0]];
         log('📅 Using date filter:', { from: queryParams[0], to: queryParams[1] });
       }

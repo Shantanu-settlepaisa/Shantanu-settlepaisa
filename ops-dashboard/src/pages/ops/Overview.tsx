@@ -14,9 +14,11 @@ import { BankFeedLag } from '@/components/Overview/BankFeedLag';
 export default function Overview() {
   const navigate = useNavigate();
   const [live, setLive] = useState(true);
+  // Default to today only (not last 7 days) to show accurate daily overview
+  const today = new Date().toISOString().split('T')[0];
   const [dateRange, setDateRange] = useState({
-    from: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-    to: new Date().toISOString().split('T')[0],
+    from: today,
+    to: today,
   });
 
   const { data, isLoading, error, refetch } = useQuery({
