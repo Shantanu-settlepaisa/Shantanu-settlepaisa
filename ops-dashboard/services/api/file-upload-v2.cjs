@@ -215,7 +215,9 @@ app.post('/api/upload/single', authenticate, opsStaffOnly, upload.single('file')
 
     // Clean existing data if overwrite enabled
     if (overwrite === 'true' && date) {
-      deletionStats = await cleanDataForDate(date, fileType, client);
+      // For bank files, pass sourceType as bankName for bank-specific deletion
+      const bankNameForDelete = (fileType === 'bank_statements' || fileType === 'bank_data') ? sourceType : null;
+      deletionStats = await cleanDataForDate(date, fileType, bankNameForDelete, client);
       log(`✅ [Overwrite] Cleaned data for ${date}: PG=${deletionStats.pgDeleted}, Bank=${deletionStats.bankDeleted}, Recon=${deletionStats.reconDeleted || 0}, Total=${deletionStats.totalDeleted}`);
     }
 
@@ -296,7 +298,7 @@ app.post('/api/upload/single', authenticate, opsStaffOnly, upload.single('file')
 
 // Clean existing data for a specific date (for overwrite mode)
 // CRITICAL: Implements settlement protection to prevent data corruption
-async function cleanDataForDate(date, fileType, client = null) {
+async function cleanDataForDate(date, fileType, bankName = null, client = null) {
   const shouldReleaseClient = !client;
   if (!client) {
     client = await pool.connect();
@@ -453,37 +455,26 @@ async function cleanDataForDate(date, fileType, client = null) {
     }
 
     if (fileType === 'bank_statements' || fileType === 'bank_data') {
-      // For bank statements, similar safety check
-      // Check if any bank statements are linked to reconciliation results
-      const bankReconCheck = await client.query(`
-        SELECT COUNT(DISTINCT bs.id) as count
-        FROM sp_v2_bank_statements bs
-        JOIN sp_v2_reconciliation_results rr ON bs.utr = rr.utr
-        WHERE DATE(bs.transaction_date) = $1
-        AND bs.source_type = 'MANUAL_UPLOAD'
-      `, [date]);
-
-      if (parseInt(bankReconCheck.rows[0].count) > 0) {
-        log(`⚠️  [Overwrite] ${bankReconCheck.rows[0].count} bank statements are reconciled - will clean up recon data`);
-
-        // Delete reconciliation results for these bank statements
-        await client.query(`
-          DELETE FROM sp_v2_reconciliation_results
-          WHERE utr IN (
-            SELECT utr FROM sp_v2_bank_statements
-            WHERE DATE(transaction_date) = $1
-            AND source_type = 'MANUAL_UPLOAD'
-          )
-        `, [date]);
-      }
-
-      const result = await client.query(`
+      // Build deletion query with optional bank-specific filter
+      let deleteQuery = `
         DELETE FROM sp_v2_bank_statements
         WHERE DATE(transaction_date) = $1
         AND source_type = 'MANUAL_UPLOAD'
-      `, [date]);
+      `;
+      let params = [date];
+
+      // Add bank-specific filter if provided
+      if (bankName) {
+        deleteQuery += ` AND bank_name = $2`;
+        params.push(bankName);
+        log(`🧹 [Overwrite] Deleting only ${bankName} statements for ${date}`);
+      } else {
+        log(`⚠️  [Overwrite] Deleting ALL bank statements for ${date}`);
+      }
+
+      const result = await client.query(deleteQuery, params);
       bankDeleted = result.rowCount;
-      log(`🧹 [Overwrite] Deleted ${bankDeleted} bank statements for ${date}`);
+      log(`🧹 [Overwrite] Deleted ${bankDeleted} bank statements`);
     }
 
     if (needsTransaction) await client.query('COMMIT');

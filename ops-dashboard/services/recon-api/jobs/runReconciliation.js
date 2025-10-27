@@ -573,7 +573,7 @@ async function fetchPGFromDatabase(params, jobId) {
       FROM sp_v2_transactions
       WHERE DATE(transaction_date) = $1
         AND source_type = 'MANUAL_UPLOAD'
-        AND status = 'PENDING'
+        -- No status filter for manual uploads - CSV files can have any status (SUCCESS, PENDING, etc.)
       ORDER BY transaction_date
     `;
 
