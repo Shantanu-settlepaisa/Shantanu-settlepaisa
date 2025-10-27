@@ -3,11 +3,12 @@ const router = express.Router();
 const { Pool } = require('pg');
 
 const pool = new Pool({
-  host: 'localhost',
-  port: 5433,
-  user: 'postgres',
-  password: 'settlepaisa123',
-  database: 'settlepaisa_v2'
+  host: process.env.DB_HOST || 'settlepaisa-staging.c9u0agyyg6q9.ap-south-1.rds.amazonaws.com',
+  port: process.env.DB_PORT || 5432,
+  user: process.env.DB_USER || 'postgres',
+  password: process.env.DB_PASSWORD || 'SettlePaisa2024',
+  database: process.env.DB_NAME || 'settlepaisa_v2',
+  ssl: false
 });
 
 router.get('/settlement-summary', async (req, res) => {
