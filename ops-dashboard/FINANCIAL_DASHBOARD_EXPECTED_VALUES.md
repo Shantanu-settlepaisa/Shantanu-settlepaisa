@@ -439,6 +439,137 @@ SELECT
 
 ---
 
+---
+
+## Formula Fixes (Oct 27, 2025)
+
+### Issue Discovered
+
+**Reported Symptoms**:
+- Gross Margin displaying 100% instead of 2.36%
+- MDR Collected showing ₹8,760 instead of ₹10,337
+- GST (₹1,577) not displayed separately
+
+**Root Cause**: Incorrect formulas in Financial Analytics API (`services/overview-api/real-db-adapter.cjs`)
+
+### Corrected Formulas
+
+#### 1. Gross Margin Calculation
+
+**WRONG Formula** (lines 452-459):
+```sql
+(SUM(settlepaisa_revenue_paise)::FLOAT /
+ NULLIF(SUM(total_commission_paise), 0) * 100) as margin_percent
+```
+- Calculated: (SettlePaisa Revenue / Commission) × 100
+- Result: (8760 / 8760) × 100 = **100%** ❌
+
+**CORRECT Formula** (after fix):
+```sql
+((SUM(total_commission_paise) + SUM(total_gst_paise))::FLOAT /
+ NULLIF(SUM(gross_amount_paise), 0) * 100) as margin_percent
+```
+- Calculates: (Total Revenue / GMV) × 100
+- Result: (10337 / 438000) × 100 = **2.36%** ✅
+
+**Definition**: Gross Margin = (Total Revenue / GMV) × 100
+
+#### 2. MDR Collected (Total Revenue)
+
+**WRONG** (line 522):
+```javascript
+mdrCollected: {
+  paise: summary.total_mdr?.toString() || '0',  // Only commission
+  ...
+}
+```
+- Showed: ₹8,760 (commission only) ❌
+
+**CORRECT** (after fix):
+```javascript
+mdrCollected: {
+  paise: (BigInt(summary.total_mdr || 0) + BigInt(summary.total_gst || 0)).toString(),
+  ...
+}
+```
+- Shows: ₹10,337 (commission + GST) ✅
+
+**Renamed**: "MDR Collected" now represents "Total Revenue" (Commission + GST)
+
+#### 3. New Fields Added
+
+Added separate GST and Commission fields for clarity:
+```javascript
+gst: {
+  paise: summary.total_gst?.toString() || '0',
+  rupees: ...,
+  formatted: ...  // ₹1,577
+},
+commission: {
+  paise: summary.total_mdr?.toString() || '0',
+  rupees: ...,
+  formatted: ...  // ₹8,760
+}
+```
+
+### Settlement Engine Updates
+
+**File**: `services/settlement-engine/settlement-queue-processor.cjs` (lines 363-407)
+
+Added calculation and storage of bank charges fields:
+```javascript
+const totalBankCharges = settlementBatch.total_bank_charges_paise || 0;
+const settlepaisaRevenue = settlementBatch.total_commission_paise - totalBankCharges;
+```
+
+INSERT statement now includes:
+- `total_bank_charges_paise`
+- `settlepaisa_revenue_paise`
+
+### Verification
+
+**Query to verify correct formulas**:
+```sql
+SELECT
+  gross_amount_paise as gmv,
+  total_commission_paise as commission,
+  total_gst_paise as gst,
+  (total_commission_paise + total_gst_paise) as total_revenue,
+  ((total_commission_paise + total_gst_paise)::FLOAT /
+   gross_amount_paise * 100) as gross_margin_percent
+FROM sp_v2_settlement_batches
+WHERE DATE(cycle_date) = '2025-10-27';
+
+-- Expected:
+-- gmv: 438000
+-- commission: 8760
+-- gst: 1577
+-- total_revenue: 10337
+-- gross_margin_percent: 2.36
+```
+
+### Impact
+
+**Before Fix**:
+- Gross Margin: 100% (misleading)
+- Total Revenue: ₹8,760 (incomplete - missing GST)
+- GST: Not visible
+
+**After Fix**:
+- Gross Margin: 2.36% (accurate)
+- Total Revenue: ₹10,337 (complete - includes GST)
+- GST: ₹1,577 (visible separately)
+
+### Related Commit
+
+```
+commit: 214d173
+fix(financial-dashboard): correct Gross Margin formula and add GST tracking
+```
+
+---
+
 **Document Maintainer**: Ops Dashboard Team
 **Last Verified**: October 27, 2025
+**Last Updated**: October 27, 2025 (Added Formula Fixes section)
 **Next Review**: When schema or settlement logic changes occur
