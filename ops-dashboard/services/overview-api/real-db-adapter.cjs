@@ -437,6 +437,7 @@ async function getFinancialAnalytics(from, to, merchantId = null, groupBy = null
       SELECT
         SUM(gross_amount_paise) as total_gmv,
         SUM(total_commission_paise) as total_mdr,
+        SUM(total_gst_paise) as total_gst,
         SUM(COALESCE(total_bank_charges_paise, 0)) as total_bank_charges,
         SUM(
           CASE
@@ -449,14 +450,8 @@ async function getFinancialAnalytics(from, to, merchantId = null, groupBy = null
         SUM(total_transactions) as total_txn_count,
         COUNT(DISTINCT merchant_id) as merchant_count,
         COUNT(*) as batch_count,
-        (SUM(
-          CASE
-            WHEN COALESCE(settlepaisa_revenue_paise, 0) = 0
-            THEN total_commission_paise
-            ELSE settlepaisa_revenue_paise
-          END
-        )::FLOAT /
-         NULLIF(SUM(total_commission_paise), 0) * 100) as margin_percent
+        ((SUM(total_commission_paise) + SUM(total_gst_paise))::FLOAT /
+         NULLIF(SUM(gross_amount_paise), 0) * 100) as margin_percent
       FROM sp_v2_settlement_batches
       WHERE cycle_date BETWEEN $1 AND $2
         AND ($3::VARCHAR IS NULL OR merchant_id = $3)
@@ -519,6 +514,16 @@ async function getFinancialAnalytics(from, to, merchantId = null, groupBy = null
           formatted: formatCurrency(summary.total_gmv || 0)
         },
         mdrCollected: {
+          paise: (BigInt(summary.total_mdr || 0) + BigInt(summary.total_gst || 0)).toString(),
+          rupees: parseFloat((BigInt(summary.total_mdr || 0) + BigInt(summary.total_gst || 0)) / BigInt(100)),
+          formatted: formatCurrency((BigInt(summary.total_mdr || 0) + BigInt(summary.total_gst || 0)).toString())
+        },
+        gst: {
+          paise: summary.total_gst?.toString() || '0',
+          rupees: parseFloat((BigInt(summary.total_gst || 0) / BigInt(100)).toString()),
+          formatted: formatCurrency(summary.total_gst || 0)
+        },
+        commission: {
           paise: summary.total_mdr?.toString() || '0',
           rupees: parseFloat((BigInt(summary.total_mdr || 0) / BigInt(100)).toString()),
           formatted: formatCurrency(summary.total_mdr || 0)
@@ -576,12 +581,13 @@ async function getFinancialAnalytics(from, to, merchantId = null, groupBy = null
           ${dateGroup} as date,
           SUM(gross_amount_paise) as gmv,
           SUM(total_commission_paise) as mdr,
+          SUM(total_gst_paise) as gst,
           SUM(total_bank_charges_paise) as bank_charges,
           SUM(settlepaisa_revenue_paise) as revenue,
           SUM(net_amount_paise) as net_settled,
           SUM(total_transactions) as txn_count,
-          (SUM(settlepaisa_revenue_paise)::FLOAT /
-           NULLIF(SUM(total_commission_paise), 0) * 100) as margin_percent
+          ((SUM(total_commission_paise) + SUM(total_gst_paise))::FLOAT /
+           NULLIF(SUM(gross_amount_paise), 0) * 100) as margin_percent
         FROM sp_v2_settlement_batches
         WHERE cycle_date BETWEEN $1 AND $2
           AND ($3::VARCHAR IS NULL OR merchant_id = $3)
@@ -596,6 +602,7 @@ async function getFinancialAnalytics(from, to, merchantId = null, groupBy = null
         date: row.date,
         gmv: row.gmv?.toString() || '0',
         mdr: row.mdr?.toString() || '0',
+        gst: row.gst?.toString() || '0',
         bankCharges: row.bank_charges?.toString() || '0',
         revenue: row.revenue?.toString() || '0',
         netSettled: row.net_settled?.toString() || '0',

@@ -360,6 +360,12 @@ class SettlementQueueProcessor {
       return existing.id;
     }
 
+    // Calculate bank charges and SettlePaisa revenue
+    // Bank charges are typically embedded in transactions, for now default to 0
+    // SettlePaisa revenue = total_commission (since we take the full commission when no bank charges tracked)
+    const totalBankCharges = settlementBatch.total_bank_charges_paise || 0;
+    const settlepaisaRevenue = settlementBatch.total_commission_paise - totalBankCharges;
+
     // Insert settlement batch with deduction tracking
     const batchResult = await client.query(`
       INSERT INTO sp_v2_settlement_batches (
@@ -375,12 +381,14 @@ class SettlementQueueProcessor {
         refund_deductions_paise,
         chargeback_deductions_paise,
         outstanding_debt_recovered_paise,
+        total_bank_charges_paise,
+        settlepaisa_revenue_paise,
         status,
         created_at,
         updated_at
       ) VALUES (
         gen_random_uuid(),
-        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW()
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW(), NOW()
       ) RETURNING id
     `, [
       settlementBatch.merchant_id,
@@ -394,6 +402,8 @@ class SettlementQueueProcessor {
       settlementBatch.refund_deductions_paise || 0,
       settlementBatch.chargeback_deductions_paise || 0,
       settlementBatch.outstanding_debt_recovered_paise || 0,
+      totalBankCharges,
+      settlepaisaRevenue,
       'CALCULATED'
     ]);
 
