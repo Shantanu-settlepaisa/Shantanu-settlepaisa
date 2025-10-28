@@ -54,6 +54,20 @@ router.get('/jobs/:jobId/summary', async (req, res) => {
         count: total,
         amountPaise: (total * 150000).toString() // Average 1500 rupees per txn
       },
+      // Top-level fields for frontend compatibility (fixes invariant violation)
+      matched: {
+        count: matched,
+        amountPaise: (matched * 150000).toString()
+      },
+      unmatched: {
+        count: unmatchedPg + unmatchedBank,
+        amountPaise: ((unmatchedPg + unmatchedBank) * 150000).toString()
+      },
+      exceptions: {
+        count: exceptions,
+        amountPaise: (exceptions * 150000).toString()
+      },
+      // Detailed breakdown (existing structure)
       breakdown: {
         matched: {
           count: matched,
