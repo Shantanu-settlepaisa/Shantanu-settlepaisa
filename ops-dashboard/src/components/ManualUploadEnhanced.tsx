@@ -658,6 +658,14 @@ export function ManualUploadEnhanced() {
       });
       formData.append('fileType', 'bank_statements');
 
+      // CRITICAL FIX: Detect and send bank name (sourceType) to backend
+      // Backend needs this to look up bank-specific column mappings from database
+      if (files.length > 0) {
+        const bankName = detectBankFromFilename(files[0].name);
+        formData.append('sourceType', bankName);
+        console.log(`🏦 [V2 Upload] Detected bank: ${bankName}, sending as sourceType`);
+      }
+
       // Add overwrite parameters if in overwrite mode
       if (shouldOverwrite) {
         formData.append('overwrite', 'true');
