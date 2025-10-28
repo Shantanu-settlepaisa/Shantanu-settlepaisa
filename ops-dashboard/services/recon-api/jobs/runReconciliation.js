@@ -317,18 +317,20 @@ async function runReconciliation(config, params) {
     logStructured(jobId, 'info', 'Fetching PG transactions');
     
     let pgTransactions;
-    if (params.pgTransactions && params.pgTransactions.length > 0) {
+
+    // ALWAYS try to fetch from database first (for manual uploads with V1-V2 mapping)
+    pgTransactions = await fetchPGFromDatabase(config, params, jobId);
+
+    if (pgTransactions.length > 0) {
+      logStructured(jobId, 'info', `Fetched ${pgTransactions.length} PG transactions from database`);
+    } else if (params.pgTransactions && params.pgTransactions.length > 0) {
+      // Fallback to uploaded records if database is empty
       pgTransactions = params.pgTransactions;
       logStructured(jobId, 'info', `Using uploaded PG transactions: ${pgTransactions.length}`);
     } else {
-      // Try to fetch from database first (for manual uploads), then fall back to API
-      pgTransactions = await fetchPGFromDatabase(config, params, jobId);
-      if (pgTransactions.length === 0) {
-        pgTransactions = await fetchPGTransactions(params);
-        logStructured(jobId, 'info', `Fetched ${pgTransactions.length} PG transactions from API`);
-      } else {
-        logStructured(jobId, 'info', `Fetched ${pgTransactions.length} PG transactions from database`);
-      }
+      // Final fallback to API
+      pgTransactions = await fetchPGTransactions(params);
+      logStructured(jobId, 'info', `Fetched ${pgTransactions.length} PG transactions from API`);
     }
     job.counters.pgFetched = pgTransactions.length;
     
@@ -338,19 +340,21 @@ async function runReconciliation(config, params) {
     
     let bankRecords;
     let bankFilename = null;
-    if (params.bankRecords && params.bankRecords.length > 0) {
+
+    // ALWAYS try to fetch from database first (for manual uploads with V1-V2 mapping)
+    bankRecords = await fetchBankFromDatabase(config, params, jobId);
+
+    if (bankRecords.length > 0) {
+      logStructured(jobId, 'info', `Fetched ${bankRecords.length} bank records from database`);
+    } else if (params.bankRecords && params.bankRecords.length > 0) {
+      // Fallback to uploaded records if database is empty
       bankRecords = params.bankRecords;
       bankFilename = params.bankFilename; // Pass filename for bank detection
       logStructured(jobId, 'info', `Using uploaded bank records: ${bankRecords.length}`, { filename: bankFilename });
     } else {
-      // Try to fetch from database first (for manual uploads), then fall back to API
-      bankRecords = await fetchBankFromDatabase(config, params, jobId);
-      if (bankRecords.length === 0) {
-        bankRecords = await fetchBankRecords(params);
-        logStructured(jobId, 'info', `Fetched ${bankRecords.length} bank records from API`);
-      } else {
-        logStructured(jobId, 'info', `Fetched ${bankRecords.length} bank records from database`);
-      }
+      // Final fallback to API
+      bankRecords = await fetchBankRecords(params);
+      logStructured(jobId, 'info', `Fetched ${bankRecords.length} bank records from API`);
     }
     job.counters.bankFetched = bankRecords.length;
     
