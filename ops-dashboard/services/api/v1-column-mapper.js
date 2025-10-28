@@ -3,17 +3,26 @@
 // ============================================================================
 
 const { Pool } = require('pg');
+const config = require('../config/env.cjs');
 
-// DB Configuration - use connection pool instead of individual clients
+// DB Configuration - use SAME database as upload API (via env.cjs)
+// CRITICAL FIX: Previously hardcoded to old database (13.201.179.44)
+// Now uses centralized config which reads from .env file
 const pool = new Pool({
-  host: process.env.DB_HOST || '13.201.179.44',
-  port: process.env.DB_PORT || 5432,
-  database: process.env.DB_NAME || 'sp_v2_staging',
-  user: process.env.DB_USER || 'sp_v2_user',
-  password: process.env.DB_PASSWORD || 'sp_v2_password',
+  host: config.db.host,
+  port: config.db.port,
+  database: config.db.database,
+  user: config.db.user,
+  password: config.db.password,
   max: 10, // maximum pool size
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 5000,
+});
+
+console.log('[V1 Mapper] Database connection:', {
+  host: config.db.host,
+  database: config.db.database,
+  user: config.db.user
 });
 
 // In-memory cache for bank mappings (avoid repeated DB queries)
