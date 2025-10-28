@@ -1,3 +1,9 @@
+// CRITICAL FIX: Load service-specific .env FIRST for PORT configuration
+// This prevents conflict with overview-api which uses PORT=5108
+const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '.env') });
+
+// Then load shared config for database, auth, etc.
 const config = require('../config/env.cjs');
 const express = require('express');
 const multer = require('multer');
@@ -7,7 +13,6 @@ const csv = require('csv-parser');
 const XLSX = require('xlsx');
 const { v4: uuidv4 } = require('uuid');
 const fs = require('fs');
-const path = require('path');
 const { convertV1CSVToV2, detectFormat } = require('./v1-column-mapper');
 // const { createHealthCheckEndpoint } = require('../health-check');
 
@@ -20,7 +25,9 @@ const isDev = config.app.nodeEnv !== 'production';
 const log = (...args) => isDev && console.log(...args);
 
 const app = express();
+// PORT now correctly reads from services/api/.env (5107), not overview-api/.env (5108)
 const PORT = process.env.PORT || 5107;
+console.log(`[Upload API] Starting on port ${PORT}`);
 
 // Database connection with production-ready pool configuration
 const pool = new Pool({
