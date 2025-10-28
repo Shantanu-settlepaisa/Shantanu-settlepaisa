@@ -122,6 +122,17 @@ function buildConfig() {
     cors: {
       origin: process.env.CORS_ORIGIN || 'http://localhost:5174',
     },
+    interService: {
+      pgApiUrl: process.env.PG_API_URL || null,
+      bankApiUrl: process.env.BANK_API_URL || null,
+    },
+    sftp: process.env.SFTP_HOST ? {
+      host: process.env.SFTP_HOST,
+      port: parseInt(process.env.SFTP_PORT || '22'),
+      username: process.env.SFTP_USERNAME,
+      password: process.env.SFTP_PASSWORD,
+      inboundDir: process.env.SFTP_INBOUND_DIR || '/inbound',
+    } : null,
   };
 }
 

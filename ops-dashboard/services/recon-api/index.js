@@ -25,8 +25,13 @@ const isDev = config.app.nodeEnv !== 'production'
 const log = (...args) => isDev && console.log(...args)
 
 // Environment-driven API URLs for inter-service communication
-const PG_API_URL = process.env.PG_API_URL || 'http://localhost:5101';
-const BANK_API_URL = process.env.BANK_API_URL || 'http://localhost:5102';
+// These are loaded from config, NOT hardcoded fallbacks (CRITICAL for staging/production)
+const PG_API_URL = config.interService?.pgApiUrl || null;
+const BANK_API_URL = config.interService?.bankApiUrl || null;
+
+if (!PG_API_URL || !BANK_API_URL) {
+  console.warn('[Recon API] WARNING: Inter-service URLs not configured. Some features may not work.');
+}
 
 const app = express()
 
@@ -85,7 +90,7 @@ app.post('/recon/run', authenticate, opsStaffOnly, async (req, res) => {
   }
   
   try {
-    const job = await runReconciliation({
+    const job = await runReconciliation(config, {
       date: reconDate,
       merchantId: reconMerchantId,
       acquirerId,
@@ -176,14 +181,18 @@ app.get('/connectors/bank/health', async (req, res) => {
   const Client = require('ssh2-sftp-client');
   const client = new Client();
 
-  const sftpConfig = {
-    host: process.env.SFTP_HOST || 'localhost',
-    port: parseInt(process.env.SFTP_PORT || '2222'),
-    username: process.env.SFTP_USERNAME || 'sp-sftp',
-    password: process.env.SFTP_PASSWORD || 'sp-sftp'
-  };
+  // Load SFTP config from validated configuration
+  const sftpConfig = config.sftp || null;
+  if (!sftpConfig) {
+    return res.status(503).json({
+      status: 'error',
+      service: 'bank_connector',
+      message: 'SFTP configuration not available',
+      timestamp: new Date().toISOString()
+    });
+  }
 
-  const inboundDir = process.env.SFTP_INBOUND_DIR || '/inbound';
+  const inboundDir = sftpConfig.inboundDir || '/inbound';
 
   try {
     // Attempt real SFTP connection

@@ -90,14 +90,16 @@ function mapErrorToUserSafe(error) {
 }
 
 // PRODUCTION SAFEGUARD: Database health check
-async function checkDatabaseHealth(jobId) {
+async function checkDatabaseHealth(config, jobId) {
   const { Pool } = require('pg');
   const pool = new Pool({
-    host: process.env.DB_HOST || 'localhost',
-    port: parseInt(process.env.DB_PORT || '5433'),
-    database: process.env.DB_NAME || 'settlepaisa_v2',
-    user: process.env.DB_USER || 'postgres',
-    password: process.env.DB_PASSWORD || 'settlepaisa123',
+    host: config.db.host,
+    port: config.db.port,
+    database: config.db.database,
+    user: config.db.user,
+    password: config.db.password,
+    max: 5,
+    idleTimeoutMillis: 10000,
     connectionTimeoutMillis: 5000
   });
 
@@ -193,10 +195,10 @@ async function retryWithBackoff(fn, maxRetries = 3, baseDelayMs = 100, context =
   throw lastError;
 }
 
-async function runReconciliation(params) {
+async function runReconciliation(config, params) {
   const jobId = uuidv4();
   const correlationId = uuidv4();
-  
+
   const isManualUpload = !!(params.pgTransactions || params.bankRecords);
   const sourceType = isManualUpload ? 'MANUAL_UPLOAD' : 'CONNECTOR';
   
@@ -257,7 +259,7 @@ async function runReconciliation(params) {
     // Stage 0: Database Health Check (PRODUCTION SAFEGUARD)
     job.stage = 'healthcheck';
     try {
-      await checkDatabaseHealth(jobId);
+      await checkDatabaseHealth(config, jobId);
     } catch (healthError) {
       throw new Error(`Database health check failed: ${healthError.message}`);
     }
@@ -317,7 +319,7 @@ async function runReconciliation(params) {
       logStructured(jobId, 'info', `Using uploaded PG transactions: ${pgTransactions.length}`);
     } else {
       // Try to fetch from database first (for manual uploads), then fall back to API
-      pgTransactions = await fetchPGFromDatabase(params, jobId);
+      pgTransactions = await fetchPGFromDatabase(config, params, jobId);
       if (pgTransactions.length === 0) {
         pgTransactions = await fetchPGTransactions(params);
         logStructured(jobId, 'info', `Fetched ${pgTransactions.length} PG transactions from API`);
@@ -339,7 +341,7 @@ async function runReconciliation(params) {
       logStructured(jobId, 'info', `Using uploaded bank records: ${bankRecords.length}`, { filename: bankFilename });
     } else {
       // Try to fetch from database first (for manual uploads), then fall back to API
-      bankRecords = await fetchBankFromDatabase(params, jobId);
+      bankRecords = await fetchBankFromDatabase(config, params, jobId);
       if (bankRecords.length === 0) {
         bankRecords = await fetchBankRecords(params);
         logStructured(jobId, 'info', `Fetched ${bankRecords.length} bank records from API`);
@@ -546,14 +548,17 @@ async function runReconciliation(params) {
 }
 
 // Database fetch functions for manual uploads
-async function fetchPGFromDatabase(params, jobId) {
+async function fetchPGFromDatabase(config, params, jobId) {
   const { Pool } = require('pg');
   const pool = new Pool({
-    host: process.env.DB_HOST || '13.201.179.44',
-    port: process.env.DB_PORT || 5432,
-    database: process.env.DB_NAME || 'sp_v2_staging',
-    user: process.env.DB_USER || 'sp_v2_user',
-    password: process.env.DB_PASSWORD || 'sp_v2_password',
+    host: config.db.host,
+    port: config.db.port,
+    database: config.db.database,
+    user: config.db.user,
+    password: config.db.password,
+    max: 5,
+    idleTimeoutMillis: 10000,
+    connectionTimeoutMillis: 5000
   });
 
   try {
@@ -604,14 +609,17 @@ async function fetchPGFromDatabase(params, jobId) {
   }
 }
 
-async function fetchBankFromDatabase(params, jobId) {
+async function fetchBankFromDatabase(config, params, jobId) {
   const { Pool } = require('pg');
   const pool = new Pool({
-    host: process.env.DB_HOST || '13.201.179.44',
-    port: process.env.DB_PORT || 5432,
-    database: process.env.DB_NAME || 'sp_v2_staging',
-    user: process.env.DB_USER || 'sp_v2_user',
-    password: process.env.DB_PASSWORD || 'sp_v2_password',
+    host: config.db.host,
+    port: config.db.port,
+    database: config.db.database,
+    user: config.db.user,
+    password: config.db.password,
+    max: 5,
+    idleTimeoutMillis: 10000,
+    connectionTimeoutMillis: 5000
   });
 
   try {
@@ -671,7 +679,7 @@ function isValidDate(date) {
 }
 
 async function fetchPGTransactions(params) {
-  const { convertV1CSVToV2 } = require('../utils/v1-column-mapper');
+  const { convertV1CSVToV2 } = require('../../shared/v1-column-mapper.cjs');
   
   try {
     const response = await axios.get(`${PG_API_URL}/api/pg/transactions`, {
@@ -687,7 +695,8 @@ async function fetchPGTransactions(params) {
     
     if (transactions.length > 0) {
       try {
-        transactions = convertV1CSVToV2(transactions, 'pg_transactions');
+        // Use 'recon' mode: transaction_id → utr (for reconciliation)
+        transactions = await convertV1CSVToV2(transactions, 'pg_transactions', null, 'recon');
         console.log(`[Recon] Converted ${transactions.length} PG transactions from V1 to V2 format`);
       } catch (conversionError) {
         console.warn('[Recon] V1→V2 conversion failed, using data as-is:', conversionError.message);
@@ -707,7 +716,7 @@ async function fetchPGTransactions(params) {
 }
 
 async function fetchBankRecords(params) {
-  const { convertV1CSVToV2 } = require('../utils/v1-column-mapper');
+  const { convertV1CSVToV2 } = require('../../shared/v1-column-mapper.cjs');
   
   try {
     const response = await axios.get(`${BANK_API_URL}/api/bank/axis/recon`, {
@@ -724,7 +733,8 @@ async function fetchBankRecords(params) {
     if (records.length > 0) {
       try {
         console.log('[Recon] BEFORE conversion, first record:', JSON.stringify(records[0]));
-        records = convertV1CSVToV2(records, 'bank_statements');
+        // Use 'recon' mode: transaction_id → utr (for reconciliation matching)
+        records = await convertV1CSVToV2(records, 'bank_statements', null, 'recon');
         console.log(`[Recon] Converted ${records.length} bank records from V1 to V2 format`);
         console.log('[Recon] AFTER conversion, first record:', JSON.stringify(records[0]));
       } catch (conversionError) {
@@ -755,7 +765,7 @@ async function fetchBankRecords(params) {
 }
 
 async function normalizeTransactions(transactions) {
-  const { convertV1CSVToV2 } = require('../utils/v1-column-mapper');
+  const { convertV1CSVToV2 } = require('../../shared/v1-column-mapper.cjs');
   
   // Check if this is V1 format by looking for V1 column names
   if (transactions.length > 0) {
@@ -783,8 +793,8 @@ async function normalizeTransactions(transactions) {
         return normalized;
       });
       
-      // Apply V1 -> V2 conversion
-      const v2Data = await convertV1CSVToV2(normalizedV1, 'pg_transactions');
+      // Apply V1 -> V2 conversion with 'recon' mode
+      const v2Data = await convertV1CSVToV2(normalizedV1, 'pg_transactions', null, 'recon');
       
       // Convert to reconciliation engine format
       return v2Data.map(t => ({

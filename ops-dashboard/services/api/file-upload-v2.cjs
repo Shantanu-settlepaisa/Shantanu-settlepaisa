@@ -18,7 +18,7 @@ const csv = require('csv-parser');
 const XLSX = require('xlsx');
 const { v4: uuidv4 } = require('uuid');
 const fs = require('fs');
-const { convertV1CSVToV2, detectFormat } = require('./v1-column-mapper');
+const { convertV1CSVToV2, detectFormat } = require('../shared/v1-column-mapper.cjs');
 // const { createHealthCheckEndpoint } = require('../health-check');
 
 // Security: Authentication middleware (CRIT-002)
@@ -544,7 +544,8 @@ async function processFile(file, fileType, sourceType = null, includePreview = t
       log(`🔍 [V2 Upload] V1 Type Mapping: detectedType="${detectedType}" → v1Type="${v1Type}", bankName="${bankName || 'N/A'}"`);
 
       // IMPORTANT: convertV1CSVToV2 is now async!
-      processedData = await convertV1CSVToV2(data, v1Type, bankName);
+      // Use 'api' mode: transaction_id → bank_ref (for file uploads)
+      processedData = await convertV1CSVToV2(data, v1Type, bankName, 'api');
       log(`✨ [V2 Upload] Converted ${data.length} V1 rows to V2 format`);
     }
   } catch (conversionError) {
@@ -627,7 +628,8 @@ async function processFileWithSession(file, fileType, sourceType = null, include
 
       log(`🔍 [V2 Upload] V1 Type Mapping: detectedType="${detectedType}" → v1Type="${v1Type}", bankName="${bankName || 'N/A'}"`);
 
-      processedData = await convertV1CSVToV2(data, v1Type, bankName);
+      // Use 'api' mode: transaction_id → bank_ref (for file uploads)
+      processedData = await convertV1CSVToV2(data, v1Type, bankName, 'api');
       log(`✨ [V2 Upload] Converted ${data.length} V1 rows to V2 format`);
     }
   } catch (conversionError) {

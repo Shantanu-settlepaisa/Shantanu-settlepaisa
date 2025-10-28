@@ -1,6 +1,6 @@
 const Papa = require('papaparse');
 const xml2js = require('xml2js');
-const { mapV1ToV2 } = require('../utils/v1-column-mapper');
+const { mapV1ToV2 } = require('../../shared/v1-column-mapper.cjs');
 
 function parseCsvContent(content) {
   const result = Papa.parse(content, {
@@ -40,7 +40,8 @@ async function parseXmlContent(content) {
 
 function transformBankDataToV2(bankData, sourceEntity, dataType = 'bank_statement') {
   return bankData.map(row => {
-    const v2Record = mapV1ToV2(row, dataType);
+    // Use 'recon' mode: transaction_id → utr (for reconciliation matching)
+    const v2Record = mapV1ToV2(row, dataType, null, 'recon');
     
     v2Record.source_type = 'CONNECTOR';
     v2Record.source_name = sourceEntity;
