@@ -850,22 +850,23 @@ async function normalizeBankRecords(records, bankFilename = null, jobId = null) 
     try {
       const { detectBankFromFilename, normalizeBankData } = require('../utils/bank-normalizer');
       const { Pool } = require('pg');
-      
+      const config = require('../../config/env.cjs');
+
       // Detect bank from filename
       const bankConfigName = detectBankFromFilename(bankFilename);
-      
+
       if (bankConfigName) {
         if (jobId) {
           logStructured(jobId, 'info', `Detected bank: ${bankConfigName} from filename: ${bankFilename}`);
         }
-        
-        // Fetch bank mapping from database
+
+        // Fetch bank mapping from database using centralized config
         const pool = new Pool({
-          host: process.env.DB_HOST || 'localhost',
-          port: process.env.DB_PORT || 5433,
-          database: process.env.DB_NAME || 'settlepaisa_v2',
-          user: process.env.DB_USER || 'postgres',
-          password: process.env.DB_PASSWORD || 'settlepaisa123'
+          host: config.db.host,
+          port: config.db.port,
+          database: config.db.database,
+          user: config.db.user,
+          password: config.db.password
         });
         
         const result = await pool.query(`
