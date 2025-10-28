@@ -272,7 +272,7 @@ app.get('/api/reports/recon-outcome', async (req, res) => {
         COALESCE(rr.exception_message, 'System generated') as comments
       FROM sp_v2_transactions t
       LEFT JOIN sp_v2_bank_statements c ON t.utr = c.utr
-      LEFT JOIN sp_v2_reconciliation_results rr ON t.id::TEXT = rr.pg_transaction_id
+      LEFT JOIN sp_v2_reconciliation_results rr ON t.transaction_id = rr.pg_transaction_id
       WHERE 1=1
     `;
 
