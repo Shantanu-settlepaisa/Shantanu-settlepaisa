@@ -1,3 +1,4 @@
+const { initEnv } = require('../shared/env-loader.cjs');
 const express = require('express');
 const cors = require('cors');
 const { Pool } = require('pg');
@@ -6,8 +7,14 @@ const axios = require('axios');
 const crypto = require('crypto');
 const rateLimit = require('express-rate-limit');
 
+// Initialize environment with validation
+const config = initEnv('pg-ingestion', {
+  skipValidation: false,  // Enable validation - service will refuse to start if DB is localhost in staging/production
+  fallbackToShared: true, // Load shared secrets from overview-api/.env
+});
+
 const app = express();
-const PORT = process.env.PG_INGESTION_PORT || 5111;
+const PORT = config.app.port || 5111;
 
 // Middleware
 app.use(cors());
@@ -21,13 +28,13 @@ const webhookLimiter = rateLimit({
   message: 'Too many webhook requests'
 });
 
-// PostgreSQL V2 Database connection
+// PostgreSQL V2 Database connection with validated config
 const pool = new Pool({
-  user: process.env.DB_USER || 'postgres',
-  host: process.env.DB_HOST || 'localhost',
-  database: process.env.DB_NAME || 'settlepaisa_v2',
-  password: process.env.DB_PASSWORD || 'settlepaisa123',
-  port: parseInt(process.env.DB_PORT || '5433'),
+  user: config.db.user,
+  host: config.db.host,
+  database: config.db.database,
+  password: config.db.password,
+  port: config.db.port,
 });
 
 // V1 SettlePaisa Production API Configuration

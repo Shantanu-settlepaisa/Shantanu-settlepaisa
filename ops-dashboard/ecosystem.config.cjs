@@ -113,11 +113,11 @@ module.exports = {
     /**
      * Reconciliation API - Reconciliation engine
      * Port: 5103
-     * Entry: index.cjs
+     * Entry: index.js
      */
     {
       name: 'recon-api',
-      script: './services/recon-api/index.cjs',
+      script: './services/recon-api/index.js',
       cwd: './services/recon-api',
       instances: 1,
       exec_mode: 'fork',
@@ -223,11 +223,11 @@ module.exports = {
     /**
      * PG Ingestion - Payment gateway webhook receiver
      * Port: 5111
-     * Entry: pg-ingestion.cjs
+     * Entry: pg-ingestion-server.cjs
      */
     {
       name: 'pg-ingestion',
-      script: './services/pg-ingestion/pg-ingestion.cjs',
+      script: './services/pg-ingestion/pg-ingestion-server.cjs',
       cwd: './services/pg-ingestion',
       instances: 1,
       exec_mode: 'fork',
@@ -261,11 +261,11 @@ module.exports = {
     /**
      * Chargeback API - Chargeback and refund management
      * Port: 5112
-     * Entry: chargeback-api.cjs
+     * Entry: index.js
      */
     {
       name: 'chargeback-api',
-      script: './services/chargeback-api/chargeback-api.cjs',
+      script: './services/chargeback-api/index.js',
       cwd: './services/chargeback-api',
       instances: 1,
       exec_mode: 'fork',
