@@ -41,16 +41,18 @@ function detectPGSchema(headers: string[]): string {
 function detectBankFromFilename(filename: string): string {
   const normalized = filename.toUpperCase();
   
+  // Map bank names to patterns - keys use SPACE to match database format
+  // Database has "AXIS BANK", "HDFC BANK", etc. (not "AXIS_BANK")
   const patterns: Record<string, string[]> = {
-    'HDFC_BANK': ['HDFC BANK', 'HDFC_BANK', 'HDFCBANK', 'HDFC'],
-    'AXIS_BANK': ['AXIS BANK', 'AXIS_BANK', 'AXISBANK', 'AXIS'],
-    'SBI_BANK': ['SBI BANK', 'SBI_BANK', 'SBIBANK', 'SBI'],
-    'ICICI_BANK': ['ICICI BANK', 'ICICI_BANK', 'ICICIBANK', 'ICICI'],
-    'YES_BANK': ['YES BANK', 'YES_BANK', 'YESBANK', 'YES'],
+    'HDFC BANK': ['HDFC BANK', 'HDFC_BANK', 'HDFCBANK', 'HDFC'],
+    'AXIS BANK': ['AXIS BANK', 'AXIS_BANK', 'AXISBANK', 'AXIS'],
+    'SBI BANK': ['SBI BANK', 'SBI_BANK', 'SBIBANK', 'SBI'],
+    'ICICI BANK': ['ICICI BANK', 'ICICI_BANK', 'ICICIBANK', 'ICICI'],
+    'YES BANK': ['YES BANK', 'YES_BANK', 'YESBANK', 'YES'],
     'BOB': ['BOB', 'BANK OF BARODA'],
-    'CANARA': ['CANARA'],
+    'CANARA BANK': ['CANARA'],
     'IDBI': ['IDBI'],
-    'INDIAN_BANK': ['INDIAN BANK', 'INDIAN_BANK'],
+    'INDIAN BANK': ['INDIAN BANK', 'INDIAN_BANK'],
     'FEDERAL': ['FEDERAL'],
     'BOI': ['BOI', 'BANK OF INDIA']
   };

@@ -113,7 +113,12 @@ app.post('/api/upload/multiple', authenticate, opsStaffOnly, upload.array('files
     
     for (const file of req.files) {
       try {
-        const result = await processFile(file, req.body.fileType || 'auto-detect');
+        // CRITICAL FIX: Pass sourceType (bank name) to processFile for DB-driven mapping
+        const result = await processFile(
+          file,
+          req.body.fileType || 'auto-detect',
+          req.body.sourceType  // Pass bank name from frontend
+        );
         results.push({
           filename: file.originalname,
           status: 'success',

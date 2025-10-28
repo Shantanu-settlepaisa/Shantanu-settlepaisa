@@ -76,6 +76,115 @@ npm run dev -- --port 5174 > /tmp/vite.log 2>&1 &
 - Service function is `fetchOverview` (not fetchOverviewCounts)
 - Data structure: `overview.pipeline.xxx` for pipeline data
 
+## ⚠️ DEPLOYMENT CHECKLIST - CRITICAL
+
+### 🚨 NEVER Deploy Only Backend OR Only Frontend
+**Problem**: Environment variables (like API URLs) are baked into frontend JavaScript bundles at BUILD time, not runtime.
+
+### The Issue That Happened (Oct 29, 2025)
+1. **Earlier**: Frontend was built with localhost URLs → deployed to S3
+2. **Later**: Fixed `.env` files to have staging 2 URLs
+3. **Today**: Deployed backend (SSH + git pull + PM2 restart)
+4. **❌ MISTAKE**: Never rebuilt/redeployed frontend
+5. **Result**: S3 still had old frontend with localhost URLs → "Invalid token" errors
+
+### ✅ Proper Deployment Process
+
+#### When Backend Code Changes:
+```bash
+# 1. SSH to EC2 and deploy backend
+ssh ec2-user@52.66.199.215
+cd /home/ec2-user/ops-dashboard
+git pull origin feat/ops-dashboard-exports
+pm2 restart all
+exit
+
+# 2. NO FRONTEND REBUILD NEEDED (unless .env changed)
+```
+
+#### When Frontend Code Changes:
+```bash
+# Always rebuild and redeploy frontend
+./deploy-frontend-staging2.sh
+```
+
+#### When .env Files Change (URLs, API Keys, etc.):
+```bash
+# ⚠️ CRITICAL: Must rebuild frontend AND redeploy backend
+
+# 1. Rebuild frontend (Vite bakes .env into JavaScript)
+./deploy-frontend-staging2.sh
+
+# 2. Deploy backend
+ssh ec2-user@52.66.199.215 << 'EOF'
+cd /home/ec2-user/ops-dashboard
+git pull origin feat/ops-dashboard-exports
+pm2 restart all
+EOF
+```
+
+### Deployment Scripts
+
+#### `deploy-frontend-staging2.sh`
+- ✅ Verifies `.env.staging-ops` has correct URLs
+- ✅ Cleans old `dist-ops/` folder
+- ✅ Rebuilds with `npm run build:staging-ops`
+- ✅ Verifies build has correct URLs (not localhost)
+- ✅ Deploys to S3 `settlepaisa-ops-staging-2`
+
+**Usage:**
+```bash
+./deploy-frontend-staging2.sh
+```
+
+### Environment Files
+
+#### `.env.staging-ops` (Staging 2)
+```bash
+VITE_UPLOAD_API_URL=http://52.66.199.215:5107
+VITE_RECON_API_URL=http://52.66.199.215:5103
+VITE_OVERVIEW_API_URL=http://52.66.199.215:5108
+VITE_SETTLEMENT_API_URL=http://52.66.199.215:5104
+VITE_FINANCIAL_API_URL=http://52.66.199.215:5105
+VITE_PG_API_URL=http://52.66.199.215:5101
+VITE_BANK_API_URL=http://52.66.199.215:5102
+VITE_AUTH_API_URL=http://52.66.199.215:5106
+```
+
+### Quick Verification After Deployment
+
+#### Check Frontend Build:
+```bash
+# Should contain staging URLs, NOT localhost
+grep -r "52.66.199.215:5107" dist-ops/assets/
+grep -r "http://localhost" dist-ops/assets/ | wc -l  # Should be ~0
+```
+
+#### Check Deployed Frontend:
+```bash
+curl -s http://settlepaisa-ops-staging-2.s3-website.ap-south-1.amazonaws.com/assets/ReconWorkspaceSimplified-*.js | grep -o "http://52.66.199.215:5107"
+# Should output: http://52.66.199.215:5107
+```
+
+#### Test in Browser:
+1. Open DevTools (F12) → Network tab
+2. Try uploading a file in Recon Workspace
+3. Verify request goes to: `http://52.66.199.215:5107/api/upload/multiple`
+4. Should NOT see localhost URLs
+
+### Deployment Environments
+
+| Environment | S3 Bucket | EC2 IP | Frontend URL |
+|------------|-----------|---------|--------------|
+| **Staging 2** | `settlepaisa-ops-staging-2` | 52.66.199.215 | http://settlepaisa-ops-staging-2.s3-website.ap-south-1.amazonaws.com |
+| **Local Dev** | N/A | localhost | http://localhost:5174 |
+
+### Why This Matters
+- **Vite bundles environment variables at BUILD time** (not runtime)
+- Changing `.env` without rebuilding = old URLs stay in JavaScript
+- S3 serves static files = no server-side variable substitution
+- Result: Frontend calls wrong backend URLs → auth errors, 404s, CORS issues
+
 ## Database Tables - CRITICAL DISTINCTION
 
 ### Transaction Tables - DO NOT CONFUSE
