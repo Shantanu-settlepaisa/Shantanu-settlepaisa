@@ -281,9 +281,12 @@ async function runReconciliation(config, params) {
     if (daysDiff > 90) {
       throw new Error('ZERO_DATA: Date is more than 90 days from today. Use a more recent date.');
     }
-    
-    if (inputDate > today) {
-      throw new Error('ZERO_DATA: Cannot reconcile future dates');
+
+    // Allow T+1 dates (transactions can be dated next day)
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    if (inputDate > tomorrow) {
+      throw new Error('ZERO_DATA: Cannot reconcile dates more than T+1');
     }
     
     // Check connector availability (preflight)
