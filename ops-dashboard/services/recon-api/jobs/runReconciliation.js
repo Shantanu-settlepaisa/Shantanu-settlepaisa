@@ -959,7 +959,7 @@ async function normalizeBankRecords(records, bankFilename = null, jobId = null) 
       gross_amount: finalGrossAmount, // 🆕 Add gross_amount for matching
       transaction_date: r['Transaction Date'] || r.transaction_date || r.DATE || r.TXN_DATE || r.date || '',
       value_date: r['Value Date'] || r.value_date || r.date || '',
-      utr: (r.UTR || r.utr || '').toString().trim().toUpperCase(),
+      utr: (r.UTR || r.utr || r.MERCHANT_TRACKID || r.merchant_trackid || '').toString().trim().toUpperCase(),
       remarks: r.Remarks || r.remarks || '',
       debit_credit: r['Debit/Credit'] || r.debit_credit || 'CREDIT'
     };
