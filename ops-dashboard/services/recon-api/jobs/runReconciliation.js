@@ -978,7 +978,7 @@ async function normalizeBankRecords(records, bankFilename = null, jobId = null) 
       gross_amount: finalGrossAmount, // 🆕 Add gross_amount for matching
       transaction_date: r['Transaction Date'] || r.transaction_date || r.DATE || r.TXN_DATE || r.date || '',
       value_date: r['Value Date'] || r.value_date || r.date || '',
-      utr: (r.UTR || r.utr || r.MERCHANT_TRACKID || r.merchant_trackid || r.PRNNo || r.prnno || r.merchant_track_id || r['Merchant Track ID'] || '').toString().trim().toUpperCase(),
+      utr: (r.utr || r.bank_ref || '').toString().trim().toUpperCase(),  // After V1→V2 mapping, UTR is in 'utr' or 'bank_ref' field
       remarks: r.Remarks || r.remarks || '',
       debit_credit: r['Debit/Credit'] || r.debit_credit || 'CREDIT'
     };

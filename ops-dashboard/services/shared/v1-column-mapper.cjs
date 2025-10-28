@@ -294,11 +294,11 @@ function getV1ToV2Mapping(mode = 'api') {
     'merchant_txn_id': 'bank_ref',
 
     // AXIS BANK
-    'prnno': 'bank_ref',
+    'prnno': 'utr',  // FIXED: PRNNo is the UTR for AXIS Bank
 
     // BOB
     'settlement_amount': 'gross_amount_paise',
-    'merchant_track_id': 'bank_ref',
+    'merchant_track_id': 'utr',  // FIXED: Merchant Track ID is the UTR for BOB
     'onus_indicator': null,  // special field - ignore
 
     // BOI, CENTRAL, FEDERAL, HDFC NB, IDBI, INDIAN BANK, MAHARASTRA, SBI NB (same pattern)
