@@ -419,21 +419,68 @@ async function checkDatabaseConnection() {
 
 /**
  * Get financial analytics data from settlement batches
- * @param {string} from - Start date (YYYY-MM-DD)
- * @param {string} to - End date (YYYY-MM-DD)
+ * @param {string} from - Start date (YYYY-MM-DD) - filters by cycle_date by default
+ * @param {string} to - End date (YYYY-MM-DD) - filters by cycle_date by default
  * @param {string} merchantId - Optional merchant filter
  * @param {string} groupBy - Optional grouping: 'day' | 'week' | 'month'
+ * @param {Object} options - Optional parameters
+ * @param {string} options.transactionFrom - Start date for transaction_date filter (overrides from/to)
+ * @param {string} options.transactionTo - End date for transaction_date filter (overrides from/to)
  * @returns {Promise<Object>} Financial analytics with summary and trends
  */
-async function getFinancialAnalytics(from, to, merchantId = null, groupBy = null) {
+async function getFinancialAnalytics(from, to, merchantId = null, groupBy = null, options = {}) {
   const client = await pool.connect();
 
   try {
-    console.log(`[Real DB] Fetching financial analytics from ${from} to ${to}, merchantId=${merchantId}, groupBy=${groupBy}`);
+    // Determine filtering mode: transaction_date or cycle_date
+    const useTransactionDate = options.transactionFrom && options.transactionTo;
+    const filterType = useTransactionDate ? 'transaction_date' : 'cycle_date';
+    const dateFrom = useTransactionDate ? options.transactionFrom : from;
+    const dateTo = useTransactionDate ? options.transactionTo : to;
 
-    // Build summary query with NULL/zero handling for bank charges
-    // If settlepaisa_revenue_paise is 0 or NULL, fallback to total_commission_paise
-    const summaryQuery = `
+    console.log(`[Real DB] Fetching financial analytics from ${dateFrom} to ${dateTo}, merchantId=${merchantId}, groupBy=${groupBy}, filterBy=${filterType}`);
+
+    // Build summary query with support for both cycle_date and transaction_date filtering
+    // When filtering by transaction_date, use CTE to avoid duplicate aggregation
+    const summaryQuery = useTransactionDate ? `
+      WITH distinct_batches AS (
+        SELECT DISTINCT
+          b.id,
+          b.gross_amount_paise,
+          b.total_commission_paise,
+          b.total_gst_paise,
+          b.total_bank_charges_paise,
+          b.settlepaisa_revenue_paise,
+          b.net_amount_paise,
+          b.total_transactions,
+          b.merchant_id
+        FROM sp_v2_settlement_batches b
+        INNER JOIN sp_v2_settlement_items si ON b.id = si.settlement_batch_id
+        INNER JOIN sp_v2_transactions t ON si.transaction_id = t.transaction_id
+        WHERE DATE(t.transaction_date) BETWEEN $1 AND $2
+          AND ($3::VARCHAR IS NULL OR b.merchant_id = $3)
+          AND b.status IN ('COMPLETED', 'SENT_TO_BANK', 'APPROVED', 'PENDING_APPROVAL')
+      )
+      SELECT
+        SUM(gross_amount_paise) as total_gmv,
+        SUM(total_commission_paise) as total_mdr,
+        SUM(total_gst_paise) as total_gst,
+        SUM(COALESCE(total_bank_charges_paise, 0)) as total_bank_charges,
+        SUM(
+          CASE
+            WHEN COALESCE(settlepaisa_revenue_paise, 0) = 0
+            THEN total_commission_paise
+            ELSE settlepaisa_revenue_paise
+          END
+        ) as total_revenue,
+        SUM(net_amount_paise) as total_net_settled,
+        SUM(total_transactions) as total_txn_count,
+        COUNT(DISTINCT merchant_id) as merchant_count,
+        COUNT(*) as batch_count,
+        ((SUM(total_commission_paise) + SUM(total_gst_paise))::FLOAT /
+         NULLIF(SUM(gross_amount_paise), 0) * 100) as margin_percent
+      FROM distinct_batches
+    ` : `
       SELECT
         SUM(gross_amount_paise) as total_gmv,
         SUM(total_commission_paise) as total_mdr,
@@ -458,12 +505,12 @@ async function getFinancialAnalytics(from, to, merchantId = null, groupBy = null
         AND status IN ('COMPLETED', 'SENT_TO_BANK', 'APPROVED', 'PENDING_APPROVAL')
     `;
 
-    const summaryResult = await client.query(summaryQuery, [from, to, merchantId]);
+    const summaryResult = await client.query(summaryQuery, [dateFrom, dateTo, merchantId]);
     const summary = summaryResult.rows[0];
 
-    // Calculate period info
-    const fromDate = new Date(from);
-    const toDate = new Date(to);
+    // Calculate period info using the actual date range being queried
+    const fromDate = new Date(dateFrom);
+    const toDate = new Date(dateTo);
     const daysDiff = Math.ceil((toDate - fromDate) / (1000 * 60 * 60 * 24)) + 1;
 
     // Calculate previous period dates for delta comparison
@@ -475,9 +522,9 @@ async function getFinancialAnalytics(from, to, merchantId = null, groupBy = null
     const previousFrom = previousFromDate.toISOString().split('T')[0];
     const previousTo = previousToDate.toISOString().split('T')[0];
 
-    console.log(`[Real DB] Querying previous period for comparison: ${previousFrom} to ${previousTo}`);
+    console.log(`[Real DB] Querying previous period for comparison: ${previousFrom} to ${previousTo} (using ${filterType})`);
 
-    // Query previous period for delta calculation
+    // Query previous period for delta calculation (use same filter type)
     const previousResult = await client.query(summaryQuery, [previousFrom, previousTo, merchantId]);
     const previousSummary = previousResult.rows[0];
 

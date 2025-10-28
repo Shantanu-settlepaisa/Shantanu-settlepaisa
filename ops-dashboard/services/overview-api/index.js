@@ -1942,7 +1942,7 @@ app.get('/api/analytics/kpis-v2', async (req, res) => {
 
 // ===== Financial Analytics - COFOUNDER METRICS =====
 app.get('/api/analytics/financial', async (req, res) => {
-  const { from, to, merchantId, groupBy } = req.query;
+  const { from, to, merchantId, groupBy, transactionFrom, transactionTo } = req.query;
 
   try {
     // Validate required parameters
@@ -1962,6 +1962,20 @@ app.get('/api/analytics/financial', async (req, res) => {
       });
     }
 
+    // Validate transactionFrom/transactionTo if provided
+    if (transactionFrom && !dateRegex.test(transactionFrom)) {
+      return res.status(400).json({
+        error: 'Invalid date format',
+        message: 'transactionFrom must be in YYYY-MM-DD format'
+      });
+    }
+    if (transactionTo && !dateRegex.test(transactionTo)) {
+      return res.status(400).json({
+        error: 'Invalid date format',
+        message: 'transactionTo must be in YYYY-MM-DD format'
+      });
+    }
+
     // Validate groupBy if provided
     if (groupBy && !['day', 'week', 'month'].includes(groupBy)) {
       return res.status(400).json({
@@ -1970,9 +1984,12 @@ app.get('/api/analytics/financial', async (req, res) => {
       });
     }
 
-    console.log(`[Financial Analytics] ✅ Request: from=${from}, to=${to}, merchantId=${merchantId || 'ALL'}, groupBy=${groupBy || 'none'}`);
+    const filterMode = (transactionFrom && transactionTo) ? 'transaction_date' : 'cycle_date';
+    console.log(`[Financial Analytics] ✅ Request: from=${from}, to=${to}, merchantId=${merchantId || 'ALL'}, groupBy=${groupBy || 'none'}, filterMode=${filterMode}`);
 
-    const analytics = await realDB.getFinancialAnalytics(from, to, merchantId, groupBy);
+    // Pass options for transaction_date filtering if provided
+    const options = (transactionFrom && transactionTo) ? { transactionFrom, transactionTo } : {};
+    const analytics = await realDB.getFinancialAnalytics(from, to, merchantId, groupBy, options);
 
     console.log(`[Financial Analytics] ✅ Response: GMV=${analytics.summary.gmv.formatted}, Revenue=${analytics.summary.settlepaisaRevenue.formatted}, Margin=${analytics.summary.grossMarginPercent}%`);
 
