@@ -1,10 +1,15 @@
-// CRITICAL FIX: Load service-specific .env FIRST for PORT configuration
-// This prevents conflict with overview-api which uses PORT=5108
+// Load environment with validation using shared loader
+// This ensures proper .env loading regardless of PM2 working directory
+// and validates configuration (DB host, JWT secret, etc.)
 const path = require('path');
-require('dotenv').config({ path: path.join(__dirname, '.env') });
+const { initEnv } = require('../shared/env-loader.cjs');
 
-// Then load shared config for database, auth, etc.
-const config = require('../config/env.cjs');
+// Initialize environment for upload-api
+// Loads services/api/.env with fallback to overview-api/.env for shared secrets
+const config = initEnv('api', {
+  skipValidation: false,
+  fallbackToShared: true, // Load JWT_SECRET from overview-api/.env
+});
 const express = require('express');
 const multer = require('multer');
 const cors = require('cors');
