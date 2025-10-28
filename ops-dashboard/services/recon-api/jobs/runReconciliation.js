@@ -357,7 +357,7 @@ async function runReconciliation(params) {
     job.stage = 'normalize';
     logStructured(jobId, 'info', 'Normalizing data');
     
-    const normalizedPg = normalizeTransactions(pgTransactions);
+    const normalizedPg = await normalizeTransactions(pgTransactions);
     const normalizedBank = await normalizeBankRecords(bankRecords, bankFilename, jobId);
     job.counters.normalized = normalizedPg.length + normalizedBank.length;
     
@@ -754,7 +754,7 @@ async function fetchBankRecords(params) {
   }
 }
 
-function normalizeTransactions(transactions) {
+async function normalizeTransactions(transactions) {
   const { convertV1CSVToV2 } = require('../utils/v1-column-mapper');
   
   // Check if this is V1 format by looking for V1 column names
@@ -784,7 +784,7 @@ function normalizeTransactions(transactions) {
       });
       
       // Apply V1 -> V2 conversion
-      const v2Data = convertV1CSVToV2(normalizedV1, 'pg_transactions');
+      const v2Data = await convertV1CSVToV2(normalizedV1, 'pg_transactions');
       
       // Convert to reconciliation engine format
       return v2Data.map(t => ({
@@ -888,16 +888,24 @@ async function normalizeBankRecords(records, bankFilename = null, jobId = null) 
           if (jobId) {
             logStructured(jobId, 'info', `Applying two-stage normalization (Bank → V1 → V2) for ${bankMapping.bank_name}`);
           }
-          
+
           // Apply two-stage normalization
-          const v2Data = normalizeBankData(records, bankMapping);
-          
-          if (jobId) {
-            logStructured(jobId, 'info', `Two-stage normalization complete: ${v2Data.length} records`);
-          }
-          
-          // Convert V2 format to reconciliation engine format
-          return v2Data.map(r => ({
+          const v2Data = await normalizeBankData(records, bankMapping);
+
+          // Defensive check - ensure v2Data is an array
+          if (!Array.isArray(v2Data)) {
+            console.error('[Bank Normalization] ERROR: normalizeBankData did not return an array!', typeof v2Data, v2Data);
+            if (jobId) {
+              logStructured(jobId, 'error', `Two-stage normalization failed: Result is not an array (${typeof v2Data})`);
+            }
+            // Fall through to fallback normalization
+          } else {
+            if (jobId) {
+              logStructured(jobId, 'info', `Two-stage normalization complete: ${v2Data.length} records`);
+            }
+
+            // Convert V2 format to reconciliation engine format
+            return v2Data.map(r => ({
             ...r,
             normalized: true,
             bank_reference: r.utr || r.rrn || '',
@@ -910,6 +918,7 @@ async function normalizeBankRecords(records, bankFilename = null, jobId = null) 
             remarks: r.remarks || '',
             debit_credit: 'CREDIT'
           }));
+          }
         } else {
           if (jobId) {
             logStructured(jobId, 'warn', `Bank mapping not found for ${bankConfigName}, using fallback normalization`);
@@ -1886,8 +1895,8 @@ async function persistResults(results, jobId = 'UNKNOWN', job = {}, params = {})
       
       for (const match of results.matched) {
         const pgTxnId = match.pg.transaction_id || match.pg.pgw_ref;
-        const pgAmount = match.pg.amount || 0;
-        const bankAmount = match.bank.amount || 0;
+        const pgAmount = Number(match.pg.gross_amount || match.pg.amount) || 0;
+        const bankAmount = Number(match.bank.gross_amount || match.bank.amount) || 0;
         const variance = bankAmount - pgAmount;
         const matchScore = match.matchScore || 100;
         
@@ -1990,7 +1999,7 @@ async function persistResults(results, jobId = 'UNKNOWN', job = {}, params = {})
 
         const bankUtr = unmatchedBank.utr || unmatchedBank.UTR || unmatchedBank.TRANSACTION_ID || 'N/A';
         const pgTxnId = `BANK_${bankUtr}`;
-        const bankAmount = unmatchedBank.amount || Math.round(parseFloat(unmatchedBank.AMOUNT || unmatchedBank.CREDIT_AMT || 0) * 100);
+        const bankAmount = Number(unmatchedBank.gross_amount || unmatchedBank.amount) || Math.round(parseFloat(unmatchedBank.AMOUNT || unmatchedBank.CREDIT_AMT || 0) * 100);
 
         const existing = await client.query(
           'SELECT id FROM sp_v2_reconciliation_results WHERE pg_transaction_id = $1',
@@ -2039,8 +2048,8 @@ async function persistResults(results, jobId = 'UNKNOWN', job = {}, params = {})
           }
         }
 
-        const pgAmount = exception.pg ? (exception.pg.amount || 0) : null;
-        const bankAmount = exception.bank ? (exception.bank.amount || 0) : null;
+        const pgAmount = exception.pg ? (Number(exception.pg.gross_amount || exception.pg.amount) || 0) : null;
+        const bankAmount = exception.bank ? (Number(exception.bank.gross_amount || exception.bank.amount) || 0) : null;
         const variance = exception.delta || 0;
         
         const severityMap = {
@@ -2148,8 +2157,8 @@ async function persistResults(results, jobId = 'UNKNOWN', job = {}, params = {})
       client.release();
       console.log('[Persistence] Client released back to pool');
 
-      await pool.end();
-      console.log('[Persistence] Connection pool ended');
+      // await pool.end();  // DON'T end pool - settlement calculator needs it!
+      console.log('[Persistence] Pool kept alive for settlement (cleaned up by calculator.close())');
 
       const duration = Date.now() - startTime;
       console.log('[Persistence] ========== PERSISTENCE COMPLETED ==========');
@@ -2182,7 +2191,7 @@ async function persistResults(results, jobId = 'UNKNOWN', job = {}, params = {})
       console.error('[Persistence] ================================================');
 
       client.release();
-      await pool.end();
+      // await pool.end();  // DON'T end pool even on error - settlement may still run
 
       // Re-throw with enhanced context
       const enhancedError = new Error(`Persistence failed for job ${jobId}: ${error.message}`);

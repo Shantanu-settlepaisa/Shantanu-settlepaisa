@@ -3,7 +3,7 @@
 // ============================================================================
 
 const { Pool } = require('pg');
-const config = require('../config/env.cjs');
+const config = require('../../config/env.cjs');
 
 // DB Configuration - use SAME database as upload API (via env.cjs)
 // CRITICAL FIX: Previously hardcoded to old database (13.201.179.44)
@@ -226,7 +226,7 @@ const V1_TO_V2_COLUMN_MAPPING = {
     // Identifiers
     'utr': 'utr',
     'rrn': 'rrn',
-    'transaction_id': 'bank_ref',
+    'transaction_id': 'utr',  // CRITICAL: Map transaction_id to utr for matching
     'approval_code': 'approval_code',
 
     // 🆕 EXPLICIT AMOUNT FIELDS (NO OVERLAP) - Fixes V1-to-V2 ambiguity

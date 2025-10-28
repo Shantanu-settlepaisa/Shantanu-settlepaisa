@@ -133,23 +133,23 @@ function applyBankToV1Mapping(rawBankData, v1Mappings) {
  * @param {Object} bankMapping - Bank mapping config from sp_v2_bank_column_mappings table
  * @returns {Array} - V2 standardized data (ready for sp_v2_bank_statements)
  */
-function normalizeBankData(rawBankData, bankMapping) {
+async function normalizeBankData(rawBankData, bankMapping) {
   console.log('[Bank Normalization] Starting two-stage normalization');
   console.log(`[Bank Normalization] Bank: ${bankMapping.bank_name}, File Type: ${bankMapping.file_type}`);
-  
+
   // Stage 1: Bank Raw → V1 Standard
   const v1StandardData = applyBankToV1Mapping(
     rawBankData,
     bankMapping.v1_column_mappings
   );
-  
+
   console.log(`[Bank Normalization] Stage 1 complete: ${v1StandardData.length} V1 records`);
-  
+
   // Stage 2: V1 Standard → V2 Standard
-  const v2StandardData = convertV1CSVToV2(v1StandardData, 'bank_statements');
-  
+  const v2StandardData = await convertV1CSVToV2(v1StandardData, 'bank_statements');
+
   console.log(`[Bank Normalization] Stage 2 complete: ${v2StandardData.length} V2 records`);
-  
+
   // Add bank metadata
   const enrichedData = v2StandardData.map(record => ({
     ...record,
@@ -157,7 +157,7 @@ function normalizeBankData(rawBankData, bankMapping) {
     source_type: 'manual_upload',
     source_name: bankMapping.bank_name
   }));
-  
+
   return enrichedData;
 }
 

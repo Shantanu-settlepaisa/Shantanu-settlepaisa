@@ -1,5 +1,23 @@
 const express = require('express');
 const router = express.Router();
+const { Pool } = require('pg');
+const config = require('../../config/env.cjs');
+
+// Create database pool at module level (not inside route handlers)
+// This ensures config is loaded once when module is first required
+const pool = new Pool({
+  host: config.db.host,
+  port: config.db.port,
+  database: config.db.database,
+  user: config.db.user,
+  password: config.db.password
+});
+
+console.log('[jobRoutes] Database pool initialized:', {
+  host: config.db.host,
+  port: config.db.port,
+  database: config.db.database
+});
 
 // GET /recon/jobs/:jobId/summary
 router.get('/jobs/:jobId/summary', async (req, res) => {
@@ -169,17 +187,9 @@ router.get('/sources/summary', async (req, res) => {
 router.get('/jobs/:jobId/results', async (req, res) => {
   const { jobId } = req.params;
   const { status, reason_code, page = 1, limit = 50 } = req.query;
-  
+
   try {
-    const { Pool } = require('pg');
-    const pool = new Pool({
-      host: 'localhost',
-      port: 5433,
-      database: 'settlepaisa_v2',
-      user: 'postgres',
-      password: 'settlepaisa123'
-    });
-    
+    // Use module-level pool (initialized at top of file)
     const client = await pool.connect();
     
     try {
