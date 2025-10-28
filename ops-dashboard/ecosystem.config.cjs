@@ -40,7 +40,7 @@ module.exports = {
      */
     {
       name: 'overview-api',
-      script: './services/overview-api/index.js',
+      script: './index.js',
       cwd: './services/overview-api',
       instances: 1,
       exec_mode: 'fork',
@@ -79,7 +79,7 @@ module.exports = {
      */
     {
       name: 'upload-api',
-      script: './services/api/file-upload-v2.cjs',
+      script: './file-upload-v2.cjs',
       cwd: './services/api',
       instances: 1,
       exec_mode: 'fork',
@@ -117,7 +117,7 @@ module.exports = {
      */
     {
       name: 'recon-api',
-      script: './services/recon-api/index.js',
+      script: './index.js',
       cwd: './services/recon-api',
       instances: 1,
       exec_mode: 'fork',
@@ -155,7 +155,7 @@ module.exports = {
      */
     {
       name: 'settlement-api',
-      script: './services/settlement-engine/settlement-api.cjs',
+      script: './settlement-api.cjs',
       cwd: './services/settlement-engine',
       instances: 1,
       exec_mode: 'fork',
@@ -192,7 +192,7 @@ module.exports = {
      */
     {
       name: 'settlement-queue-processor',
-      script: './services/settlement-engine/settlement-queue-processor.cjs',
+      script: './settlement-queue-processor.cjs',
       cwd: './services/settlement-engine',
       instances: 1,
       exec_mode: 'fork',
@@ -227,7 +227,7 @@ module.exports = {
      */
     {
       name: 'pg-ingestion',
-      script: './services/pg-ingestion/pg-ingestion-server.cjs',
+      script: './pg-ingestion-server.cjs',
       cwd: './services/pg-ingestion',
       instances: 1,
       exec_mode: 'fork',
@@ -265,7 +265,7 @@ module.exports = {
      */
     {
       name: 'chargeback-api',
-      script: './services/chargeback-api/index.js',
+      script: './index.js',
       cwd: './services/chargeback-api',
       instances: 1,
       exec_mode: 'fork',
