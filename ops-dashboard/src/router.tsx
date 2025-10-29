@@ -1,4 +1,4 @@
-import { createBrowserRouter, Navigate } from 'react-router-dom'
+import { createHashRouter, Navigate } from 'react-router-dom'
 import { OpsLayout } from './layouts/OpsLayout'
 import { MerchantLayout } from './layouts/MerchantLayout'
 import { ProtectedRoute } from './components/ProtectedRoute'
@@ -209,7 +209,7 @@ if (ENABLE_MERCHANT_DASHBOARD) {
   })
 }
 
-export const router = createBrowserRouter(routes)
+export const router = createHashRouter(routes)
 
 // Import Card components for placeholder pages
 import { Card, CardContent } from './components/ui/card'
