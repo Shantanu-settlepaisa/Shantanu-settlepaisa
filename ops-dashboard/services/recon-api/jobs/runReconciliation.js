@@ -646,7 +646,6 @@ async function fetchBankFromDatabase(config, params, jobId) {
       FROM sp_v2_bank_statements
       WHERE DATE(transaction_date) = $1
         AND source_type = 'MANUAL_UPLOAD'
-        AND processed = false
       ORDER BY transaction_date
     `;
 
