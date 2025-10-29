@@ -653,32 +653,80 @@ export function ManualUploadEnhanced() {
     console.log(`🏦 [V2 Upload] Uploading ${files.length} Bank files to V2 API...`);
 
     try {
-      // Upload files to V2 API for processing and database insertion
-      const formData = new FormData();
-      files.forEach((file) => {
+      // CRITICAL FIX: Upload each file individually to ensure correct bank detection per file
+      // Previously: All files sent in one request with single sourceType from first filename
+      // Now: Each file gets its own API call with correct bank name detection
+      const allResults: any[] = [];
+      let successCount = 0;
+      let failCount = 0;
+
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const bankName = detectBankFromFilename(file.name);
+
+        console.log(`🏦 [V2 Upload] Uploading file ${i + 1}/${files.length}: "${file.name}" as bank: "${bankName}"`);
+
+        // Create FormData for this specific file
+        const formData = new FormData();
         formData.append('files', file);
-      });
-      formData.append('fileType', 'bank_statements');
+        formData.append('fileType', 'bank_statements');
+        formData.append('sourceType', bankName);  // Bank-specific detection per file
 
-      // CRITICAL FIX: Detect and send bank name (sourceType) to backend
-      // Backend needs this to look up bank-specific column mappings from database
-      if (files.length > 0) {
-        const bankName = detectBankFromFilename(files[0].name);
-        formData.append('sourceType', bankName);
-        console.log(`🏦 [V2 Upload] Detected bank: ${bankName}, sending as sourceType`);
+        // Add overwrite parameters if in overwrite mode
+        if (shouldOverwrite) {
+          formData.append('overwrite', 'true');
+          formData.append('date', cycleDate);
+        }
+
+        try {
+          // Use authenticated upload client (Phase 1 Security)
+          const response = await uploadClient.post('/api/upload/multiple', formData);
+
+          if (response.data.success) {
+            console.log(`✅ [V2 Upload] File ${i + 1}/${files.length} uploaded successfully: ${file.name}`);
+            allResults.push(...(response.data.results || []));
+            successCount++;
+          } else {
+            console.error(`❌ [V2 Upload] File ${i + 1}/${files.length} failed: ${file.name}`, response.data.error);
+            failCount++;
+          }
+        } catch (fileError: any) {
+          console.error(`❌ [V2 Upload] File ${i + 1}/${files.length} error: ${file.name}`, fileError);
+          failCount++;
+
+          // Check if error is due to reconciled bank statements
+          const errorMessage = fileError.response?.data?.error || fileError.message || '';
+          if (errorMessage.includes('reconciled') || errorMessage.includes('reconciliation')) {
+            alert(
+              `⚠️ Cannot Overwrite - Bank Statements Already Reconciled\n\n` +
+              `File: ${file.name}\n` +
+              `Some bank statements for ${cycleDate} have already been used in reconciliation. ` +
+              `Deleting them would orphan reconciliation matches.\n\n` +
+              `Details:\n${errorMessage}\n\n` +
+              `To fix this:\n` +
+              `1. The system will automatically clean up reconciliation data\n` +
+              `2. You can safely retry the upload\n\n` +
+              `If issue persists, contact support.`
+            );
+            // Continue with next file instead of aborting
+            continue;
+          }
+        }
       }
 
-      // Add overwrite parameters if in overwrite mode
-      if (shouldOverwrite) {
-        formData.append('overwrite', 'true');
-        formData.append('date', cycleDate);
-        console.log(`🔄 [Overwrite] Will delete existing Bank data for ${cycleDate} before upload`);
-      }
+      // Show combined summary
+      console.log(`📊 [V2 Upload] Upload complete: ${successCount} successful, ${failCount} failed out of ${files.length} total`);
 
-      // Use authenticated upload client (Phase 1 Security)
-      const response = await uploadClient.post('/api/upload/multiple', formData);
+      // Create data object similar to original format
+      const data = {
+        success: successCount > 0,
+        results: allResults,
+        summary: {
+          successful: successCount,
+          failed: failCount
+        }
+      };
 
-      const data = response.data;
       console.log('V2 Bank Upload response:', data);
 
       if (data.success) {
