@@ -489,7 +489,24 @@ function mapV1ToV2(v1Row, type = 'pg_transactions', dbMapping = null, mode = 'ap
       if (v2Col === 'transaction_timestamp' || v2Col === 'transaction_date') {
         if (typeof value === 'string' && value.trim()) {
           try {
-            const parsedDate = new Date(value);
+            let parsedDate;
+
+            // Handle DD-MM-YYYY format (common in Indian bank statements)
+            if (/^\d{1,2}-\d{1,2}-\d{4}$/.test(value.trim())) {
+              const [day, month, year] = value.trim().split('-');
+              // Create date in YYYY-MM-DD format for reliable parsing
+              parsedDate = new Date(`${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`);
+            }
+            // Handle DD/MM/YYYY format
+            else if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(value.trim())) {
+              const [day, month, year] = value.trim().split('/');
+              parsedDate = new Date(`${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`);
+            }
+            // Handle YYYY-MM-DD or other ISO formats
+            else {
+              parsedDate = new Date(value);
+            }
+
             if (!isNaN(parsedDate.getTime())) {
               value = parsedDate.toISOString();
             } else {
