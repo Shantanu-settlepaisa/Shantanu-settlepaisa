@@ -1052,7 +1052,7 @@ async function insertBankStatements(statements) {
            transaction_date, value_date, source_type, source_file, debit_credit)
           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         `, [
-          stmt.bank_reference || stmt.id,
+          stmt.bank_reference || stmt.utr || stmt.id || `BANK_${Date.now()}_${Math.random()}`,
           stmt.acquirer,
           stmt.utr,
           stmt.amount_paise,
@@ -1111,7 +1111,7 @@ async function insertBankStatementsWithSession(statements, uploadSessionId, clie
          transaction_date, value_date, source_type, source_file, debit_credit)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
       `, [
-        stmt.bank_reference || stmt.id,
+        stmt.bank_reference || stmt.utr || stmt.id || `BANK_${Date.now()}_${Math.random()}`,
         stmt.acquirer,
         stmt.utr,
         stmt.amount_paise,
