@@ -1054,7 +1054,7 @@ async function insertBankStatements(statements) {
         `, [
           stmt.bank_reference || stmt.utr || stmt.id || `BANK_${Date.now()}_${Math.random()}`,
           stmt.acquirer,
-          stmt.utr,
+          stmt.utr || stmt.bank_reference || null,
           stmt.amount_paise,
           stmt.gross_amount_paise || stmt.amount_paise,
           stmt.bank_fee_paise || null,
@@ -1113,7 +1113,7 @@ async function insertBankStatementsWithSession(statements, uploadSessionId, clie
       `, [
         stmt.bank_reference || stmt.utr || stmt.id || `BANK_${Date.now()}_${Math.random()}`,
         stmt.acquirer,
-        stmt.utr,
+        stmt.utr || stmt.bank_reference || null,
         stmt.amount_paise,
         stmt.gross_amount_paise || stmt.amount_paise,
         stmt.bank_fee_paise || null,
