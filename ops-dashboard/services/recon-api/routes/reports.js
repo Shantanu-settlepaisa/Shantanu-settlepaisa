@@ -167,7 +167,7 @@ router.get('/bank-mis', async (req, res) => {
     const { cycleDate, fromDate, toDate, acquirer, merchantId } = req.query;
     
     let query = `
-      SELECT 
+      SELECT
         t.transaction_id as "txnId",
         t.utr,
         ROUND(t.amount_paise / 100.0, 2) as "pgAmountRupees",
@@ -176,6 +176,10 @@ router.get('/bank-mis', async (req, res) => {
         t.transaction_date::date as "pgDate",
         t.transaction_date::date as "bankDate",
         t.status as "reconStatus",
+        CASE
+          WHEN t.status = 'RECONCILED' THEN NULL
+          ELSE t.exception_reason
+        END as "exceptionReasonCode",
         COALESCE(t.acquirer_code, 'UNKNOWN') as acquirer,
         t.merchant_id as "merchantId",
         COALESCE(t.merchant_name, 'Unknown Merchant') as "merchantName",
@@ -230,13 +234,16 @@ router.get('/recon-outcome', async (req, res) => {
     const { cycleDate, fromDate, toDate, acquirer, merchantId } = req.query;
     
     let query = `
-      SELECT 
+      SELECT
         t.transaction_id as "txnId",
         t.transaction_id as "pgRefId",
         t.utr as "bankRefId",
         ROUND(t.amount_paise / 100.0, 2) as "amountRupees",
         t.status,
-        t.exception_reason as "exceptionType",
+        CASE
+          WHEN t.status = 'RECONCILED' THEN NULL
+          ELSE t.exception_reason
+        END as "exceptionType",
         t.merchant_id as "merchantId",
         COALESCE(t.merchant_name, 'Unknown Merchant') as "merchantName",
         COALESCE(t.acquirer_code, 'UNKNOWN') as acquirer,
