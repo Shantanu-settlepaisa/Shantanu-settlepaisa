@@ -1052,9 +1052,9 @@ async function insertBankStatements(statements) {
            transaction_date, value_date, source_type, source_file, debit_credit)
           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         `, [
-          stmt.bank_ref || stmt.bank_reference || stmt.utr || stmt.id || `BANK_${Date.now()}_${Math.random()}`,
+          stmt.bank_reference || stmt.bank_ref || stmt.utr || stmt.id || `BANK_${Date.now()}_${Math.random()}`,
           stmt.acquirer || stmt.bank_name,
-          stmt.utr || stmt.bank_ref || stmt.bank_reference || null,
+          stmt.utr || stmt.bank_reference || stmt.bank_ref || null,
           stmt.amount_paise,
           stmt.gross_amount_paise || stmt.amount_paise,
           stmt.bank_fee_paise || null,
@@ -1111,9 +1111,9 @@ async function insertBankStatementsWithSession(statements, uploadSessionId, clie
          transaction_date, value_date, source_type, source_file, debit_credit)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
       `, [
-        stmt.bank_ref || stmt.bank_reference || stmt.utr || stmt.id || `BANK_${Date.now()}_${Math.random()}`,
+        stmt.bank_reference || stmt.bank_ref || stmt.utr || stmt.id || `BANK_${Date.now()}_${Math.random()}`,
         stmt.acquirer || stmt.bank_name,
-        stmt.utr || stmt.bank_ref || stmt.bank_reference || null,
+        stmt.utr || stmt.bank_reference || stmt.bank_ref || null,
         stmt.amount_paise,
         stmt.gross_amount_paise || stmt.amount_paise,
         stmt.bank_fee_paise || null,
