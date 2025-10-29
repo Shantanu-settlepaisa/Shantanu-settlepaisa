@@ -35,12 +35,31 @@ const PORT = process.env.PORT || 5107;
 console.log(`[Upload API] Starting on port ${PORT}`);
 
 // Database connection with production-ready pool configuration
-const pool = new Pool({
+// CRITICAL FIX: Override config if still using localhost in staging/production
+let dbConfig = {
   user: config.db.user,
   host: config.db.host,
   database: config.db.database,
   password: config.db.password,
   port: config.db.port,
+};
+
+// If running on EC2 (PORT=5107) but config still shows localhost, use RDS
+if (PORT === 5107 && config.db.host === 'localhost') {
+  console.log('⚠️  OVERRIDE: Detected staging environment but localhost config. Forcing RDS.');
+  dbConfig = {
+    user: 'postgres',
+    host: 'settlepaisa-staging.c9u0agyyg6q9.ap-south-1.rds.amazonaws.com',
+    database: 'settlepaisa_v2',
+    password: 'SettlePaisa2024',
+    port: 5432,
+  };
+}
+
+console.log(`[Upload API] Database config: ${dbConfig.host}:${dbConfig.port}/${dbConfig.database}`);
+
+const pool = new Pool({
+  ...dbConfig,
   max: 20,
   min: 2,
   idleTimeoutMillis: 30000,
@@ -680,14 +699,25 @@ async function processFileWithSession(file, fileType, sourceType = null, include
   };
 }
 
-// CSV Parser
+// CSV Parser with auto-delimiter detection
 function parseCSV(filePath) {
   return new Promise((resolve, reject) => {
+    // Read first line to detect delimiter
+    const firstLine = fs.readFileSync(filePath, 'utf-8').split('\n')[0];
+
+    // Detect delimiter: tilde (~) for V1 bank files, comma for standard CSV
+    const delimiter = firstLine.includes('~') ? '~' : ',';
+
+    log(`[CSV Parser] Detected delimiter: "${delimiter}" in file: ${filePath}`);
+
     const results = [];
     fs.createReadStream(filePath)
-      .pipe(csv())
+      .pipe(csv({ separator: delimiter }))
       .on('data', (data) => results.push(data))
-      .on('end', () => resolve(results))
+      .on('end', () => {
+        log(`[CSV Parser] Parsed ${results.length} rows with delimiter "${delimiter}"`);
+        resolve(results);
+      })
       .on('error', reject);
   });
 }
