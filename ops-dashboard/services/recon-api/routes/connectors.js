@@ -1,13 +1,18 @@
 const express = require('express');
 const router = express.Router();
 const { Pool } = require('pg');
+const config = require('../../config/env.cjs');
 
 const pool = new Pool({
-  host: 'localhost',
-  port: 5433,
-  user: 'postgres',
-  password: 'settlepaisa123',
-  database: 'settlepaisa_v2'
+  user: config.db.user,
+  host: config.db.host,
+  database: config.db.database,
+  password: config.db.password,
+  port: config.db.port,
+  max: 20,
+  min: 2,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 5000,
 });
 
 router.get('/', async (req, res) => {

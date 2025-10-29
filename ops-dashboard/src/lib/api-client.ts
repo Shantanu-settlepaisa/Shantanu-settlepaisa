@@ -49,7 +49,7 @@ apiClient.interceptors.response.use(
     if (error.response?.status === 401 && error.config?.url?.includes('/auth')) {
       // Unauthorized on auth endpoints - logout
       useAuthStore.getState().logout()
-      window.location.href = '/login'
+      window.location.href = '/#/login'
     } else if (error.response?.status === 401) {
       // For other 401s, just log the warning without logging out
       console.warn('API returned 401 but not logging out user (data endpoint)')
