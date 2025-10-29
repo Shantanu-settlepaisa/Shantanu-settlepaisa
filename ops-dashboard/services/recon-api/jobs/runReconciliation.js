@@ -2125,6 +2125,7 @@ async function persistResults(results, jobId = 'UNKNOWN', job = {}, params = {})
           const matchedUpdateResult = await client.query(`
             UPDATE sp_v2_transactions
             SET status = 'RECONCILED',
+                exception_reason = NULL,
                 updated_at = NOW()
             WHERE transaction_id = ANY($1)
               AND status != 'RECONCILED'
