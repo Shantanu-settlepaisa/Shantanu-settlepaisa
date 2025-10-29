@@ -99,7 +99,8 @@ export function useFinancialAnalytics({
 
       return response.json();
     },
-    staleTime: 5 * 60 * 1000, // 5 minutes
+    staleTime: 30 * 1000, // 30 seconds - near real-time
+    refetchInterval: 60 * 1000, // Auto-refresh every minute
     retry: 2
   });
 }

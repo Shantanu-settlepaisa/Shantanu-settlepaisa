@@ -3,10 +3,12 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { TimeRangePicker, TimeRange, getTimeRangeBounds } from '@/components/TimeRangePicker';
 import { useFinancialAnalytics } from '@/hooks/useFinancialAnalytics';
-import { TrendingUp, TrendingDown, Minus, Download, DollarSign, CreditCard, Building2, Target, BarChart3, Wallet } from 'lucide-react';
+import { TrendingUp, TrendingDown, Minus, Download, DollarSign, CreditCard, Building2, Target, BarChart3, Wallet, RefreshCw } from 'lucide-react';
 import ReactECharts from 'echarts-for-react';
-import { format } from 'date-fns';
+import { format, formatDistanceToNow } from 'date-fns';
 import { safeParseInt, safeToFixed } from '@/lib/mathUtils';
+import { useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 
 // Color palette
 const COLORS = {
@@ -93,6 +95,7 @@ function KpiCard({
 }
 
 export default function FinancialDashboard() {
+  const queryClient = useQueryClient();
   const [timeRange, setTimeRange] = useState<TimeRange>('last7d');
 
   // Convert TimeRange to date bounds
@@ -101,11 +104,17 @@ export default function FinancialDashboard() {
   const to = bounds.end.toISOString().split('T')[0];
 
   // Fetch financial analytics
-  const { data, isLoading, error } = useFinancialAnalytics({
+  const { data, isLoading, error, dataUpdatedAt } = useFinancialAnalytics({
     from,
     to,
     groupBy: 'day'
   });
+
+  // Handle manual refresh
+  const handleRefresh = () => {
+    queryClient.invalidateQueries(['financial-analytics']);
+    toast.success('Refreshing financial data...');
+  };
 
   // Chart options for revenue trends
   const chartOptions = useMemo(() => {
@@ -214,9 +223,25 @@ export default function FinancialDashboard() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Financial Analytics</h1>
-          <p className="text-sm text-gray-500 mt-1">Revenue, margins, and financial performance</p>
+          <div className="flex items-center gap-2 mt-1">
+            <p className="text-sm text-gray-500">Revenue, margins, and financial performance</p>
+            {dataUpdatedAt && (
+              <span className="text-xs text-gray-400">
+                • Updated {formatDistanceToNow(dataUpdatedAt, { addSuffix: true })}
+              </span>
+            )}
+          </div>
         </div>
         <div className="flex items-center gap-3">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleRefresh}
+            disabled={isLoading}
+          >
+            <RefreshCw className={`w-4 h-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
+            Refresh
+          </Button>
           <TimeRangePicker value={timeRange} onChange={setTimeRange} />
           <Button variant="outline" size="sm">
             <Download className="w-4 h-4 mr-2" />

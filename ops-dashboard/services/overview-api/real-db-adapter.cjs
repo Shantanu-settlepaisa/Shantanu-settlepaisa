@@ -469,7 +469,7 @@ async function getFinancialAnalytics(from, to, merchantId = null, groupBy = null
         SUM(
           CASE
             WHEN COALESCE(settlepaisa_revenue_paise, 0) = 0
-            THEN total_commission_paise
+            THEN (total_commission_paise - COALESCE(total_bank_charges_paise, 0))
             ELSE settlepaisa_revenue_paise
           END
         ) as total_revenue,
@@ -489,7 +489,7 @@ async function getFinancialAnalytics(from, to, merchantId = null, groupBy = null
         SUM(
           CASE
             WHEN COALESCE(settlepaisa_revenue_paise, 0) = 0
-            THEN total_commission_paise
+            THEN (total_commission_paise - COALESCE(total_bank_charges_paise, 0))
             ELSE settlepaisa_revenue_paise
           END
         ) as total_revenue,
