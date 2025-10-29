@@ -486,7 +486,8 @@ function mapV1ToV2(v1Row, type = 'pg_transactions', dbMapping = null, mode = 'ap
         value = String(value).trim().toUpperCase()
       }
 
-      if (v2Col === 'transaction_timestamp' || v2Col === 'transaction_date') {
+      // Parse dates for ALL date/timestamp columns (transaction_date, credited_at, etc.)
+      if (v2Col === 'transaction_timestamp' || v2Col === 'transaction_date' || v2Col === 'credited_at' || v2Col === 'settlement_date') {
         if (typeof value === 'string' && value.trim()) {
           try {
             let parsedDate;
