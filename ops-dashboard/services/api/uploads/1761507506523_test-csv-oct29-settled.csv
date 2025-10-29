@@ -1,0 +1,2 @@
+transaction_id,client_code,payee_amount,paid_amount,payment_mode,trans_complete_date,status,utr,pg_name
+TEST_REPLACE_SETTLED_001,MERCH001,52000.00,52900.00,UPI,2025-10-29 14:00:00,SUCCESS,UTR_REPLACE_003,RAZORPAY

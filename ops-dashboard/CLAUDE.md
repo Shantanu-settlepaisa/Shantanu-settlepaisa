@@ -22,8 +22,14 @@ npm run dev -- --port 5174
 - **PG API**: Port 5101 (Mock Payment Gateway data)
 - **Bank API**: Port 5102 (Mock Bank data)
 - **Recon API**: Port 5103 (Reconciliation engine)
-- **Overview API**: Port 5108 (Dashboard overview data)
-- **Upload API**: Port 5109 (File upload processing)
+- **Settlement API**: Port 5104 (Settlement processing)
+- **PG Ingestion**: Port 5105 (PG webhook ingestion)
+- **Chargeback API**: Port 5106 (Chargeback processing)
+- **Upload API**: Port 5107 (File upload processing - Staging 2)
+- **Overview API**: Port 5108 (Dashboard overview + **Auth API**)
+  - **⚠️ IMPORTANT**: Auth endpoints (login, register, etc.) are served by Overview API on port 5108
+  - There is NO separate auth service on port 5106
+  - Local dev: Port 5109 for upload API, Port 5108 for overview/auth
 
 ## Important Context
 This is the SettlePaisa 2.0 Ops Dashboard with:
