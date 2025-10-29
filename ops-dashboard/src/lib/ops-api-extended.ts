@@ -1830,7 +1830,7 @@ export class OpsApiExtended {
     }
     
     // Use V2 API
-    const response = await fetch(`http://localhost:5103/exceptions-v2/${id}`)
+    const response = await fetch(`${RECON_API_URL}/exceptions-v2/${id}`)
     const data = await response.json()
     return data.success ? data.data : data
   }
@@ -1851,7 +1851,7 @@ export class OpsApiExtended {
     }
     
     // Use V2 API
-    const response = await fetch('http://localhost:5103/exceptions-v2/bulk-update', {
+    const response = await fetch(`${RECON_API_URL}/exceptions-v2/bulk-update`, {
       method: 'POST',
       headers: { 
         'Content-Type': 'application/json',
@@ -1925,7 +1925,7 @@ export class OpsApiExtended {
     }
     
     // Use V2 API
-    const response = await fetch('http://localhost:5103/exception-saved-views?userId=current_user')
+    const response = await fetch(`${RECON_API_URL}/exception-saved-views?userId=current_user`)
     const data = await response.json()
     return data.success ? data.data : []
   }
@@ -2066,7 +2066,7 @@ export class OpsApiExtended {
     }
     
     // Use V2 API
-    const response = await fetch('http://localhost:5103/exception-rules')
+    const response = await fetch(`${RECON_API_URL}/exception-rules`)
     const data = await response.json()
     return data.success ? data.data : []
   }
@@ -2174,7 +2174,7 @@ export class OpsApiExtended {
       }
     }
 
-    const response = await apiClient.get('http://localhost:5103/connectors', { params })
+    const response = await apiClient.get(`${RECON_API_URL}/connectors`, { params })
     return response.data
   }
 
@@ -2232,7 +2232,7 @@ export class OpsApiExtended {
       }
     }
 
-    const response = await apiClient.get(`http://localhost:5103/connectors/${id}`)
+    const response = await apiClient.get(`${RECON_API_URL}/connectors/${id}`)
     return response.data
   }
 
@@ -2247,7 +2247,7 @@ export class OpsApiExtended {
       }
     }
 
-    const response = await apiClient.post('http://localhost:5103/connectors', params)
+    const response = await apiClient.post(`${RECON_API_URL}/connectors`, params)
     return response.data
   }
 
@@ -2260,7 +2260,7 @@ export class OpsApiExtended {
       }
     }
 
-    const response = await apiClient.put(`http://localhost:5103/connectors/${id}`, params)
+    const response = await apiClient.put(`${RECON_API_URL}/connectors/${id}`, params)
     return response.data
   }
 
@@ -2279,7 +2279,7 @@ export class OpsApiExtended {
       }
     }
 
-    const response = await apiClient.post(`http://localhost:5103/connectors/${id}/test`)
+    const response = await apiClient.post(`${RECON_API_URL}/connectors/${id}/test`)
     return response.data
   }
 
@@ -2294,7 +2294,7 @@ export class OpsApiExtended {
       }
     }
 
-    const response = await apiClient.post(`http://localhost:5103/connectors/${id}/run`, params)
+    const response = await apiClient.post(`${RECON_API_URL}/connectors/${id}/run`, params)
     return response.data
   }
   
@@ -2307,7 +2307,7 @@ export class OpsApiExtended {
       }
     }
 
-    const response = await apiClient.post(`http://localhost:5103/connectors/${id}/pause`)
+    const response = await apiClient.post(`${RECON_API_URL}/connectors/${id}/pause`)
     return response.data
   }
   
@@ -2320,7 +2320,7 @@ export class OpsApiExtended {
       }
     }
 
-    const response = await apiClient.post(`http://localhost:5103/connectors/${id}/resume`)
+    const response = await apiClient.post(`${RECON_API_URL}/connectors/${id}/resume`)
     return response.data
   }
 
@@ -2332,7 +2332,7 @@ export class OpsApiExtended {
       }
     }
 
-    const response = await apiClient.delete(`http://localhost:5103/connectors/${id}`)
+    const response = await apiClient.delete(`${RECON_API_URL}/connectors/${id}`)
     return response.data
   }
 
@@ -2392,7 +2392,7 @@ export class OpsApiExtended {
       }
     }
 
-    const response = await apiClient.get(`http://localhost:5103/connectors/${connectorId}/history`, { params })
+    const response = await apiClient.get(`${RECON_API_URL}/connectors/${connectorId}/history`, { params })
     return response.data
   }
 
