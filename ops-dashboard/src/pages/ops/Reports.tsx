@@ -170,6 +170,7 @@ export default function Reports() {
         'UPLOADED': 'bg-blue-100 text-blue-800',
         'PENDING_RECON': 'bg-yellow-100 text-yellow-800',
         'MATCHED': 'bg-green-100 text-green-800',
+        'RECONCILED': 'bg-green-100 text-green-800',
         'EXCEPTION': 'bg-red-100 text-red-800',
         'UNMATCHED': 'bg-orange-100 text-orange-800'
       }
@@ -360,7 +361,7 @@ export default function Reports() {
                               <TableCell>{formatCellValue(row.deltaRupees, 'Delta')}</TableCell>
                               <TableCell>{row.pgDate}</TableCell>
                               <TableCell>{row.bankDate}</TableCell>
-                              <TableCell>{formatCellValue(row.matchStatus, 'Status')}</TableCell>
+                              <TableCell>{formatCellValue(row.reconStatus, 'Status')}</TableCell>
                               <TableCell>{row.exceptionReasonCode || '-'}</TableCell>
                               <TableCell>{row.acquirer}</TableCell>
                               <TableCell>{row.merchantName}</TableCell>
