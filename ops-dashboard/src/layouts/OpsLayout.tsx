@@ -23,12 +23,12 @@ const navigation = [
   { name: 'Recon Workspace', href: '/ops/recon', icon: GitBranch },
   { name: 'Settlements', href: '/ops/settlements', icon: Wallet },
   { name: 'Exceptions', href: '/ops/exceptions', icon: AlertTriangle },
-  { name: 'Disputes', href: '/ops/disputes', icon: Shield },
+  { name: 'Disputes', href: '/ops/disputes', icon: Shield, hidden: true }, // Hidden until functionality is ready
   { name: 'Connectors', href: '/ops/connectors', icon: Cable },
   { name: 'Reports', href: '/ops/reports', icon: FileText },
   { name: 'Financial', href: '/ops/financial', icon: DollarSign },
   { name: 'Users', href: '/ops/users', icon: Users, adminOnly: true },
-  { name: 'Settings', href: '/ops/settings', icon: Settings },
+  { name: 'Settings', href: '/ops/settings', icon: Settings, hidden: true }, // Hidden until functionality is ready
 ]
 
 export function OpsLayout() {
@@ -61,6 +61,11 @@ export function OpsLayout() {
           {/* Navigation */}
           <nav className="flex-1 px-4 py-4 space-y-1">
             {navigation.map((item) => {
+              // Hide items marked as hidden
+              if (item.hidden) {
+                return null
+              }
+
               // Hide admin-only items if user is not admin
               if (item.adminOnly && displayUser.role !== 'sp-ops') {
                 return null
