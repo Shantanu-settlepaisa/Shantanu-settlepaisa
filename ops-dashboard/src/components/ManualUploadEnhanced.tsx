@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'react'
-import { FileUp, Settings, Download, CheckCircle, AlertCircle, Play } from 'lucide-react'
+import { FileUp, Settings, Download, CheckCircle, AlertCircle, Play, AlertTriangle, Info } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { FileCard, type UploadedFile } from './recon/FileCard'
 import { ReconResultsTable, type ReconRow } from './recon/ReconResultsTable'
@@ -10,6 +10,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import axios from 'axios'
 import reconClient from '@/services/recon-service'
 import uploadClient from '@/services/upload-service'
+import { toast } from 'sonner'
 
 
 // Helper to detect PG schema from headers
@@ -206,6 +207,18 @@ export function ManualUploadEnhanced() {
     unmatchedBankCount: 0,
     exceptionsCount: 0
   })
+
+  // Validation errors and processing summary state
+  const [uploadErrors, setUploadErrors] = useState<Array<{
+    row: number
+    error: string
+    identifier?: string
+  }>>([])
+  const [processingSummary, setProcessingSummary] = useState<{
+    inserted: number
+    skipped: number
+    duplicates: number
+  } | null>(null)
   
   // Fetch job summary from backend using custom hooks
   const { data: jobSummary } = useReconJobSummary(jobId);
@@ -502,11 +515,60 @@ export function ManualUploadEnhanced() {
         );
         
         setPgFiles(prev => [...prev, ...uploadedFiles]);
-        
-        // Show processing summary
-        const summary = data.summary;
-        if (summary) {
-          console.log(`📊 [V2 Upload] Processing summary: ${summary.successful} successful, ${summary.failed} failed`);
+
+        // Extract and display error details from backend
+        const errors: Array<{row: number, error: string, identifier?: string}> = [];
+        let totalInserted = 0;
+        let totalSkipped = 0;
+        let totalDuplicates = 0;
+
+        data.results.forEach((result: any) => {
+          // Collect error details
+          if (result.errorDetails && result.errorDetails.length > 0) {
+            result.errorDetails.forEach((err: any) => {
+              errors.push({
+                row: err.row,
+                error: err.error,
+                identifier: err.identifier || err.data?.transaction_id || 'N/A'
+              });
+            });
+          }
+
+          // Aggregate processing summary
+          if (result.processing) {
+            totalInserted += result.processing.inserted || 0;
+            totalSkipped += result.processing.skipped || 0;
+            totalDuplicates += result.processing.duplicates || 0;
+          }
+        });
+
+        // Update state
+        setUploadErrors(errors);
+        setProcessingSummary({
+          inserted: totalInserted,
+          skipped: totalSkipped,
+          duplicates: totalDuplicates
+        });
+
+        // Show success toast with summary
+        toast.success('PG Transactions uploaded', {
+          description: `${totalInserted} records inserted${totalSkipped > 0 ? `, ${totalSkipped} skipped` : ''}${totalDuplicates > 0 ? `, ${totalDuplicates} duplicates` : ''}`,
+          duration: 6000
+        });
+
+        // Show validation errors if any
+        if (errors.length > 0) {
+          toast.warning(`${errors.length} validation errors found`, {
+            description: `${errors.slice(0, 3).map(e => `Row ${e.row}: ${e.error}`).join('\n')}${errors.length > 3 ? `\n...and ${errors.length - 3} more` : ''}`,
+            duration: 10000,
+            action: {
+              label: 'View All',
+              onClick: () => {
+                // Scroll to errors table (will be implemented below)
+                document.getElementById('validation-errors')?.scrollIntoView({ behavior: 'smooth' });
+              }
+            }
+          });
         }
       } else {
         console.error('❌ [V2 Upload] Failed to upload files:', data.error);
@@ -518,22 +580,27 @@ export function ManualUploadEnhanced() {
       const errorMessage = error.response?.data?.error || error.message || '';
 
       if (errorMessage.includes('SETTLED') || errorMessage.includes('CREDITED') || errorMessage.includes('settlement batch')) {
-        alert(
-          `⚠️ Cannot Overwrite - Transactions Already Settled\n\n` +
-          `Some transactions for ${cycleDate} have already been included in settlement batches. ` +
-          `Deleting them would create orphaned settlement records and break financial audit trails.\n\n` +
-          `Details:\n${errorMessage}\n\n` +
-          `To fix this:\n` +
-          `1. Go to Settlements page\n` +
-          `2. Find and cancel/void settlement batch for ${cycleDate}\n` +
-          `3. Then try overwrite again\n\n` +
-          `Or contact finance team for manual adjustment instead of overwrite.`
-        );
+        toast.error('Cannot Overwrite - Transactions Already Settled', {
+          description: `Some transactions for ${cycleDate} have already been included in settlement batches. Deleting them would create orphaned settlement records.`,
+          duration: 10000,
+          action: {
+            label: 'View Help',
+            onClick: () => {
+              toast.info('How to Fix', {
+                description: '1. Go to Settlements page\n2. Find and cancel/void settlement batch for ' + cycleDate + '\n3. Then try overwrite again\n\nOr contact finance team for manual adjustment.',
+                duration: 15000
+              });
+            }
+          }
+        });
         return; // Don't show fallback UI on settlement error
       }
 
       // Show generic error for other upload failures
-      alert(`Upload failed: ${errorMessage}`);
+      toast.error('Upload failed', {
+        description: errorMessage,
+        duration: 8000
+      });
 
       // Fallback: create file objects for UI display even if API fails
       const uploadedFiles: UploadedFile[] = await Promise.all(
@@ -697,17 +764,19 @@ export function ManualUploadEnhanced() {
           // Check if error is due to reconciled bank statements
           const errorMessage = fileError.response?.data?.error || fileError.message || '';
           if (errorMessage.includes('reconciled') || errorMessage.includes('reconciliation')) {
-            alert(
-              `⚠️ Cannot Overwrite - Bank Statements Already Reconciled\n\n` +
-              `File: ${file.name}\n` +
-              `Some bank statements for ${cycleDate} have already been used in reconciliation. ` +
-              `Deleting them would orphan reconciliation matches.\n\n` +
-              `Details:\n${errorMessage}\n\n` +
-              `To fix this:\n` +
-              `1. The system will automatically clean up reconciliation data\n` +
-              `2. You can safely retry the upload\n\n` +
-              `If issue persists, contact support.`
-            );
+            toast.warning('Cannot Overwrite - Bank Statements Already Reconciled', {
+              description: `File: ${file.name}\nSome bank statements for ${cycleDate} have already been used in reconciliation.`,
+              duration: 8000,
+              action: {
+                label: 'How to Fix',
+                onClick: () => {
+                  toast.info('Resolution Steps', {
+                    description: '1. The system will automatically clean up reconciliation data\n2. You can safely retry the upload\n\nIf issue persists, contact support.',
+                    duration: 10000
+                  });
+                }
+              }
+            });
             // Continue with next file instead of aborting
             continue;
           }
@@ -767,11 +836,66 @@ export function ManualUploadEnhanced() {
         );
         
         setBankFiles(prev => [...prev, ...uploadedFiles]);
-        
-        // Show processing summary
-        const summary = data.summary;
-        if (summary) {
-          console.log(`📊 [V2 Upload] Bank processing summary: ${summary.successful} successful, ${summary.failed} failed`);
+
+        // Extract and display error details and processing summary from backend
+        const errors: Array<{row: number, error: string, identifier?: string}> = [];
+        let totalInserted = 0;
+        let totalSkipped = 0;
+        let totalDuplicates = 0;
+        const bankNames: string[] = [];
+
+        data.results.forEach((result: any) => {
+          // Collect error details
+          if (result.errorDetails && result.errorDetails.length > 0) {
+            result.errorDetails.forEach((err: any) => {
+              errors.push({
+                row: err.row,
+                error: err.error,
+                identifier: err.identifier || err.data?.utr || err.data?.bank_ref || 'N/A'
+              });
+            });
+          }
+
+          // Aggregate processing summary
+          if (result.processing) {
+            totalInserted += result.processing.inserted || 0;
+            totalSkipped += result.processing.skipped || 0;
+            totalDuplicates += result.processing.duplicates || 0;
+          }
+
+          // Collect detected bank names
+          if (result.bankName) {
+            bankNames.push(result.bankName);
+          }
+        });
+
+        // Update state
+        setUploadErrors(errors);
+        setProcessingSummary({
+          inserted: totalInserted,
+          skipped: totalSkipped,
+          duplicates: totalDuplicates
+        });
+
+        // Show success toast with summary and detected banks
+        const banksDetected = bankNames.length > 0 ? ` (${bankNames.join(', ')})` : '';
+        toast.success(`Bank Statements uploaded${banksDetected}`, {
+          description: `${totalInserted} records inserted${totalSkipped > 0 ? `, ${totalSkipped} skipped` : ''}${totalDuplicates > 0 ? `, ${totalDuplicates} duplicates` : ''}`,
+          duration: 6000
+        });
+
+        // Show validation errors if any
+        if (errors.length > 0) {
+          toast.warning(`${errors.length} validation errors found`, {
+            description: `${errors.slice(0, 3).map(e => `Row ${e.row}: ${e.error}`).join('\n')}${errors.length > 3 ? `\n...and ${errors.length - 3} more` : ''}`,
+            duration: 10000,
+            action: {
+              label: 'View All',
+              onClick: () => {
+                document.getElementById('validation-errors')?.scrollIntoView({ behavior: 'smooth' });
+              }
+            }
+          });
         }
       } else {
         console.error('❌ [V2 Upload] Failed to upload bank files:', data.error);
@@ -783,22 +907,28 @@ export function ManualUploadEnhanced() {
       const errorMessage = error.response?.data?.error || error.message || '';
 
       if (errorMessage.includes('reconciled') || errorMessage.includes('reconciliation')) {
-        alert(
-          `⚠️ Cannot Overwrite - Bank Statements Already Reconciled\n\n` +
-          `Some bank statements for ${cycleDate} have already been used in reconciliation. ` +
-          `Deleting them would orphan reconciliation matches.\n\n` +
-          `Details:\n${errorMessage}\n\n` +
-          `To fix this:\n` +
-          `1. The system will automatically clean up reconciliation data\n` +
-          `2. You can safely retry the upload\n\n` +
-          `If issue persists, contact support.`
-        );
+        toast.warning('Cannot Overwrite - Bank Statements Already Reconciled', {
+          description: `Some bank statements for ${cycleDate} have already been used in reconciliation. Deleting them would orphan reconciliation matches.`,
+          duration: 8000,
+          action: {
+            label: 'How to Fix',
+            onClick: () => {
+              toast.info('Resolution Steps', {
+                description: '1. The system will automatically clean up reconciliation data\n2. You can safely retry the upload\n\nIf issue persists, contact support.',
+                duration: 10000
+              });
+            }
+          }
+        });
         return; // Don't show fallback UI on recon error
       }
 
       // Show generic error for other upload failures
       if (errorMessage) {
-        alert(`Upload failed: ${errorMessage}`);
+        toast.error('Upload failed', {
+          description: errorMessage,
+          duration: 8000
+        });
       }
 
       // Fallback: create file objects for UI display even if API fails
@@ -895,7 +1025,10 @@ export function ManualUploadEnhanced() {
       console.error('[Manual Recon] Error details:', error.message);
 
       // Show error to user
-      alert(`Reconciliation failed: ${error.message}`);
+      toast.error('Reconciliation failed', {
+        description: error.message,
+        duration: 8000
+      });
     } finally {
       setIsLoading(false);
     }
@@ -1335,6 +1468,104 @@ export function ManualUploadEnhanced() {
       {/* Results Table - Only show after files are uploaded */}
       {(pgFiles.length > 0 && bankFiles.length > 0) && (
         <div className="px-6 pb-6">
+          {/* Validation Errors Table */}
+          {uploadErrors.length > 0 && (
+            <div id="validation-errors" className="mb-6">
+              <div className="border border-amber-200 rounded-lg bg-amber-50/50">
+                <div className="px-4 py-3 border-b border-amber-200 bg-amber-50">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <AlertTriangle className="h-5 w-5 text-amber-600" />
+                      <h3 className="font-semibold text-amber-900">
+                        Validation Errors ({uploadErrors.length})
+                      </h3>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        // Export errors as CSV
+                        const csv = [
+                          'Row,Error,Identifier',
+                          ...uploadErrors.map(e => `${e.row},"${e.error}","${e.identifier}"`)
+                        ].join('\n');
+                        const blob = new Blob([csv], { type: 'text/csv' });
+                        const url = URL.createObjectURL(blob);
+                        const link = document.createElement('a');
+                        link.href = url;
+                        link.download = `validation-errors-${Date.now()}.csv`;
+                        link.click();
+                        URL.revokeObjectURL(url);
+                      }}
+                    >
+                      <Download className="h-3 w-3 mr-1" />
+                      Export Errors
+                    </Button>
+                  </div>
+                </div>
+                <div className="p-4">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-amber-200">
+                          <th className="text-left py-2 px-3 font-medium text-amber-900">Row</th>
+                          <th className="text-left py-2 px-3 font-medium text-amber-900">Error</th>
+                          <th className="text-left py-2 px-3 font-medium text-amber-900">Identifier</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {uploadErrors.slice(0, 10).map((error, idx) => (
+                          <tr key={idx} className="border-b border-amber-100 hover:bg-amber-100/50">
+                            <td className="py-2 px-3 text-amber-900 font-mono">{error.row}</td>
+                            <td className="py-2 px-3 text-amber-800">{error.error}</td>
+                            <td className="py-2 px-3 text-amber-700 font-mono text-xs">{error.identifier}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    {uploadErrors.length > 10 && (
+                      <div className="mt-3 text-center text-sm text-amber-700">
+                        Showing first 10 of {uploadErrors.length} errors. Click "Export Errors" to download all.
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Processing Summary */}
+          {processingSummary && (processingSummary.inserted > 0 || processingSummary.skipped > 0) && (
+            <div className="mb-6 border border-blue-200 rounded-lg bg-blue-50/50">
+              <div className="px-4 py-3 border-b border-blue-200 bg-blue-50">
+                <div className="flex items-center gap-2">
+                  <Info className="h-5 w-5 text-blue-600" />
+                  <h3 className="font-semibold text-blue-900">Upload Summary</h3>
+                </div>
+              </div>
+              <div className="p-4">
+                <div className="grid grid-cols-3 gap-4">
+                  <div className="text-center">
+                    <div className="text-2xl font-bold text-green-600">{processingSummary.inserted.toLocaleString()}</div>
+                    <div className="text-sm text-gray-600">Inserted</div>
+                  </div>
+                  {processingSummary.skipped > 0 && (
+                    <div className="text-center">
+                      <div className="text-2xl font-bold text-amber-600">{processingSummary.skipped.toLocaleString()}</div>
+                      <div className="text-sm text-gray-600">Skipped</div>
+                    </div>
+                  )}
+                  {processingSummary.duplicates > 0 && (
+                    <div className="text-center">
+                      <div className="text-2xl font-bold text-gray-600">{processingSummary.duplicates.toLocaleString()}</div>
+                      <div className="text-sm text-gray-600">Duplicates</div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Export Button */}
           {jobId && reconResults.length > 0 && (
             <div className="mb-4 flex justify-end">
@@ -1349,7 +1580,7 @@ export function ManualUploadEnhanced() {
               </Button>
             </div>
           )}
-          
+
           <ReconResultsTable
               rows={isTabChanging ? [] : reconResults}
               totalCount={breakdownCounts.totalCount || reconResults.length}
