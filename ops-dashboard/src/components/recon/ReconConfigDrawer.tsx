@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { 
+import {
   X,
   Save,
   RefreshCw,
@@ -16,6 +16,8 @@ import {
   ChevronRight
 } from 'lucide-react'
 import axios from 'axios'
+
+const RECON_API_URL = import.meta.env.VITE_RECON_API_URL || 'http://localhost:5103'
 
 // Types
 interface BankMapping {
@@ -113,7 +115,7 @@ export function ReconConfigDrawer({ isOpen, onClose }: ReconConfigDrawerProps) {
   const { data: bankMappingsResponse, isLoading } = useQuery({
     queryKey: ['bank-mappings'],
     queryFn: async () => {
-      const response = await axios.get('http://localhost:5103/bank-mappings')
+      const response = await axios.get(`${RECON_API_URL}/bank-mappings`)
       return response.data
     },
     enabled: isOpen
@@ -125,7 +127,7 @@ export function ReconConfigDrawer({ isOpen, onClose }: ReconConfigDrawerProps) {
   const updateMutation = useMutation({
     mutationFn: async (data: { bankName: string; mappings: Record<string, string> }) => {
       const response = await axios.put(
-        `http://localhost:5103/bank-mappings/${encodeURIComponent(data.bankName)}`,
+        `${RECON_API_URL}/bank-mappings/${encodeURIComponent(data.bankName)}`,
         {
           v1_column_mappings: data.mappings
         }
@@ -147,7 +149,7 @@ export function ReconConfigDrawer({ isOpen, onClose }: ReconConfigDrawerProps) {
   // Create mutation
   const createMutation = useMutation({
     mutationFn: async (data: typeof newBankForm) => {
-      const response = await axios.post('http://localhost:5103/bank-mappings', {
+      const response = await axios.post(`${RECON_API_URL}/bank-mappings`, {
         config_name: data.config_name.toUpperCase(),
         bank_name: data.bank_name,
         file_type: data.file_type,
@@ -181,7 +183,7 @@ export function ReconConfigDrawer({ isOpen, onClose }: ReconConfigDrawerProps) {
   const deleteMutation = useMutation({
     mutationFn: async (bankName: string) => {
       const response = await axios.delete(
-        `http://localhost:5103/bank-mappings/${encodeURIComponent(bankName)}`
+        `${RECON_API_URL}/bank-mappings/${encodeURIComponent(bankName)}`
       )
       return response.data
     },

@@ -1,6 +1,8 @@
 import { X, AlertTriangle, CheckCircle, XCircle, Clock, FileText, RefreshCw } from 'lucide-react';
 import { useState, useEffect } from 'react';
 
+const RECON_API_URL = import.meta.env.VITE_RECON_API_URL || 'http://localhost:5103';
+
 interface ReconciliationError {
   code: string;
   message: string;
@@ -62,7 +64,7 @@ export function ReconciliationErrorModal({
     
     setLoading(true);
     try {
-      const response = await fetch(`http://localhost:5103/recon/jobs/${jobId}`);
+      const response = await fetch(`${RECON_API_URL}/recon/jobs/${jobId}`);
       if (response.ok) {
         const data = await response.json();
         setJob(data);
@@ -77,7 +79,7 @@ export function ReconciliationErrorModal({
   const checkConnectorHealth = async () => {
     // Check PG connector
     try {
-      const pgResponse = await fetch('http://localhost:5103/connectors/pg/health');
+      const pgResponse = await fetch(`${RECON_API_URL}/connectors/pg/health`);
       const pgData = await pgResponse.json();
       setConnectorHealth(prev => ({ ...prev, pg: pgData }));
     } catch (error) {
@@ -89,7 +91,7 @@ export function ReconciliationErrorModal({
 
     // Check Bank connector
     try {
-      const bankResponse = await fetch('http://localhost:5103/connectors/bank/health');
+      const bankResponse = await fetch(`${RECON_API_URL}/connectors/bank/health`);
       const bankData = await bankResponse.json();
       setConnectorHealth(prev => ({ ...prev, bank: bankData }));
     } catch (error) {
