@@ -1184,24 +1184,47 @@ export function ManualUploadEnhanced() {
   }
   
   // Clear all and start fresh
-  const handleStartNew = () => {
-    console.log('[ManualUploadEnhanced] Starting new reconciliation with overwrite mode');
-    setPgFiles([]);
-    setBankFiles([]);
-    setReconResults([]);
-    setJobId(null);
-    setShouldOverwrite(true); // Enable overwrite for next uploads
-    localStorage.removeItem('lastReconJobId');
-    localStorage.removeItem('lastPgFileMetadata');
-    localStorage.removeItem('lastBankFileMetadata');
-    setBreakdownCounts({
-      totalCount: 0,
-      matchedCount: 0,
-      unmatchedPgCount: 0,
-      unmatchedBankCount: 0,
-      exceptionsCount: 0,
-    });
-    console.log(`[ManualUploadEnhanced] Overwrite mode activated - next upload will replace data for ${cycleDate}`);
+  const handleStartNew = async () => {
+    console.log('[ManualUploadEnhanced] Starting new reconciliation - cleaning database...');
+
+    try {
+      // Call the cleanup API to delete all test data
+      const response = await uploadClient.post('/api/upload/clean-test-data');
+
+      if (response.data.success) {
+        console.log('[ManualUploadEnhanced] ✅ Database cleaned successfully:', response.data.deleted);
+
+        // Clear frontend state
+        setPgFiles([]);
+        setBankFiles([]);
+        setReconResults([]);
+        setJobId(null);
+        setShouldOverwrite(false); // No need for overwrite since DB is clean
+        localStorage.removeItem('lastReconJobId');
+        localStorage.removeItem('lastPgFileMetadata');
+        localStorage.removeItem('lastBankFileMetadata');
+        setBreakdownCounts({
+          totalCount: 0,
+          matchedCount: 0,
+          unmatchedPgCount: 0,
+          unmatchedBankCount: 0,
+          exceptionsCount: 0,
+        });
+
+        toast({
+          title: "Ready for Fresh Upload",
+          description: `Deleted ${response.data.deleted.total} test records. You can now upload new files.`,
+          variant: "default",
+        });
+      }
+    } catch (error) {
+      console.error('[ManualUploadEnhanced] ❌ Failed to clean database:', error);
+      toast({
+        title: "Cleanup Failed",
+        description: error.response?.data?.details || "Failed to clean test data. Please try again.",
+        variant: "destructive",
+      });
+    }
   }
 
   return (

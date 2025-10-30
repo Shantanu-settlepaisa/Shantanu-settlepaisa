@@ -1159,6 +1159,75 @@ app.get('/api/upload/stats', async (req, res) => {
   }
 });
 
+// Clean all test data endpoint (for testing/development)
+// Security: Only ops staff can clean test data
+app.post('/api/upload/clean-test-data', authenticate, opsStaffOnly, async (req, res) => {
+  const client = await pool.connect();
+
+  try {
+    console.log('[Clean Test Data] Starting cleanup of all manual upload test data...');
+
+    await client.query('BEGIN');
+
+    // Check current counts before deletion
+    const beforeCounts = await client.query(`
+      SELECT
+        (SELECT COUNT(*) FROM sp_v2_transactions WHERE source_type = 'MANUAL_UPLOAD') as pg_count,
+        (SELECT COUNT(*) FROM sp_v2_bank_statements) as bank_count,
+        (SELECT COUNT(*) FROM sp_v2_recon_jobs) as job_count,
+        (SELECT COUNT(*) FROM sp_v2_recon_results) as result_count,
+        (SELECT COUNT(*) FROM sp_v2_exceptions) as exception_count
+    `);
+
+    console.log('[Clean Test Data] Before cleanup:', beforeCounts.rows[0]);
+
+    // Delete in correct order due to foreign key constraints
+    const del1 = await client.query('DELETE FROM sp_v2_recon_results');
+    console.log(`[Clean Test Data] Deleted ${del1.rowCount} recon results`);
+
+    const del2 = await client.query('DELETE FROM sp_v2_exceptions');
+    console.log(`[Clean Test Data] Deleted ${del2.rowCount} exceptions`);
+
+    const del3 = await client.query('DELETE FROM sp_v2_recon_jobs');
+    console.log(`[Clean Test Data] Deleted ${del3.rowCount} recon jobs`);
+
+    const del4 = await client.query('DELETE FROM sp_v2_bank_statements');
+    console.log(`[Clean Test Data] Deleted ${del4.rowCount} bank statements`);
+
+    const del5 = await client.query("DELETE FROM sp_v2_transactions WHERE source_type = 'MANUAL_UPLOAD'");
+    console.log(`[Clean Test Data] Deleted ${del5.rowCount} PG transactions (manual uploads)`);
+
+    await client.query('COMMIT');
+
+    console.log('[Clean Test Data] ✅ Cleanup completed successfully');
+
+    res.json({
+      success: true,
+      message: 'Test data cleaned successfully',
+      deleted: {
+        pgTransactions: del5.rowCount,
+        bankStatements: del4.rowCount,
+        reconJobs: del3.rowCount,
+        exceptions: del2.rowCount,
+        reconResults: del1.rowCount,
+        total: del1.rowCount + del2.rowCount + del3.rowCount + del4.rowCount + del5.rowCount
+      },
+      before: beforeCounts.rows[0]
+    });
+
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('[Clean Test Data] ❌ Error during cleanup:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to clean test data',
+      details: error.message
+    });
+  } finally {
+    client.release();
+  }
+});
+
 // Health check with database connectivity test
 // createHealthCheckEndpoint(app, 'v2-file-upload', pool);
 app.get('/health', (req, res) => res.json({ status: 'ok', service: 'v2-file-upload' }));
