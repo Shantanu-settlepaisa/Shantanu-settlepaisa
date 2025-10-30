@@ -1029,6 +1029,7 @@ async function insertTransactionsWithSession(transactions, uploadSessionId, clie
 async function insertBankStatements(statements) {
   const client = await pool.connect();
   let inserted = 0, skipped = 0, duplicates = 0;
+  const errors = [];
 
   try {
     await client.query('BEGIN');
@@ -1069,12 +1070,27 @@ async function insertBankStatements(statements) {
 
         inserted++;
       } catch (error) {
-        console.error('Error inserting bank statement:', error);
+        console.error(`❌ [Bank Insert Error] ${stmt.acquirer || 'UNKNOWN'} - UTR: ${stmt.utr}:`, error.message);
+        console.error(`[Bank Insert Error] Statement data:`, JSON.stringify(stmt, null, 2));
+        errors.push({
+          bank: stmt.acquirer,
+          utr: stmt.utr,
+          error: error.message,
+          stmt: stmt
+        });
         skipped++;
       }
     }
 
     await client.query('COMMIT');
+
+    if (errors.length > 0) {
+      log(`❌ [V2 Upload] Bank Statements - ${errors.length} errors occurred:`);
+      errors.slice(0, 3).forEach(err => {
+        log(`   - ${err.bank}: ${err.error}`);
+      });
+    }
+
     log(`✅ [V2 Upload] Bank Statements - Inserted: ${inserted}, Skipped: ${skipped}, Duplicates: ${duplicates}`);
 
   } catch (error) {
@@ -1084,7 +1100,7 @@ async function insertBankStatements(statements) {
     client.release();
   }
 
-  return { inserted, skipped, duplicates };
+  return { inserted, skipped, duplicates, errors };
 }
 
 // Insert bank statements with session tracking (NEW - atomic version)
