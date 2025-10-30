@@ -1007,6 +1007,15 @@ async function insertTransactionsWithSession(transactions, uploadSessionId, clie
   for (const txn of transactions) {
     try {
       // Use ON CONFLICT for duplicate detection (prevents race conditions)
+      const params = [
+        txn.pgw_ref, txn.merchant_id, txn.pgw_ref, txn.utr, txn.amount_paise, txn.gross_amount_paise,
+        txn.currency, txn.payment_mode, txn.status,
+        new Date(), new Date(), 'MANUAL_UPLOAD', 'manual_upload', uploadSessionId
+      ];
+
+      // DEBUG: Log actual SQL parameters
+      console.log(`[DEBUG insertWithSession] ${txn.pgw_ref}: params[4]=$5=amount=${params[4]}, params[5]=$6=gross=${params[5]}`);
+
       const result = await client.query(`
         INSERT INTO sp_v2_transactions
         (transaction_id, merchant_id, gateway_ref, utr, amount_paise, gross_amount_paise, currency, payment_method, status,
@@ -1014,11 +1023,7 @@ async function insertTransactionsWithSession(transactions, uploadSessionId, clie
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
         ON CONFLICT (transaction_id, merchant_id, source_type) DO NOTHING
         RETURNING id
-      `, [
-        txn.pgw_ref, txn.merchant_id, txn.pgw_ref, txn.utr, txn.amount_paise, txn.gross_amount_paise,
-        txn.currency, txn.payment_mode, txn.status,
-        new Date(), new Date(), 'MANUAL_UPLOAD', 'manual_upload', uploadSessionId
-      ]);
+      `, params);
 
       if (result.rowCount > 0) {
         inserted++;
