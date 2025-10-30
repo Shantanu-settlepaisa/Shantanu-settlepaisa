@@ -1301,8 +1301,8 @@ app.post('/api/upload/clean-test-data', authenticate, opsStaffOnly, async (req, 
         bankStatements: del4.rowCount,
         reconJobs: del3.rowCount,
         reconResults: del2.rowCount,
-        exceptions: del1.rowCount,
-        total: del1.rowCount + del2.rowCount + del3.rowCount + del4.rowCount + del5.rowCount
+        exceptions: exceptionsDeleted,
+        total: exceptionsDeleted + del2.rowCount + del3.rowCount + del4.rowCount + del5.rowCount
       },
       before: beforeCounts.rows[0]
     });
