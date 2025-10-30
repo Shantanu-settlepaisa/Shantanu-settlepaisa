@@ -867,26 +867,34 @@ function detectBankFromColumns(record) {
   const columns = Object.keys(record);
   const columnsStr = columns.join('|').toUpperCase();
 
-  // HDFC BANK: has MERCHANT_TRACKID or MERCHANT TRACKID
-  if (columnsStr.includes('MERCHANT_TRACKID') || columnsStr.includes('MERCHANT TRACKID')) {
+  console.log('[detectBankFromColumns] Checking columns:', columns.slice(0, 5));
+
+  // HDFC BANK: has MERCHANT_TRACKID (underscore) or MERCHANT TRACKID (space)
+  if (columns.includes('MERCHANT_TRACKID') || columns.includes('MERCHANT TRACKID')) {
+    console.log('[detectBankFromColumns] Detected: HDFC BANK');
     return 'HDFC BANK';
   }
 
-  // BOB: has "Merchant Track ID" (with spaces) or "Settlement Amount"
-  if (columns.includes('Merchant Track ID') || columns.includes('Settlement Amount')) {
-    return 'BOB';
-  }
-
-  // AXIS BANK: has PRNNo or PrnNo
-  if (columns.includes('PRNNo') || columns.includes('PrnNo') || columnsStr.includes('PRNNO')) {
+  // AXIS BANK: has PRNNo - CHECK FIRST before BOB because AXIS might have Amount
+  if (columns.includes('PRNNo') || columns.includes('PrnNo')) {
+    console.log('[detectBankFromColumns] Detected: AXIS BANK');
     return 'AXIS BANK';
   }
 
-  // SBI: has specific SBI columns
-  if (columnsStr.includes('VALUEDATE') || columnsStr.includes('VALUE_DATE')) {
+  // BOB: has "Merchant Track ID" (with spaces) or "Payment Date"
+  // Note: "Settlement Amount" is too generic, use "Merchant Track ID" as primary
+  if (columns.includes('Merchant Track ID') || columns.includes('Payment Date')) {
+    console.log('[detectBankFromColumns] Detected: BOB');
+    return 'BOB';
+  }
+
+  // SBI: has "TXN_DATE" or "ORIG_AMNT" - more specific columns
+  if (columns.includes('TXN_DATE') || columns.includes('ORIG_AMNT') || columns.includes('TILL_ID')) {
+    console.log('[detectBankFromColumns] Detected: SBI BANK');
     return 'SBI BANK';
   }
 
+  console.log('[detectBankFromColumns] No bank detected, returning null');
   return null;
 }
 
