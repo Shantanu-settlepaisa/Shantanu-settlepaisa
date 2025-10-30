@@ -751,6 +751,22 @@ export function ManualUploadEnhanced() {
 
           if (response.data.success) {
             console.log(`✅ [V2 Upload] File ${i + 1}/${files.length} uploaded successfully: ${file.name}`);
+
+            // Log insertion results
+            if (response.data.results && response.data.results.length > 0) {
+              const result = response.data.results[0];
+              console.log(`   📊 Processing: Inserted=${result.processing?.inserted || 0}, Skipped=${result.processing?.skipped || 0}, Duplicates=${result.processing?.duplicates || 0}`);
+
+              // Log insertion errors if any
+              if (result.processing?.insertionErrors && result.processing.insertionErrors.length > 0) {
+                console.error(`   ❌ Insertion Errors (${result.processing.insertionErrors.length}):`);
+                result.processing.insertionErrors.forEach((err: any) => {
+                  console.error(`      - ${err.bank} (UTR: ${err.utr}): ${err.error}`);
+                  console.error(`        Data:`, err.stmt);
+                });
+              }
+            }
+
             allResults.push(...(response.data.results || []));
             successCount++;
           } else {
@@ -1211,18 +1227,14 @@ export function ManualUploadEnhanced() {
           exceptionsCount: 0,
         });
 
-        toast({
-          title: "Ready for Fresh Upload",
-          description: `Deleted ${response.data.deleted.total} test records. You can now upload new files.`,
-          variant: "default",
+        toast.success(`Deleted ${response.data.deleted.total} test records. You can now upload new files.`, {
+          description: "Ready for Fresh Upload"
         });
       }
     } catch (error) {
       console.error('[ManualUploadEnhanced] ❌ Failed to clean database:', error);
-      toast({
-        title: "Cleanup Failed",
-        description: error.response?.data?.details || "Failed to clean test data. Please try again.",
-        variant: "destructive",
+      toast.error(error.response?.data?.details || "Failed to clean test data. Please try again.", {
+        description: "Cleanup Failed"
       });
     }
   }

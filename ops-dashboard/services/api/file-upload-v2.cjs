@@ -694,7 +694,8 @@ async function processFileWithSession(file, fileType, sourceType = null, include
     processing: {
       inserted: insertResult?.inserted || 0,
       skipped: insertResult?.skipped || 0,
-      duplicates: insertResult?.duplicates || 0
+      duplicates: insertResult?.duplicates || 0,
+      insertionErrors: insertResult?.errors?.slice(0, 5) || []  // Include first 5 insertion errors
     }
   };
 }
@@ -1089,6 +1090,7 @@ async function insertBankStatements(statements) {
 // Insert bank statements with session tracking (NEW - atomic version)
 async function insertBankStatementsWithSession(statements, uploadSessionId, client) {
   let inserted = 0, skipped = 0, duplicates = 0;
+  const errors = [];
 
   for (const stmt of statements) {
     try {
@@ -1127,13 +1129,27 @@ async function insertBankStatementsWithSession(statements, uploadSessionId, clie
 
       inserted++;
     } catch (error) {
-      console.error('Error inserting bank statement:', error);
+      console.error(`❌ [Bank Insert Error] ${stmt.acquirer || 'UNKNOWN'} - UTR: ${stmt.utr}:`, error.message);
+      console.error(`[Bank Insert Error] Statement data:`, JSON.stringify(stmt, null, 2));
+      errors.push({
+        bank: stmt.acquirer,
+        utr: stmt.utr,
+        error: error.message,
+        stmt: stmt
+      });
       skipped++;
     }
   }
 
+  if (errors.length > 0) {
+    log(`❌ [V2 Upload Session] Bank Statements - ${errors.length} errors occurred:`);
+    errors.slice(0, 3).forEach(err => {
+      log(`   - ${err.bank}: ${err.error}`);
+    });
+  }
+
   log(`✅ [V2 Upload Session] Bank Statements - Inserted: ${inserted}, Skipped: ${skipped}, Duplicates: ${duplicates}`);
-  return { inserted, skipped, duplicates };
+  return { inserted, skipped, duplicates, errors };
 }
 
 // Get upload statistics
