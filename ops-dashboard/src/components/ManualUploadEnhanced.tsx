@@ -1569,38 +1569,6 @@ export function ManualUploadEnhanced() {
             </div>
           )}
 
-          {/* Processing Summary */}
-          {processingSummary && (processingSummary.inserted > 0 || processingSummary.skipped > 0) && (
-            <div className="mb-6 border border-blue-200 rounded-lg bg-blue-50/50">
-              <div className="px-4 py-3 border-b border-blue-200 bg-blue-50">
-                <div className="flex items-center gap-2">
-                  <Info className="h-5 w-5 text-blue-600" />
-                  <h3 className="font-semibold text-blue-900">Upload Summary</h3>
-                </div>
-              </div>
-              <div className="p-4">
-                <div className="grid grid-cols-3 gap-4">
-                  <div className="text-center">
-                    <div className="text-2xl font-bold text-green-600">{processingSummary.inserted.toLocaleString()}</div>
-                    <div className="text-sm text-gray-600">Inserted</div>
-                  </div>
-                  {processingSummary.skipped > 0 && (
-                    <div className="text-center">
-                      <div className="text-2xl font-bold text-amber-600">{processingSummary.skipped.toLocaleString()}</div>
-                      <div className="text-sm text-gray-600">Skipped</div>
-                    </div>
-                  )}
-                  {processingSummary.duplicates > 0 && (
-                    <div className="text-center">
-                      <div className="text-2xl font-bold text-gray-600">{processingSummary.duplicates.toLocaleString()}</div>
-                      <div className="text-sm text-gray-600">Duplicates</div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-
           {/* Export Button */}
           {jobId && reconResults.length > 0 && (
             <div className="mb-4 flex justify-end">
