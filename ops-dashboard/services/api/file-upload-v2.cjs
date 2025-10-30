@@ -1216,38 +1216,34 @@ app.post('/api/upload/clean-test-data', authenticate, opsStaffOnly, async (req, 
   const client = await pool.connect();
 
   try {
-    // Get date from request body, default to today
-    const { date } = req.body;
-    const targetDate = date || new Date().toISOString().split('T')[0];
-
-    console.log(`[Clean Test Data] Starting cleanup for date: ${targetDate}`);
+    // NOTE: We no longer filter by date because test data can have varying transaction_date values
+    // from CSV files. Instead, we delete ALL MANUAL_UPLOAD records to ensure a clean slate.
+    console.log(`[Clean Test Data] Starting cleanup of ALL MANUAL_UPLOAD records`);
 
     await client.query('BEGIN');
 
-    // Check current counts before deletion for this date
+    // Check current counts before deletion (all manual uploads)
     const beforeCounts = await client.query(`
       SELECT
         (SELECT COUNT(*) FROM sp_v2_transactions
-         WHERE source_type = 'MANUAL_UPLOAD'
-         AND DATE(transaction_date) = $1) as pg_count,
+         WHERE source_type = 'MANUAL_UPLOAD') as pg_count,
         (SELECT COUNT(*) FROM sp_v2_bank_statements
-         WHERE source_type = 'MANUAL_UPLOAD'
-         AND DATE(transaction_date) = $1) as bank_count,
+         WHERE source_type = 'MANUAL_UPLOAD') as bank_count,
         (SELECT COUNT(*) FROM sp_v2_reconciliation_jobs
-         WHERE DATE(date_from) = $1) as job_count,
+         WHERE created_at >= CURRENT_DATE - INTERVAL '30 days') as job_count,
         (SELECT COUNT(*) FROM sp_v2_reconciliation_results rr
          WHERE rr.job_id IN (
-           SELECT job_id FROM sp_v2_reconciliation_jobs WHERE DATE(date_from) = $1
+           SELECT job_id FROM sp_v2_reconciliation_jobs
+           WHERE created_at >= CURRENT_DATE - INTERVAL '30 days'
          )) as result_count,
         (SELECT COUNT(*) FROM sp_v2_exception_workflow ew
          WHERE ew.transaction_id IN (
            SELECT id FROM sp_v2_transactions
            WHERE source_type = 'MANUAL_UPLOAD'
-           AND DATE(transaction_date) = $1
          )) as exception_count
-    `, [targetDate]);
+    `);
 
-    console.log(`[Clean Test Data] Before cleanup for ${targetDate}:`, beforeCounts.rows[0]);
+    console.log(`[Clean Test Data] Before cleanup (ALL manual uploads):`, beforeCounts.rows[0]);
 
     // Delete in correct order due to foreign key constraints
     // 1. Delete exceptions first (they reference transactions via transaction_id FK)
@@ -1256,57 +1252,54 @@ app.post('/api/upload/clean-test-data', authenticate, opsStaffOnly, async (req, 
       WHERE transaction_id IN (
         SELECT id FROM sp_v2_transactions
         WHERE source_type = 'MANUAL_UPLOAD'
-        AND DATE(transaction_date) = $1
       )
-    `, [targetDate]);
-    console.log(`[Clean Test Data] Deleted ${del1.rowCount} exceptions for ${targetDate}`);
+    `);
+    console.log(`[Clean Test Data] Deleted ${del1.rowCount} exceptions`);
 
-    // 2. Delete reconciliation results for jobs on this date
+    // 2. Delete reconciliation results for recent jobs (last 30 days)
     const del2 = await client.query(`
       DELETE FROM sp_v2_reconciliation_results
       WHERE job_id IN (
-        SELECT job_id FROM sp_v2_reconciliation_jobs WHERE DATE(date_from) = $1
+        SELECT job_id FROM sp_v2_reconciliation_jobs
+        WHERE created_at >= CURRENT_DATE - INTERVAL '30 days'
       )
-    `, [targetDate]);
-    console.log(`[Clean Test Data] Deleted ${del2.rowCount} recon results for ${targetDate}`);
+    `);
+    console.log(`[Clean Test Data] Deleted ${del2.rowCount} recon results`);
 
-    // 3. Delete reconciliation jobs for this date
+    // 3. Delete reconciliation jobs (last 30 days)
     const del3 = await client.query(`
       DELETE FROM sp_v2_reconciliation_jobs
-      WHERE DATE(date_from) = $1
-    `, [targetDate]);
-    console.log(`[Clean Test Data] Deleted ${del3.rowCount} recon jobs for ${targetDate}`);
+      WHERE created_at >= CURRENT_DATE - INTERVAL '30 days'
+    `);
+    console.log(`[Clean Test Data] Deleted ${del3.rowCount} recon jobs`);
 
-    // Delete bank statements for this date
+    // 4. Delete ALL bank statements with MANUAL_UPLOAD source
     const del4 = await client.query(`
       DELETE FROM sp_v2_bank_statements
       WHERE source_type = 'MANUAL_UPLOAD'
-      AND DATE(transaction_date) = $1
-    `, [targetDate]);
-    console.log(`[Clean Test Data] Deleted ${del4.rowCount} bank statements for ${targetDate}`);
+    `);
+    console.log(`[Clean Test Data] Deleted ${del4.rowCount} bank statements`);
 
-    // Delete PG transactions for this date
+    // 5. Delete ALL PG transactions with MANUAL_UPLOAD source
     const del5 = await client.query(`
       DELETE FROM sp_v2_transactions
       WHERE source_type = 'MANUAL_UPLOAD'
-      AND DATE(transaction_date) = $1
-    `, [targetDate]);
-    console.log(`[Clean Test Data] Deleted ${del5.rowCount} PG transactions for ${targetDate}`);
+    `);
+    console.log(`[Clean Test Data] Deleted ${del5.rowCount} PG transactions`);
 
     await client.query('COMMIT');
 
-    console.log(`[Clean Test Data] ✅ Cleanup completed successfully for ${targetDate}`);
+    console.log(`[Clean Test Data] ✅ Cleanup completed successfully - deleted ${del5.rowCount + del4.rowCount} total records`);
 
     res.json({
       success: true,
-      message: `Test data cleaned successfully for ${targetDate}`,
-      date: targetDate,
+      message: `All manual upload test data cleaned successfully`,
       deleted: {
         pgTransactions: del5.rowCount,
         bankStatements: del4.rowCount,
         reconJobs: del3.rowCount,
-        exceptions: del2.rowCount,
-        reconResults: del1.rowCount,
+        reconResults: del2.rowCount,
+        exceptions: del1.rowCount,
         total: del1.rowCount + del2.rowCount + del3.rowCount + del4.rowCount + del5.rowCount
       },
       before: beforeCounts.rows[0]
