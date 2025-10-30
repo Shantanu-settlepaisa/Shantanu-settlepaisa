@@ -131,6 +131,12 @@ function buildV2MappingFromDBConfig(bankConfig, mode = 'api') {
     } else {
       v2Mapping[normalizedKey] = 'bank_ref';  // API mode: map to bank_ref for uploads
     }
+  } else if (v1Mappings.utr && mode === 'api') {
+    // FALLBACK: If no transaction_id but has utr, use utr for BOTH utr AND bank_ref in API mode
+    // This handles banks like AXIS that only provide UTR/PRNNo without separate transaction_id
+    const normalizedKey = v1Mappings.utr.toLowerCase().replace(/\s+/g, '_');
+    v2Mapping[normalizedKey] = 'utr,bank_ref';  // Map to BOTH fields
+    console.log(`[V1 Mapper] Bank ${bankConfig.bank_name}: No transaction_id, using utr for both utr and bank_ref`);
   }
 
   // Date mappings
