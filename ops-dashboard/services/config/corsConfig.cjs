@@ -7,7 +7,9 @@
 const allowedOrigins = [
   'http://localhost:5174',                                                          // Local development
   'http://settlepaisa-ops-staging-2.s3-website.ap-south-1.amazonaws.com',         // Staging 2
-  'https://ops.settlepaisa.com'                                                    // Production
+  'http://settlepaisa-ops-production.s3-website.ap-south-1.amazonaws.com',        // Production (S3)
+  'https://settlepaisaops.sabpaisa.in',                                            // Production (CloudFront - future)
+  'https://ops.settlepaisa.com'                                                    // Production (legacy)
 ];
 
 /**
