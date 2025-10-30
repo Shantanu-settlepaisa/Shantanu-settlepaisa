@@ -1235,12 +1235,7 @@ app.post('/api/upload/clean-test-data', authenticate, opsStaffOnly, async (req, 
          WHERE rr.job_id IN (
            SELECT job_id FROM sp_v2_reconciliation_jobs
            WHERE created_at >= CURRENT_DATE - INTERVAL '30 days'
-         )) as result_count,
-        (SELECT COUNT(*) FROM sp_v2_exception_workflow ew
-         WHERE ew.transaction_id IN (
-           SELECT id FROM sp_v2_transactions
-           WHERE source_type = 'MANUAL_UPLOAD'
-         )) as exception_count
+         )) as result_count
     `);
 
     console.log(`[Clean Test Data] Before cleanup (ALL manual uploads):`, beforeCounts.rows[0]);
