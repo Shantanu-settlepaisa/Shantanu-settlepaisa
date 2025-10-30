@@ -64,7 +64,7 @@ app.use('/exception-rules', exceptionRulesRoutes)
 app.use('/reports', reportsRoutes)
 app.use('/bank-mappings', bankMappingsRoutes)
 app.use('/pg-transactions', pgTransactionsRoutes)
-app.use('/connectors', authenticate, opsStaffOnly, connectorsRoutes)
+app.use('/connectors', connectorsRoutes)  // Auth handled per-route if needed
 
 // Store reconciliation results in memory
 const reconResults = new Map()
