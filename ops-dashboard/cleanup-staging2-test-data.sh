@@ -50,17 +50,17 @@ UNION ALL
 SELECT
   'Recon Jobs',
   COUNT(*)
-FROM sp_v2_recon_jobs
+FROM sp_v2_reconciliation_jobs
 UNION ALL
 SELECT
   'Recon Results',
   COUNT(*)
-FROM sp_v2_recon_results
+FROM sp_v2_reconciliation_results
 UNION ALL
 SELECT
   'Exceptions',
   COUNT(*)
-FROM sp_v2_exceptions;
+FROM sp_v2_exception_workflow;
 EOF
 
 echo ""
@@ -72,13 +72,13 @@ psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" << 'EOF'
 BEGIN;
 
 -- Delete recon results first (has FKs to recon_jobs)
-DELETE FROM sp_v2_recon_results;
+DELETE FROM sp_v2_reconciliation_results;
 
 -- Delete exceptions
-DELETE FROM sp_v2_exceptions;
+DELETE FROM sp_v2_exception_workflow;
 
 -- Delete recon jobs
-DELETE FROM sp_v2_recon_jobs;
+DELETE FROM sp_v2_reconciliation_jobs;
 
 -- Delete bank statements (all manual uploads)
 DELETE FROM sp_v2_bank_statements;
@@ -104,17 +104,17 @@ UNION ALL
 SELECT
   'Recon Jobs',
   COUNT(*)
-FROM sp_v2_recon_jobs
+FROM sp_v2_reconciliation_jobs
 UNION ALL
 SELECT
   'Recon Results',
   COUNT(*)
-FROM sp_v2_recon_results
+FROM sp_v2_reconciliation_results
 UNION ALL
 SELECT
   'Exceptions',
   COUNT(*)
-FROM sp_v2_exceptions;
+FROM sp_v2_exception_workflow;
 EOF
 
 echo ""

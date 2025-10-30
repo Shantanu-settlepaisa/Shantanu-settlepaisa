@@ -1174,21 +1174,21 @@ app.post('/api/upload/clean-test-data', authenticate, opsStaffOnly, async (req, 
       SELECT
         (SELECT COUNT(*) FROM sp_v2_transactions WHERE source_type = 'MANUAL_UPLOAD') as pg_count,
         (SELECT COUNT(*) FROM sp_v2_bank_statements) as bank_count,
-        (SELECT COUNT(*) FROM sp_v2_recon_jobs) as job_count,
-        (SELECT COUNT(*) FROM sp_v2_recon_results) as result_count,
-        (SELECT COUNT(*) FROM sp_v2_exceptions) as exception_count
+        (SELECT COUNT(*) FROM sp_v2_reconciliation_jobs) as job_count,
+        (SELECT COUNT(*) FROM sp_v2_reconciliation_results) as result_count,
+        (SELECT COUNT(*) FROM sp_v2_exception_workflow) as exception_count
     `);
 
     console.log('[Clean Test Data] Before cleanup:', beforeCounts.rows[0]);
 
     // Delete in correct order due to foreign key constraints
-    const del1 = await client.query('DELETE FROM sp_v2_recon_results');
+    const del1 = await client.query('DELETE FROM sp_v2_reconciliation_results');
     console.log(`[Clean Test Data] Deleted ${del1.rowCount} recon results`);
 
-    const del2 = await client.query('DELETE FROM sp_v2_exceptions');
+    const del2 = await client.query('DELETE FROM sp_v2_exception_workflow');
     console.log(`[Clean Test Data] Deleted ${del2.rowCount} exceptions`);
 
-    const del3 = await client.query('DELETE FROM sp_v2_recon_jobs');
+    const del3 = await client.query('DELETE FROM sp_v2_reconciliation_jobs');
     console.log(`[Clean Test Data] Deleted ${del3.rowCount} recon jobs`);
 
     const del4 = await client.query('DELETE FROM sp_v2_bank_statements');
