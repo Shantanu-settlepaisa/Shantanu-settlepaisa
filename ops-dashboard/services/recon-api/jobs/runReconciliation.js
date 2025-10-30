@@ -1672,7 +1672,7 @@ async function persistResults(results, jobId = 'UNKNOWN', job = {}, params = {})
               source_file,
               processed
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-            ON CONFLICT (bank_ref) DO UPDATE SET
+            ON CONFLICT (bank_ref, bank_name) DO UPDATE SET
               processed = EXCLUDED.processed
           `, [
             bankStmt.bank_reference || bankStmt.utr || bankStmt.TRANSACTION_ID || bankStmt.UTR || `BANK_${Date.now()}`,
@@ -1801,7 +1801,7 @@ async function persistResults(results, jobId = 'UNKNOWN', job = {}, params = {})
                 source_file,
                 processed
               ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-              ON CONFLICT (bank_ref) DO UPDATE SET
+              ON CONFLICT (bank_ref, bank_name) DO UPDATE SET
                 processed = false,
                 remarks = CONCAT(COALESCE(sp_v2_bank_statements.remarks, ''), ' [', $12::text, ']')
             `, [
@@ -1891,7 +1891,7 @@ async function persistResults(results, jobId = 'UNKNOWN', job = {}, params = {})
             source_file,
             processed
           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-          ON CONFLICT (bank_ref) DO NOTHING
+          ON CONFLICT (bank_ref, bank_name) DO NOTHING
         `, [
           unmatchedBank.bank_reference || unmatchedBank.utr || unmatchedBank.TRANSACTION_ID || unmatchedBank.UTR || `BANK_${Date.now()}_${Math.random()}`,
           unmatchedBank.bank_name || unmatchedBank.BANK || 'UNKNOWN',
