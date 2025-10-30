@@ -955,6 +955,9 @@ async function insertTransactions(transactions) {
         }
 
         // Insert transaction into sp_v2_transactions
+        // DEBUG: Log the values being inserted
+        console.log(`[DEBUG] Inserting PG txn ${txn.pgw_ref}: amount_paise=${txn.amount_paise}, gross_amount_paise=${txn.gross_amount_paise}`);
+
         await client.query(`
           INSERT INTO sp_v2_transactions
           (transaction_id, merchant_id, gateway_ref, utr, amount_paise, gross_amount_paise, currency, payment_method, status,
@@ -1123,6 +1126,9 @@ async function insertBankStatementsWithSession(statements, uploadSessionId, clie
       }
 
       // Insert bank statement with upload_session_id
+      // DEBUG: Log the values being inserted
+      console.log(`[DEBUG] Inserting bank stmt ${stmt.utr}: amount_paise=${stmt.amount_paise}, gross_amount_paise=${stmt.gross_amount_paise}, credited_at=${stmt.credited_at}, cycle_date=${stmt.cycle_date}`);
+
       await client.query(`
         INSERT INTO sp_v2_bank_statements
         (bank_ref, bank_name, utr, amount_paise, gross_amount_paise, bank_fee_paise, bank_gst_paise,
