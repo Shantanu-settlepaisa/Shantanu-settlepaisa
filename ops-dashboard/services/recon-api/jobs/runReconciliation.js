@@ -859,69 +859,133 @@ async function normalizeTransactions(transactions) {
   });
 }
 
+/**
+ * Detect bank from column names in a record
+ * Returns config_name that matches sp_v2_bank_column_mappings table
+ */
+function detectBankFromColumns(record) {
+  const columns = Object.keys(record);
+  const columnsStr = columns.join('|').toUpperCase();
+
+  // HDFC BANK: has MERCHANT_TRACKID or MERCHANT TRACKID
+  if (columnsStr.includes('MERCHANT_TRACKID') || columnsStr.includes('MERCHANT TRACKID')) {
+    return 'HDFC BANK';
+  }
+
+  // BOB: has "Merchant Track ID" (with spaces) or "Settlement Amount"
+  if (columns.includes('Merchant Track ID') || columns.includes('Settlement Amount')) {
+    return 'BOB';
+  }
+
+  // AXIS BANK: has PRNNo or PrnNo
+  if (columns.includes('PRNNo') || columns.includes('PrnNo') || columnsStr.includes('PRNNO')) {
+    return 'AXIS BANK';
+  }
+
+  // SBI: has specific SBI columns
+  if (columnsStr.includes('VALUEDATE') || columnsStr.includes('VALUE_DATE')) {
+    return 'SBI BANK';
+  }
+
+  return null;
+}
+
 async function normalizeBankRecords(records, bankFilename = null, jobId = null) {
   console.log('[normalizeBankRecords] ENTRY:', records.length, 'records, bankFilename =', bankFilename);
-  // Two-stage normalization if bank filename is available
-  if (bankFilename) {
+
+  // NEW: Group records by bank (detect from column names)
+  const bankGroups = {};
+  const ungroupedRecords = [];
+
+  for (const record of records) {
+    const bankConfigName = detectBankFromColumns(record);
+
+    if (bankConfigName) {
+      if (!bankGroups[bankConfigName]) {
+        bankGroups[bankConfigName] = [];
+      }
+      bankGroups[bankConfigName].push(record);
+    } else {
+      // Couldn't detect bank from columns, try filename
+      if (bankFilename) {
+        const { detectBankFromFilename } = require('../utils/bank-normalizer');
+        const detectedBank = detectBankFromFilename(bankFilename);
+        if (detectedBank) {
+          if (!bankGroups[detectedBank]) {
+            bankGroups[detectedBank] = [];
+          }
+          bankGroups[detectedBank].push(record);
+        } else {
+          ungroupedRecords.push(record);
+        }
+      } else {
+        ungroupedRecords.push(record);
+      }
+    }
+  }
+
+  console.log('[normalizeBankRecords] Bank groups detected:', Object.keys(bankGroups));
+  console.log('[normalizeBankRecords] Ungrouped records:', ungroupedRecords.length);
+
+  // Process each bank group with two-stage normalization
+  const normalizedResults = [];
+
+  for (const [bankConfigName, bankRecords] of Object.entries(bankGroups)) {
     try {
-      const { detectBankFromFilename, normalizeBankData } = require('../utils/bank-normalizer');
+      const { normalizeBankData } = require('../utils/bank-normalizer');
       const { Pool } = require('pg');
       const config = require('../../config/env.cjs');
 
-      // Detect bank from filename
-      const bankConfigName = detectBankFromFilename(bankFilename);
+      if (jobId) {
+        logStructured(jobId, 'info', `Processing ${bankRecords.length} records for ${bankConfigName}`);
+      }
 
-      if (bankConfigName) {
+      // Fetch bank mapping from database
+      const pool = new Pool({
+        host: config.db.host,
+        port: config.db.port,
+        database: config.db.database,
+        user: config.db.user,
+        password: config.db.password
+      });
+
+      const result = await pool.query(`
+        SELECT
+          config_name,
+          bank_name,
+          file_type,
+          delimiter,
+          v1_column_mappings,
+          special_fields
+        FROM sp_v2_bank_column_mappings
+        WHERE config_name = $1 AND is_active = TRUE
+      `, [bankConfigName]);
+
+      await pool.end();
+
+      if (result.rows.length > 0) {
+        const bankMapping = result.rows[0];
         if (jobId) {
-          logStructured(jobId, 'info', `Detected bank: ${bankConfigName} from filename: ${bankFilename}`);
+          logStructured(jobId, 'info', `Applying two-stage normalization (Bank → V1 → V2) for ${bankMapping.bank_name}`);
         }
 
-        // Fetch bank mapping from database using centralized config
-        const pool = new Pool({
-          host: config.db.host,
-          port: config.db.port,
-          database: config.db.database,
-          user: config.db.user,
-          password: config.db.password
-        });
-        
-        const result = await pool.query(`
-          SELECT 
-            config_name,
-            bank_name,
-            file_type,
-            delimiter,
-            v1_column_mappings,
-            special_fields
-          FROM sp_v2_bank_column_mappings
-          WHERE config_name = $1 AND is_active = TRUE
-        `, [bankConfigName]);
-        
-        await pool.end();
-        
-        if (result.rows.length > 0) {
-          const bankMapping = result.rows[0];
+        // Apply two-stage normalization
+        const v2Data = await normalizeBankData(bankRecords, bankMapping);
+
+        if (!Array.isArray(v2Data)) {
+          console.error('[Bank Normalization] ERROR: normalizeBankData did not return an array!', typeof v2Data);
           if (jobId) {
-            logStructured(jobId, 'info', `Applying two-stage normalization (Bank → V1 → V2) for ${bankMapping.bank_name}`);
+            logStructured(jobId, 'error', `Two-stage normalization failed for ${bankConfigName}: Result is not an array`);
+          }
+          // Add ungrouped records back for fallback processing
+          ungroupedRecords.push(...bankRecords);
+        } else {
+          if (jobId) {
+            logStructured(jobId, 'info', `Two-stage normalization complete for ${bankMapping.bank_name}: ${v2Data.length} records`);
           }
 
-          // Apply two-stage normalization
-          const v2Data = await normalizeBankData(records, bankMapping);
-
-          // Defensive check - ensure v2Data is an array
-          if (!Array.isArray(v2Data)) {
-            console.error('[Bank Normalization] ERROR: normalizeBankData did not return an array!', typeof v2Data, v2Data);
-            if (jobId) {
-              logStructured(jobId, 'error', `Two-stage normalization failed: Result is not an array (${typeof v2Data})`);
-            }
-            // Fall through to fallback normalization
-          } else {
-            if (jobId) {
-              logStructured(jobId, 'info', `Two-stage normalization complete: ${v2Data.length} records`);
-            }
-
-            // Convert V2 format to reconciliation engine format
-            return v2Data.map(r => ({
+          // Convert V2 format to reconciliation engine format
+          const normalized = v2Data.map(r => ({
             ...r,
             normalized: true,
             bank_reference: r.utr || r.rrn || '',
@@ -935,67 +999,69 @@ async function normalizeBankRecords(records, bankFilename = null, jobId = null) 
             remarks: r.remarks || '',
             debit_credit: 'CREDIT'
           }));
-          }
-        } else {
-          if (jobId) {
-            logStructured(jobId, 'warn', `Bank mapping not found for ${bankConfigName}, using fallback normalization`);
-          }
+
+          normalizedResults.push(...normalized);
         }
       } else {
+        console.warn(`[Bank Normalization] No mapping found for ${bankConfigName}, using fallback`);
         if (jobId) {
-          logStructured(jobId, 'warn', `Could not detect bank from filename: ${bankFilename}, using fallback normalization`);
+          logStructured(jobId, 'warn', `Bank mapping not found for ${bankConfigName}, using fallback normalization`);
         }
+        ungroupedRecords.push(...bankRecords);
       }
     } catch (error) {
+      console.error(`[Bank Normalization] Error processing ${bankConfigName}:`, error);
       if (jobId) {
-        logStructured(jobId, 'error', `Two-stage normalization failed: ${error.message}, using fallback`);
+        logStructured(jobId, 'error', `Two-stage normalization failed for ${bankConfigName}: ${error.message}`);
       }
-      console.error('[Bank Normalization] Error:', error);
+      ungroupedRecords.push(...bankRecords);
     }
   }
-  
-  // Fallback: Basic normalization (existing logic)
-  return records.map((r, idx) => {
-    // DEBUG: Log first record to see what we're getting
-    if (idx === 0) {
-      console.log('[Bank Normalizer] First record before normalization:', JSON.stringify(r));
-    }
-    
-    // Check if amount is already in paise (from v1-column-mapper)
-    const amountPaise = r.amount_paise || 0;
-    const amountOther = Number(r.Amount || r.AMOUNT || r.amount || 0);
-    
-    if (idx === 0) {
-      console.log('[Bank Normalizer] amountPaise =', amountPaise, ', amountOther =', amountOther);
-    }
-    
-    // If amount_paise exists, use it; otherwise convert from rupees to paise
-    const finalAmount = amountPaise > 0 ? amountPaise : Math.round(amountOther * 100);
 
-    // 🆕 Handle gross_amount_paise (for bank fee tracking)
-    const grossAmountPaise = r.gross_amount_paise || r.gross_amount || 0;
-    const finalGrossAmount = grossAmountPaise > 0 ? grossAmountPaise : (r.GROSS_AMT ? Math.round(r.GROSS_AMT * 100) : 0);
-
-    const normalized = {
-      ...r,
-      normalized: true,
-      bank_reference: r['Bank Reference'] || r.bank_reference || r.TRANSACTION_ID || r.bank_ref || '',
-      bank_name: r['Bank Name'] || r.bank_name || r.BANK || '',
-      amount: finalAmount,
-      gross_amount: finalGrossAmount, // 🆕 Add gross_amount for matching
-      transaction_date: r['Transaction Date'] || r.transaction_date || r.DATE || r.TXN_DATE || r.date || '',
-      value_date: r['Value Date'] || r.value_date || r.date || '',
-      utr: (r.utr || r.bank_ref || '').toString().trim().toUpperCase(),  // After V1→V2 mapping, UTR is in 'utr' or 'bank_ref' field
-      remarks: r.Remarks || r.remarks || '',
-      debit_credit: r['Debit/Credit'] || r.debit_credit || 'CREDIT'
-    };
-
-    if (idx === 0) {
-      console.log('[Bank Normalizer] Normalized first record:', JSON.stringify(normalized));
+  // Apply fallback normalization to ungrouped records
+  if (ungroupedRecords.length > 0) {
+    console.log(`[normalizeBankRecords] Applying fallback normalization to ${ungroupedRecords.length} records`);
+    if (jobId) {
+      logStructured(jobId, 'warn', `Applying fallback normalization to ${ungroupedRecords.length} records`);
     }
 
-    return normalized;
-  });
+    const fallbackNormalized = ungroupedRecords.map((r, idx) => {
+      // DEBUG: Log first record to see what we're getting
+      if (idx === 0) {
+        console.log('[Bank Normalizer] First fallback record before normalization:', JSON.stringify(r));
+      }
+
+      // Check if amount is already in paise (from v1-column-mapper)
+      const amountPaise = r.amount_paise || 0;
+      const amountOther = Number(r.Amount || r.AMOUNT || r.amount || 0);
+
+      // If amount_paise exists, use it; otherwise convert from rupees to paise
+      const finalAmount = amountPaise > 0 ? amountPaise : Math.round(amountOther * 100);
+
+      // Handle gross_amount_paise (for bank fee tracking)
+      const grossAmountPaise = r.gross_amount_paise || r.gross_amount || 0;
+      const finalGrossAmount = grossAmountPaise > 0 ? grossAmountPaise : (r.GROSS_AMT ? Math.round(r.GROSS_AMT * 100) : 0);
+
+      return {
+        ...r,
+        normalized: true,
+        bank_reference: r['Bank Reference'] || r.bank_reference || r.TRANSACTION_ID || r.bank_ref || '',
+        bank_name: r['Bank Name'] || r.bank_name || r.BANK || '',
+        amount: finalAmount,
+        gross_amount: finalGrossAmount,
+        transaction_date: r['Transaction Date'] || r.transaction_date || r.DATE || r.TXN_DATE || r.date || '',
+        value_date: r['Value Date'] || r.value_date || r.date || '',
+        utr: (r.utr || r.bank_ref || '').toString().trim().toUpperCase(),
+        remarks: r.Remarks || r.remarks || '',
+        debit_credit: r['Debit/Credit'] || r.debit_credit || 'CREDIT'
+      };
+    });
+
+    normalizedResults.push(...fallbackNormalized);
+  }
+
+  console.log(`[normalizeBankRecords] Total normalized: ${normalizedResults.length} records`);
+  return normalizedResults;
 }
 
 // V1-Style Reconciliation Engine with 11 Exception Types
