@@ -783,8 +783,11 @@ function validateData(data, fileType) {
   return { validRecords, errors };
 }
 
-// Transaction validation  
+// Transaction validation
 function validateTransaction(row, rowNumber) {
+  // DEBUG: Log incoming row data
+  console.log(`[DEBUG validateTransaction] Row ${rowNumber}: gross_amount_paise=${row.gross_amount_paise}, amount_paise=${row.amount_paise}`);
+
   // Map common column variations - V2 schema uses transaction_id after V1->V2 conversion
   const txnId = row.transaction_id || row.txn_id || row.pgw_ref || row.gateway_ref || row.pg_txn_id;
 
@@ -827,7 +830,7 @@ function validateTransaction(row, rowNumber) {
   };
   const validStatus = statusMap[rawStatus] || 'PENDING';
 
-  return {
+  const validated = {
     id: uuidv4(),
     merchant_id: row.merchant_id || 'UNKNOWN',
     pgw_ref: txnId,
@@ -844,6 +847,11 @@ function validateTransaction(row, rowNumber) {
       source_file: 'manual_upload'
     }
   };
+
+  // DEBUG: Log validated result
+  console.log(`[DEBUG validateTransaction] Row ${rowNumber} validated: amount_paise=${validated.amount_paise}, gross_amount_paise=${validated.gross_amount_paise}`);
+
+  return validated;
 }
 
 // Bank statement validation
