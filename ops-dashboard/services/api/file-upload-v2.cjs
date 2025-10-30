@@ -1222,13 +1222,13 @@ app.post('/api/upload/clean-test-data', authenticate, opsStaffOnly, async (req, 
 
     await client.query('BEGIN');
 
-    // Check current counts before deletion (all manual uploads)
+    // Check current counts before deletion (all manual uploads and reconciled records)
     const beforeCounts = await client.query(`
       SELECT
         (SELECT COUNT(*) FROM sp_v2_transactions
-         WHERE source_type = 'MANUAL_UPLOAD') as pg_count,
+         WHERE source_type IN ('MANUAL_UPLOAD', 'SFTP_CONNECTOR')) as pg_count,
         (SELECT COUNT(*) FROM sp_v2_bank_statements
-         WHERE source_type = 'MANUAL_UPLOAD') as bank_count,
+         WHERE source_type IN ('MANUAL_UPLOAD', 'SFTP_CONNECTOR')) as bank_count,
         (SELECT COUNT(*) FROM sp_v2_reconciliation_jobs
          WHERE created_at >= CURRENT_DATE - INTERVAL '30 days') as job_count,
         (SELECT COUNT(*) FROM sp_v2_reconciliation_results rr
@@ -1242,14 +1242,21 @@ app.post('/api/upload/clean-test-data', authenticate, opsStaffOnly, async (req, 
 
     // Delete in correct order due to foreign key constraints
     // 1. Delete exceptions first (they reference transactions via transaction_id FK)
-    const del1 = await client.query(`
-      DELETE FROM sp_v2_exception_workflow
-      WHERE transaction_id IN (
-        SELECT id FROM sp_v2_transactions
-        WHERE source_type = 'MANUAL_UPLOAD'
-      )
-    `);
-    console.log(`[Clean Test Data] Deleted ${del1.rowCount} exceptions`);
+    // Skip if table doesn't exist or has schema issues
+    let exceptionsDeleted = 0;
+    try {
+      const del1 = await client.query(`
+        DELETE FROM sp_v2_exception_workflow
+        WHERE transaction_id IN (
+          SELECT id FROM sp_v2_transactions
+          WHERE source_type IN ('MANUAL_UPLOAD', 'SFTP_CONNECTOR')
+        )
+      `);
+      exceptionsDeleted = del1.rowCount;
+      console.log(`[Clean Test Data] Deleted ${exceptionsDeleted} exceptions`);
+    } catch (exErr) {
+      console.log(`[Clean Test Data] ⚠️ Skipping exception_workflow delete (table may not exist or has schema issues):`, exErr.message);
+    }
 
     // 2. Delete reconciliation results for recent jobs (last 30 days)
     const del2 = await client.query(`
@@ -1268,17 +1275,17 @@ app.post('/api/upload/clean-test-data', authenticate, opsStaffOnly, async (req, 
     `);
     console.log(`[Clean Test Data] Deleted ${del3.rowCount} recon jobs`);
 
-    // 4. Delete ALL bank statements with MANUAL_UPLOAD source
+    // 4. Delete ALL bank statements with MANUAL_UPLOAD or SFTP_CONNECTOR source
     const del4 = await client.query(`
       DELETE FROM sp_v2_bank_statements
-      WHERE source_type = 'MANUAL_UPLOAD'
+      WHERE source_type IN ('MANUAL_UPLOAD', 'SFTP_CONNECTOR')
     `);
     console.log(`[Clean Test Data] Deleted ${del4.rowCount} bank statements`);
 
-    // 5. Delete ALL PG transactions with MANUAL_UPLOAD source
+    // 5. Delete ALL PG transactions with MANUAL_UPLOAD or SFTP_CONNECTOR source
     const del5 = await client.query(`
       DELETE FROM sp_v2_transactions
-      WHERE source_type = 'MANUAL_UPLOAD'
+      WHERE source_type IN ('MANUAL_UPLOAD', 'SFTP_CONNECTOR')
     `);
     console.log(`[Clean Test Data] Deleted ${del5.rowCount} PG transactions`);
 

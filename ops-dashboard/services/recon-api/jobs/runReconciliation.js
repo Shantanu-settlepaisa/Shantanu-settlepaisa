@@ -1758,8 +1758,8 @@ async function persistResults(results, jobId = 'UNKNOWN', job = {}, params = {})
             bankStmt.utr || bankStmt.UTR,
             bankStmt.remarks || bankStmt.REMARKS || '',
             'CREDIT',
-            job.sourceType === 'MANUAL' ? 'MANUAL_UPLOAD' : 'SFTP_CONNECTOR',
-            job.sourceType === 'MANUAL' ? 'MANUAL_UPLOAD' : 'BANK_API',
+            job.sourceType === 'MANUAL_UPLOAD' ? 'MANUAL_UPLOAD' : 'SFTP_CONNECTOR',
+            job.sourceType === 'MANUAL_UPLOAD' ? 'MANUAL_UPLOAD' : 'BANK_API',
             true
           ]);
           
@@ -1888,8 +1888,8 @@ async function persistResults(results, jobId = 'UNKNOWN', job = {}, params = {})
               exceptionBank.utr || exceptionBank.UTR,
               exceptionBank.remarks || exceptionBank.REMARKS || '',
               'CREDIT',
-              job.sourceType === 'MANUAL' ? 'MANUAL_UPLOAD' : 'SFTP_CONNECTOR',
-              job.sourceType === 'MANUAL' ? 'MANUAL_UPLOAD' : 'BANK_API',
+              job.sourceType === 'MANUAL_UPLOAD' ? 'MANUAL_UPLOAD' : 'SFTP_CONNECTOR',
+              job.sourceType === 'MANUAL_UPLOAD' ? 'MANUAL_UPLOAD' : 'BANK_API',
               false,  // Not processed (it's an exception)
               exception.reasonCode  // Add reason to remarks via parameter $12
             ]);
