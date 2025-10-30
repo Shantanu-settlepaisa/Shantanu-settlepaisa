@@ -927,6 +927,7 @@ async function normalizeBankRecords(records, bankFilename = null, jobId = null) 
             bank_reference: r.utr || r.rrn || '',
             bank_name: r.bank_name || bankMapping.bank_name,
             amount: r.amount_paise || r.amount || 0,
+            gross_amount: r.gross_amount_paise || r.gross_amount || 0,
             transaction_date: r.transaction_date || '',
             value_date: r.value_date || r.transaction_date || '',
             utr: (r.utr || '').toString().trim().toUpperCase(),
