@@ -16,9 +16,6 @@ const bankMappingsRoutes = require('./routes/bank-mappings')
 const pgTransactionsRoutes = require('./routes/pg-transactions')
 const connectorsRoutes = require('./routes/connectors')
 
-// V1 Column Mapper for manual uploads
-const { convertV1CSVToV2, detectFormat } = require('../shared/v1-column-mapper.cjs')
-
 // Security: Authentication middleware (CRIT-001, HIGH-006)
 const { authenticate, opsStaffOnly } = require('../overview-api/middleware/authMiddleware.cjs')
 const { corsOptions } = require('../config/corsConfig.cjs')
@@ -84,93 +81,14 @@ app.post('/recon/run', authenticate, opsStaffOnly, async (req, res) => {
   const reconDate = date || cycle_date
   const reconMerchantId = merchantId || merchant_id
   log('[Recon API] Starting reconciliation job:', { date: reconDate, merchantId: reconMerchantId, acquirerId, dryRun, test, bankFilename })
-
-  let normalizedPgTransactions = pgTransactions;
-  let normalizedBankRecords = bankRecords;
-
-  // Apply V1 mapper transformations if manual upload data is provided
-  if (pgTransactions && pgTransactions.length > 0) {
-    log('[Recon API] Normalizing uploaded PG transactions:', pgTransactions.length);
-    try {
-      // Apply V1 to V2 transformation for PG transactions
-      normalizedPgTransactions = await convertV1CSVToV2(pgTransactions, 'pg_transactions', null, 'recon');
-      log('[Recon API] Normalized PG transactions:', normalizedPgTransactions.length);
-    } catch (err) {
-      console.error('[Recon API] Failed to normalize PG transactions:', err.message);
-      // Continue with original data if normalization fails
-    }
+  
+  if (pgTransactions) {
+    log('[Recon API] Using uploaded PG transactions:', pgTransactions.length);
   }
-
-  if (bankRecords && bankRecords.length > 0) {
-    log('[Recon API] Normalizing uploaded bank records:', bankRecords.length);
-    try {
-      // Group records by bank (they might be from multiple banks)
-      // Detect bank from column names in each record
-      const bankGroups = {};
-
-      for (const record of bankRecords) {
-        let bankName = null;
-
-        // Detect bank from column names
-        const columns = Object.keys(record);
-        if (columns.includes('MERCHANT_TRACKID') || columns.includes('MERCHANT TRACKID') || columns.includes('Merchant Trackid')) {
-          bankName = 'HDFC BANK';
-        } else if (columns.includes('Merchant Track ID') || columns.includes('Settlement Amount')) {
-          bankName = 'BOB';
-        } else if (columns.includes('PRNNo') || columns.includes('Amount')) {
-          // AXIS has simpler column names, need to be careful
-          if (!columns.includes('Settlement Amount')) { // Disambiguate from BOB
-            bankName = 'AXIS BANK';
-          }
-        }
-
-        // Fallback: try to detect from filename
-        if (!bankName && bankFilename) {
-          const filenameLower = bankFilename.toLowerCase();
-          if (filenameLower.includes('hdfc')) bankName = 'HDFC BANK';
-          else if (filenameLower.includes('bob')) bankName = 'BOB';
-          else if (filenameLower.includes('axis')) bankName = 'AXIS BANK';
-          else if (filenameLower.includes('icici')) bankName = 'ICICI BANK';
-          else if (filenameLower.includes('sbi')) bankName = 'SBI';
-        }
-
-        // Fallback: check if record already has bank_name
-        if (!bankName && record.bank_name) {
-          bankName = record.bank_name;
-        }
-
-        if (!bankName) {
-          bankName = 'UNKNOWN';
-        }
-
-        if (!bankGroups[bankName]) {
-          bankGroups[bankName] = [];
-        }
-        bankGroups[bankName].push(record);
-      }
-
-      // Normalize each bank group separately
-      normalizedBankRecords = [];
-      for (const [bankName, records] of Object.entries(bankGroups)) {
-        log(`[Recon API] Normalizing ${records.length} records for bank: ${bankName}`);
-        try {
-          const normalized = await convertV1CSVToV2(records, 'bank_statements', bankName, 'recon');
-          normalizedBankRecords.push(...normalized);
-        } catch (err) {
-          console.error(`[Recon API] Failed to normalize ${bankName} records:`, err.message);
-          // Continue with original records for this bank
-          normalizedBankRecords.push(...records);
-        }
-      }
-
-      log('[Recon API] Total normalized bank records:', normalizedBankRecords.length);
-    } catch (err) {
-      console.error('[Recon API] Failed to normalize bank records:', err.message);
-      // Continue with original data if normalization fails
-      normalizedBankRecords = bankRecords;
-    }
+  if (bankRecords) {
+    log('[Recon API] Using uploaded bank records:', bankRecords.length);
   }
-
+  
   try {
     const job = await runReconciliation(config, {
       date: reconDate,
@@ -179,8 +97,8 @@ app.post('/recon/run', authenticate, opsStaffOnly, async (req, res) => {
       dryRun,
       limit,
       test,
-      pgTransactions: normalizedPgTransactions,  // Pass normalized data
-      bankRecords: normalizedBankRecords,        // Pass normalized data
+      pgTransactions,  // Pass uploaded data
+      bankRecords,     // Pass uploaded data
       bankFilename     // Pass filename for bank detection
     })
     
