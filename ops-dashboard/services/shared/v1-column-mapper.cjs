@@ -103,19 +103,17 @@ function buildV2MappingFromDBConfig(bankConfig, mode = 'api') {
   // Recon config uses: paid_amount, payee_amount, transaction_id, utr, payment_date_time, transaction_date_time
 
   // Amount mappings
-  if (v1Mappings.paid_amount) {
+  if (v1Mappings.paid_amount && v1Mappings.payee_amount) {
+    // Bank provides both gross and net amounts (e.g., BOB, HDFC)
+    const paidKey = v1Mappings.paid_amount.toLowerCase().replace(/\s+/g, '_');
+    const payeeKey = v1Mappings.payee_amount.toLowerCase().replace(/\s+/g, '_');
+    v2Mapping[paidKey] = 'gross_amount_paise';   // paid_amount = gross amount
+    v2Mapping[payeeKey] = 'amount_paise';        // payee_amount = net amount
+  } else if (v1Mappings.paid_amount && !v1Mappings.payee_amount) {
+    // Bank only provides one amount field (e.g., AXIS BANK)
+    // Use the same field for BOTH gross and net (no fees deducted)
     const normalizedKey = v1Mappings.paid_amount.toLowerCase().replace(/\s+/g, '_');
-    v2Mapping[normalizedKey] = 'gross_amount_paise';  // paid_amount = gross amount
-  }
-
-  if (v1Mappings.payee_amount) {
-    const normalizedKey = v1Mappings.payee_amount.toLowerCase().replace(/\s+/g, '_');
-    v2Mapping[normalizedKey] = 'amount_paise';  // payee_amount = net amount
-  } else if (v1Mappings.paid_amount) {
-    // CRITICAL: If payee_amount missing but paid_amount exists, use paid for BOTH gross and net
-    // This handles banks like HDFC that only provide gross amount (gross = net when no fees)
-    const normalizedKey = v1Mappings.paid_amount.toLowerCase().replace(/\s+/g, '_');
-    v2Mapping[normalizedKey] = 'amount_paise';  // Fallback: use gross as net
+    v2Mapping[normalizedKey] = 'gross_amount_paise,amount_paise';  // Map to BOTH fields
     console.log(`[V1 Mapper] Bank ${bankConfig.bank_name}: No payee_amount, using paid_amount for both gross and net`);
   }
 
@@ -463,12 +461,14 @@ function mapV1ToV2(v1Row, type = 'pg_transactions', dbMapping = null, mode = 'ap
       let value = normalizedRow[v1Col]
 
       // 🔧 FIX 2: V1 data is ALWAYS in rupees, so always multiply by 100
-      if ((v2Col === 'amount_paise' || v2Col === 'gross_amount_paise') && typeof value === 'string') {
+      // Check if v2Col contains amount fields (handles comma-separated like "gross_amount_paise,amount_paise")
+      const isAmountField = v2Col.includes('amount_paise') || v2Col.includes('gross_amount_paise');
+      if (isAmountField && typeof value === 'string') {
         const numValue = parseFloat(value.replace(/,/g, ''))
         if (!isNaN(numValue)) {
           value = Math.round(numValue * 100)
         }
-      } else if ((v2Col === 'amount_paise' || v2Col === 'gross_amount_paise') && typeof value === 'number') {
+      } else if (isAmountField && typeof value === 'number') {
         value = Math.round(value * 100)
       }
 
@@ -523,7 +523,15 @@ function mapV1ToV2(v1Row, type = 'pg_transactions', dbMapping = null, mode = 'ap
         }
       }
 
-      v2Row[v2Col] = value
+      // Handle comma-separated v2 column names (for mapping one V1 field to multiple V2 fields)
+      if (v2Col.includes(',')) {
+        const v2Cols = v2Col.split(',').map(c => c.trim());
+        v2Cols.forEach(col => {
+          v2Row[col] = value;
+        });
+      } else {
+        v2Row[v2Col] = value;
+      }
     }
   }
 
