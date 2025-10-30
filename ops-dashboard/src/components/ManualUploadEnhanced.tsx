@@ -1201,14 +1201,16 @@ export function ManualUploadEnhanced() {
   
   // Clear all and start fresh
   const handleStartNew = async () => {
-    console.log('[ManualUploadEnhanced] Starting new reconciliation - cleaning database...');
+    console.log(`[ManualUploadEnhanced] Starting new reconciliation - cleaning database for ${cycleDate}...`);
 
     try {
-      // Call the cleanup API to delete all test data
-      const response = await uploadClient.post('/api/upload/clean-test-data');
+      // Call the cleanup API to delete test data for the selected date
+      const response = await uploadClient.post('/api/upload/clean-test-data', {
+        date: cycleDate
+      });
 
       if (response.data.success) {
-        console.log('[ManualUploadEnhanced] ✅ Database cleaned successfully:', response.data.deleted);
+        console.log(`[ManualUploadEnhanced] ✅ Database cleaned successfully for ${cycleDate}:`, response.data.deleted);
 
         // Clear frontend state
         setPgFiles([]);
@@ -1227,7 +1229,7 @@ export function ManualUploadEnhanced() {
           exceptionsCount: 0,
         });
 
-        toast.success(`Deleted ${response.data.deleted.total} test records. You can now upload new files.`, {
+        toast.success(`Deleted ${response.data.deleted.total} records for ${cycleDate}. You can now upload new files.`, {
           description: "Ready for Fresh Upload"
         });
       }
