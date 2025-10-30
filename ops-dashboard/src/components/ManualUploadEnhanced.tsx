@@ -1280,15 +1280,13 @@ export function ManualUploadEnhanced() {
                 Overwrite mode: Next upload replaces {cycleDate} data
               </div>
             )}
-            {jobId && (
-              <button
-                onClick={handleStartNew}
-                className="px-4 py-2 text-sm border border-blue-500 text-blue-600 rounded hover:bg-blue-50 flex items-center gap-2 whitespace-nowrap"
-              >
-                <FileUp className="h-4 w-4" />
-                Start New
-              </button>
-            )}
+            <button
+              onClick={handleStartNew}
+              className="px-4 py-2 text-sm border border-blue-500 text-blue-600 rounded hover:bg-blue-50 flex items-center gap-2 whitespace-nowrap"
+            >
+              <FileUp className="h-4 w-4" />
+              Start New
+            </button>
             <button
               onClick={() => setConfigDrawerOpen(true)}
               className="px-4 py-2 text-sm border border-gray-300 rounded hover:bg-gray-50 flex items-center gap-2 whitespace-nowrap"
