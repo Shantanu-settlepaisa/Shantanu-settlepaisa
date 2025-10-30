@@ -1231,27 +1231,27 @@ app.post('/api/upload/clean-test-data', authenticate, opsStaffOnly, async (req, 
     console.log(`[Clean Test Data] Before cleanup for ${targetDate}:`, beforeCounts.rows[0]);
 
     // Delete in correct order due to foreign key constraints
-    // Delete reconciliation results for jobs on this date
+    // 1. Delete exceptions first (they reference transactions via transaction_id FK)
     const del1 = await client.query(`
+      DELETE FROM sp_v2_exception_workflow
+      WHERE transaction_id IN (
+        SELECT id FROM sp_v2_transactions
+        WHERE source_type = 'MANUAL_UPLOAD'
+        AND DATE(transaction_date) = $1
+      )
+    `, [targetDate]);
+    console.log(`[Clean Test Data] Deleted ${del1.rowCount} exceptions for ${targetDate}`);
+
+    // 2. Delete reconciliation results for jobs on this date
+    const del2 = await client.query(`
       DELETE FROM sp_v2_reconciliation_results
       WHERE job_id IN (
         SELECT job_id FROM sp_v2_reconciliation_jobs WHERE DATE(date_from) = $1
       )
     `, [targetDate]);
-    console.log(`[Clean Test Data] Deleted ${del1.rowCount} recon results for ${targetDate}`);
+    console.log(`[Clean Test Data] Deleted ${del2.rowCount} recon results for ${targetDate}`);
 
-    // Delete exceptions for this date
-    const del2 = await client.query(`
-      DELETE FROM sp_v2_exception_workflow
-      WHERE reconciliation_result_id IN (
-        SELECT id FROM sp_v2_reconciliation_results WHERE job_id IN (
-          SELECT job_id FROM sp_v2_reconciliation_jobs WHERE DATE(date_from) = $1
-        )
-      )
-    `, [targetDate]);
-    console.log(`[Clean Test Data] Deleted ${del2.rowCount} exceptions for ${targetDate}`);
-
-    // Delete reconciliation jobs for this date
+    // 3. Delete reconciliation jobs for this date
     const del3 = await client.query(`
       DELETE FROM sp_v2_reconciliation_jobs
       WHERE DATE(date_from) = $1
