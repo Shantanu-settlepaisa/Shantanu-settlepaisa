@@ -1221,10 +1221,10 @@ app.post('/api/upload/clean-test-data', authenticate, opsStaffOnly, async (req, 
            SELECT job_id FROM sp_v2_reconciliation_jobs WHERE DATE(date_from) = $1
          )) as result_count,
         (SELECT COUNT(*) FROM sp_v2_exception_workflow ew
-         WHERE ew.reconciliation_result_id IN (
-           SELECT id FROM sp_v2_reconciliation_results WHERE job_id IN (
-             SELECT job_id FROM sp_v2_reconciliation_jobs WHERE DATE(date_from) = $1
-           )
+         WHERE ew.transaction_id IN (
+           SELECT id FROM sp_v2_transactions
+           WHERE source_type = 'MANUAL_UPLOAD'
+           AND DATE(transaction_date) = $1
          )) as exception_count
     `, [targetDate]);
 
