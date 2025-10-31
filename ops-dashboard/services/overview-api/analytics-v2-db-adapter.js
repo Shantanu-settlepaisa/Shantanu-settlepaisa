@@ -6,13 +6,14 @@
 
 const { Pool } = require('pg');
 
-// PostgreSQL V2 connection
+// PostgreSQL V2 connection using environment variables
 const pool = new Pool({
-  user: 'postgres',
-  host: 'localhost',
-  database: 'settlepaisa_v2',
-  password: 'settlepaisa123',
-  port: 5433,
+  host: process.env.DB_HOST || 'localhost',
+  port: parseInt(process.env.DB_PORT) || 5432,
+  database: process.env.DB_NAME || 'settlepaisa_v2',
+  user: process.env.DB_USER || 'postgres',
+  password: process.env.DB_PASSWORD || 'settlepaisa123',
+  ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
 });
 
 // Test connection on startup
