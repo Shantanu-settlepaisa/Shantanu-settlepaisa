@@ -763,7 +763,8 @@ app.get('/api/connectors/health', async (req, res) => {
       host: config.db.host,
       database: config.db.database,
       password: config.db.password,
-      port: config.db.port
+      port: config.db.port,
+      ssl: config.db.ssl
     });
 
     // Query actual connectors from database

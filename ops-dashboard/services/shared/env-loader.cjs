@@ -99,6 +99,7 @@ function buildConfig() {
       database: process.env.DB_NAME || 'settlepaisa_v2',
       password: process.env.DB_PASSWORD || '',
       port: parseInt(process.env.DB_PORT || '5432'),
+      ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
     },
     sabpaisaDb: {
       user: process.env.SABPAISA_DB_USER || 'settlepaisainternal',
