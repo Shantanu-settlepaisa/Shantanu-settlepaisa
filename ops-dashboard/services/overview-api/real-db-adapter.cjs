@@ -6,13 +6,17 @@ const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 
 // Database connection pool
+const dbHost = process.env.DB_HOST || 'localhost';
+const isRDS = dbHost.includes('.rds.amazonaws.com');
+
 const pool = new Pool({
-  host: process.env.DB_HOST || 'localhost',
+  host: dbHost,
   port: parseInt(process.env.DB_PORT) || 5432,  // Fixed: was 5433 (wrong port)
   database: process.env.DB_NAME || 'settlepaisa_v2',
   user: process.env.DB_USER || 'postgres',
   password: process.env.DB_PASSWORD || 'settlepaisa123',
-  ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
+  // Always use SSL for RDS instances
+  ssl: isRDS ? { rejectUnauthorized: false } : (process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false),
 });
 
 /**
