@@ -998,7 +998,7 @@ export function ManualUploadEnhanced() {
       console.log('  - Banks:', bankFiles.map(f => f.analysis?.schemaDetected || 'UNKNOWN').join(', '));
 
       // Call the real recon API with uploaded data (Phase 1 Security - authenticated)
-      const response = await reconClient.post('/recon/run', {
+      const response = await reconClient.post('/api/recon/run', {
         date: reconDate,
         dryRun: false,
         pgTransactions: pgData,
