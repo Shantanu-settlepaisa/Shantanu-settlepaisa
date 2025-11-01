@@ -6,17 +6,12 @@ const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 
 // Database connection pool
-const dbHost = process.env.DB_HOST || 'localhost';
-const isRDS = dbHost.includes('.rds.amazonaws.com');
-
 const pool = new Pool({
-  host: dbHost,
+  host: process.env.DB_HOST || 'localhost',
   port: parseInt(process.env.DB_PORT) || 5432,  // Fixed: was 5433 (wrong port)
   database: process.env.DB_NAME || 'settlepaisa_v2',
   user: process.env.DB_USER || 'postgres',
   password: process.env.DB_PASSWORD || 'settlepaisa123',
-  // Always use SSL for RDS instances
-  ssl: isRDS ? { rejectUnauthorized: false } : (process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false),
 });
 
 /**
@@ -506,7 +501,7 @@ async function getFinancialAnalytics(from, to, merchantId = null, groupBy = null
          NULLIF(SUM(gross_amount_paise), 0) * 100) as margin_percent
       FROM sp_v2_settlement_batches
       WHERE cycle_date BETWEEN $1 AND $2
-        AND ($3::UUID IS NULL OR merchant_id = $3)
+        AND ($3::VARCHAR IS NULL OR merchant_id = $3)
         AND status IN ('COMPLETED', 'SENT_TO_BANK', 'APPROVED', 'PENDING_APPROVAL')
     `;
 
@@ -642,7 +637,7 @@ async function getFinancialAnalytics(from, to, merchantId = null, groupBy = null
            NULLIF(SUM(gross_amount_paise), 0) * 100) as margin_percent
         FROM sp_v2_settlement_batches
         WHERE cycle_date BETWEEN $1 AND $2
-          AND ($3::UUID IS NULL OR merchant_id = $3)
+          AND ($3::VARCHAR IS NULL OR merchant_id = $3)
           AND status IN ('COMPLETED', 'SENT_TO_BANK', 'APPROVED', 'PENDING_APPROVAL')
         GROUP BY ${dateGroup}
         ORDER BY date ASC
