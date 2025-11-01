@@ -176,24 +176,24 @@ class SettlementQueueProcessor {
       const resolvedMerchantId = await this.resolveMerchantId(client, merchantId);
       console.log(`[Settlement Queue] Resolved merchant ID: ${merchantId} → ${resolvedMerchantId}`);
 
-      // Calculate settlement with refunds and chargebacks using new calculator
+      // Step 1: Calculate base settlement (commission, GST, reserve) using V3 calculator
       const cycleDate = new Date().toISOString().split('T')[0];
-      const deductionsResult = await calculateWithDeductions(resolvedMerchantId, cycleDate);
-
-      // Also run V3 calculator for backwards compatibility
       const calculatorResult = await this.calculator.calculateSettlement(
         resolvedMerchantId,
         txnResult.rows,
         cycleDate
       );
 
-      // Merge results - use deductions calculator for final amounts
-      calculatorResult.netAmount = deductionsResult.netAmount;
-      calculatorResult.refundDeductions = deductionsResult.deductions.refunds.total;
-      calculatorResult.chargebackDeductions = deductionsResult.deductions.chargebacks.total;
-      calculatorResult.debtRecovered = deductionsResult.deductions.outstandingDebt.total;
-      calculatorResult.settlementStatus = deductionsResult.status;
-      
+      // Step 2: Apply deductions (refunds, chargebacks, debt) to the V3 net amount
+      const deductionsResult = await calculateWithDeductions(
+        resolvedMerchantId,
+        cycleDate,
+        calculatorResult.netAmount  // Pass V3's net amount as base
+      );
+
+      // Step 3: Merge results - use V3 for commission/GST/reserve, deductions for refunds/chargebacks/debt
+      const finalNetAmount = deductionsResult.netAmount;  // Net after all deductions
+
       const settlementBatch = {
         merchant_id: calculatorResult.merchantId,
         merchant_name: calculatorResult.merchantName,
@@ -203,13 +203,13 @@ class SettlementQueueProcessor {
         total_commission_paise: calculatorResult.totalCommission,
         total_gst_paise: calculatorResult.totalGST,
         total_reserve_paise: calculatorResult.totalReserve,
-        net_settlement_amount: calculatorResult.netAmount,
-        refund_deductions_paise: calculatorResult.refundDeductions || 0,
-        chargeback_deductions_paise: calculatorResult.chargebackDeductions || 0,
-        outstanding_debt_recovered_paise: calculatorResult.debtRecovered || 0,
-        items: calculatorResult.items
+        net_settlement_amount: finalNetAmount,  // Use final net after deductions
+        refund_deductions_paise: deductionsResult.deductions.refunds.total,
+        chargeback_deductions_paise: deductionsResult.deductions.chargebacks.total,
+        outstanding_debt_recovered_paise: deductionsResult.deductions.outstandingDebt.total,
+        items: calculatorResult.items  // Items from V3 calculator
       };
-      
+
       console.log(`[Settlement Queue] Settlement calculated: ₹${(settlementBatch.net_settlement_amount / 100).toFixed(2)} net`);
       
       // Persist settlement to database

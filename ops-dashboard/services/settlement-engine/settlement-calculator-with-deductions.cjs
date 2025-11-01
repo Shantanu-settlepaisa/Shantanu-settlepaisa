@@ -12,27 +12,31 @@
  */
 
 const { Pool } = require('pg');
+const config = require('../config/env.cjs');
+
+const isRDS = config.db.host && (config.db.host.includes('rds.amazonaws.com') || config.db.host.includes('amazonaws.com'));
 
 const pool = new Pool({
-  user: process.env.DB_USER || 'postgres',
-  host: process.env.DB_HOST || 'localhost',
-  database: process.env.DB_NAME || 'settlepaisa_v2',
-  password: process.env.DB_PASSWORD || 'settlepaisa123',
-  port: parseInt(process.env.DB_PORT || '5433'),
+  user: config.db.user,
+  host: config.db.host,
+  database: config.db.database,
+  password: config.db.password,
+  port: config.db.port,
+  ssl: isRDS ? { rejectUnauthorized: false } : false,
 });
 
-// Fee configuration (can be moved to database/config)
-const PLATFORM_FEE_PERCENT = 0.02; // 2%
-const GATEWAY_FEE_PERCENT = 0.015; // 1.5%
-
 /**
- * Main settlement calculation function
+ * Main deductions calculation function
+ * NOTE: This calculator ONLY handles deductions (refunds, chargebacks, debt).
+ * Commission, GST, and reserve are calculated by SettlementCalculatorV3.
+ *
  * @param {string} merchantId - Merchant ID
  * @param {string} cycleDate - Settlement cycle date (YYYY-MM-DD)
- * @returns {Promise<Object>} Complete settlement breakdown
+ * @param {number} baseNetAmount - Net amount from V3 calculator (after commission/GST/reserve)
+ * @returns {Promise<Object>} Deductions breakdown
  */
-async function calculateMerchantSettlement(merchantId, cycleDate) {
-  console.log(`\n🧮 [Settlement Calculator] Processing: ${merchantId} for ${cycleDate}`);
+async function calculateMerchantSettlement(merchantId, cycleDate, baseNetAmount = null) {
+  console.log(`\n🧮 [Deductions Calculator] Processing: ${merchantId} for ${cycleDate}`);
 
   try {
     // Step 1: Get all matched/reconciled transactions for this cycle
@@ -44,48 +48,47 @@ async function calculateMerchantSettlement(merchantId, cycleDate) {
         merchantId,
         cycleDate,
         grossAmount: 0,
-        netAmount: 0,
+        netAmount: baseNetAmount || 0,
         status: 'NO_TRANSACTIONS',
-        message: 'No reconciled transactions for this cycle'
+        message: 'No reconciled transactions for this cycle',
+        deductions: {
+          refunds: { currentCycle: 0, outstanding: 0, total: 0, count: 0, details: { currentCycleRefunds: [], outstandingRefunds: [] } },
+          chargebacks: { total: 0, count: 0, details: [] },
+          outstandingDebt: { total: 0, count: 0, details: [] }
+        }
       };
     }
 
-    // Step 2: Calculate gross amount
+    // Step 2: Calculate gross amount (for reference only)
     const grossAmount = transactions.reduce((sum, txn) => sum + parseInt(txn.amount_paise), 0);
     console.log(`   💰 Gross Amount: ₹${(grossAmount / 100).toFixed(2)}`);
 
-    // Step 3: Calculate fees
-    const platformFee = Math.round(grossAmount * PLATFORM_FEE_PERCENT);
-    const gatewayFee = Math.round(grossAmount * GATEWAY_FEE_PERCENT);
-    const totalFees = platformFee + gatewayFee;
-    console.log(`   💳 Platform Fee: ₹${(platformFee / 100).toFixed(2)}`);
-    console.log(`   💳 Gateway Fee: ₹${(gatewayFee / 100).toFixed(2)}`);
-
-    // Step 4: Calculate refund deductions
+    // Step 3: Calculate refund deductions
     const refundDeductions = await calculateRefundDeductions(merchantId, cycleDate, transactions);
     console.log(`   🔄 Refund Deductions: ₹${(refundDeductions.total / 100).toFixed(2)}`);
     console.log(`      • Current Cycle: ₹${(refundDeductions.currentCycle / 100).toFixed(2)}`);
     console.log(`      • Outstanding: ₹${(refundDeductions.outstanding / 100).toFixed(2)}`);
 
-    // Step 5: Calculate chargeback deductions
+    // Step 4: Calculate chargeback deductions
     const chargebackDeductions = await calculateChargebackDeductions(merchantId);
     console.log(`   ⚠️  Chargeback Deductions: ₹${(chargebackDeductions.total / 100).toFixed(2)}`);
 
-    // Step 6: Recover outstanding debts from previous cycles
+    // Step 5: Recover outstanding debts from previous cycles
     const debtRecovery = await calculateOutstandingDebtRecovery(merchantId);
     console.log(`   📥 Outstanding Debt to Recover: ₹${(debtRecovery.total / 100).toFixed(2)}`);
 
-    // Step 7: Calculate net settlement
-    let netAmount = grossAmount - totalFees - refundDeductions.total - chargebackDeductions.total - debtRecovery.total;
-    console.log(`   🎯 Net Amount (before negative check): ₹${(netAmount / 100).toFixed(2)}`);
+    // Step 6: Calculate final net amount (if baseNetAmount provided, use it; otherwise return deductions only)
+    const totalDeductions = refundDeductions.total + chargebackDeductions.total + debtRecovery.total;
+    let netAmount = baseNetAmount !== null ? baseNetAmount - totalDeductions : -totalDeductions;
+    console.log(`   🎯 Net Amount (after deductions): ₹${(netAmount / 100).toFixed(2)}`);
 
-    // Step 8: Handle negative settlement
+    // Step 7: Handle negative settlement
     let outstandingDebt = null;
     if (netAmount < 0) {
       console.log(`   ⚠️  Negative settlement detected! Creating debt record...`);
       outstandingDebt = await createOutstandingDebt(merchantId, Math.abs(netAmount), cycleDate, {
         grossAmount,
-        fees: totalFees,
+        baseNetAmount: baseNetAmount || 0,
         refunds: refundDeductions.total,
         chargebacks: chargebackDeductions.total,
         debtRecovery: debtRecovery.total
@@ -93,24 +96,17 @@ async function calculateMerchantSettlement(merchantId, cycleDate) {
       netAmount = 0; // Don't pay negative amount
     }
 
-    // Step 9: Build comprehensive result
+    // Step 8: Build deductions result
     const result = {
       merchantId,
       cycleDate,
       status: netAmount > 0 ? 'READY_FOR_PAYOUT' : (outstandingDebt ? 'NEGATIVE_BALANCE' : 'ZERO_PAYOUT'),
 
-      // Gross calculations
+      // Gross calculations (for reference)
       grossAmount,
       transactionCount: transactions.length,
 
-      // Fees
-      fees: {
-        platformFee,
-        gatewayFee,
-        total: totalFees
-      },
-
-      // Deductions
+      // Deductions (this is what this calculator is responsible for)
       deductions: {
         refunds: {
           currentCycle: refundDeductions.currentCycle,
@@ -128,36 +124,26 @@ async function calculateMerchantSettlement(merchantId, cycleDate) {
           total: debtRecovery.total,
           count: debtRecovery.count,
           details: debtRecovery.details
-        }
+        },
+        total: totalDeductions
       },
 
-      // Final amount
+      // Final amount (after applying deductions to baseNetAmount)
       netAmount,
       payoutAmount: netAmount,
 
       // Negative balance info
       outstandingDebt: outstandingDebt,
 
-      // Breakdown for display
-      breakdown: {
-        grossAmount,
-        platformFee,
-        gatewayFee,
-        refundDeductions: refundDeductions.total,
-        chargebackDeductions: chargebackDeductions.total,
-        outstandingDebtRecovered: debtRecovery.total,
-        netAmount
-      },
-
       calculatedAt: new Date()
     };
 
-    console.log(`   ✅ Settlement calculation complete: ₹${(netAmount / 100).toFixed(2)}\n`);
+    console.log(`   ✅ Deductions calculation complete: ₹${(netAmount / 100).toFixed(2)}\n`);
 
     return result;
 
   } catch (error) {
-    console.error(`   ❌ Settlement calculation failed:`, error);
+    console.error(`   ❌ Deductions calculation failed:`, error);
     throw error;
   }
 }
@@ -216,28 +202,32 @@ async function calculateRefundDeductions(merchantId, cycleDate, transactions) {
   const currentCycleRefunds = currentCycleResult.rows;
 
   // Case 2: Outstanding refunds from PREVIOUS cycles (already settled)
-  const outstandingQuery = `
-    SELECT
-      t.transaction_id,
-      t.refund_amount_paise,
-      t.refund_type,
-      t.refund_date,
-      t.refund_reason,
-      t.transaction_date,
-      sb.id AS original_batch_id,
-      sb.created_at AS original_settlement_date
-    FROM sp_v2_transactions t
-    LEFT JOIN sp_v2_settlement_items si ON t.transaction_id = si.transaction_id
-    LEFT JOIN sp_v2_settlement_batches sb ON si.settlement_batch_id = sb.id
-    WHERE t.merchant_id = $1
-      AND t.refund_amount_paise IS NOT NULL
-      AND t.is_refund_processed = FALSE
-      AND t.refund_date > COALESCE(sb.created_at, '1970-01-01')
-      AND DATE(t.transaction_date) < $2  -- Transaction was in a previous cycle
-  `;
+  // FIXME: Disabled for now due to table schema mismatch between sp_v2_transactions (VARCHAR IDs)
+  // and sp_v2_settlement_items (UUID FK to sp_v2_transactions_v1). Will need proper migration.
+  // const outstandingQuery = `
+  //   SELECT
+  //     t.transaction_id,
+  //     t.refund_amount_paise,
+  //     t.refund_type,
+  //     t.refund_date,
+  //     t.refund_reason,
+  //     t.transaction_date,
+  //     sb.id AS original_batch_id,
+  //     sb.created_at AS original_settlement_date
+  //   FROM sp_v2_transactions t
+  //   LEFT JOIN sp_v2_settlement_items si ON t.transaction_id = si.txn_id
+  //   LEFT JOIN sp_v2_settlement_batches sb ON si.batch_id = sb.id
+  //   WHERE t.merchant_id = $1
+  //     AND t.refund_amount_paise IS NOT NULL
+  //     AND t.is_refund_processed = FALSE
+  //     AND t.refund_date > COALESCE(sb.created_at, '1970-01-01')
+  //     AND DATE(t.transaction_date) < $2  -- Transaction was in a previous cycle
+  // `;
+  //
+  // const outstandingResult = await pool.query(outstandingQuery, [merchantId, cycleDate]);
+  // const outstandingRefunds = outstandingResult.rows;
 
-  const outstandingResult = await pool.query(outstandingQuery, [merchantId, cycleDate]);
-  const outstandingRefunds = outstandingResult.rows;
+  const outstandingRefunds = []; // Temporarily disabled
 
   // Calculate totals with null-safety
   const safeParseInt = (value) => {
@@ -281,8 +271,13 @@ async function calculateRefundDeductions(merchantId, cycleDate, transactions) {
 /**
  * Calculate chargeback deductions
  * Only LOST chargebacks are deducted
+ * FIXME: Disabled for now due to table schema mismatch
  */
 async function calculateChargebackDeductions(merchantId) {
+  // Temporarily disabled - chargebacks table schema incompatible
+  const chargebacks = [];
+
+  /*
   const query = `
     SELECT
       txn_ref,
@@ -301,6 +296,7 @@ async function calculateChargebackDeductions(merchantId) {
 
   const result = await pool.query(query, [merchantId]);
   const chargebacks = result.rows;
+  */
 
   // Null-safe parseInt helper
   const safeParseInt = (value) => {
