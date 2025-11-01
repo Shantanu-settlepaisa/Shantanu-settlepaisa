@@ -88,22 +88,21 @@ const reconResults = new Map()
 let lastHealthCheck = null
 const HEALTH_CHECK_CACHE_MS = 5000
 
-// New reconciliation endpoint using job runner
-// Security: Requires authentication and ops staff role (CRIT-001)
-app.post('/recon/run', authenticate, opsStaffOnly, async (req, res) => {
+// Shared reconciliation handler for both local and production routes
+const reconciliationHandler = async (req, res) => {
   const { date, cycle_date, merchantId, merchant_id, acquirerId, dryRun, limit, test, pgTransactions, bankRecords, bankFilename } = req.body
   // Support both naming conventions: date/cycle_date and merchantId/merchant_id
   const reconDate = date || cycle_date
   const reconMerchantId = merchantId || merchant_id
   log('[Recon API] Starting reconciliation job:', { date: reconDate, merchantId: reconMerchantId, acquirerId, dryRun, test, bankFilename })
-  
+
   if (pgTransactions) {
     log('[Recon API] Using uploaded PG transactions:', pgTransactions.length);
   }
   if (bankRecords) {
     log('[Recon API] Using uploaded bank records:', bankRecords.length);
   }
-  
+
   try {
     const job = await runReconciliation(config, {
       date: reconDate,
@@ -116,7 +115,7 @@ app.post('/recon/run', authenticate, opsStaffOnly, async (req, res) => {
       bankRecords,     // Pass uploaded data
       bankFilename     // Pass filename for bank detection
     })
-    
+
     res.json({
       success: true,
       jobId: job.id,
@@ -133,7 +132,17 @@ app.post('/recon/run', authenticate, opsStaffOnly, async (req, res) => {
       error: error.message
     })
   }
-})
+}
+
+// New reconciliation endpoint using job runner
+// Security: Requires authentication and ops staff role (CRIT-001)
+app.post('/recon/run', authenticate, opsStaffOnly, reconciliationHandler)
+// CloudFlare routing: Handle requests without Nginx rewrite (NGINX-FIX-001)
+app.post('/api/recon/run', authenticate, opsStaffOnly, reconciliationHandler)
+
+// Production endpoint with /api/recon prefix for ALB routing
+// Security: Requires authentication and ops staff role (CRIT-001)
+app.post('/api/recon/recon/run', authenticate, opsStaffOnly, reconciliationHandler)
 
 // Get job status
 // Security: Requires authentication (CRIT-001)
