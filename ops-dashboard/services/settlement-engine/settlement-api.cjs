@@ -18,6 +18,8 @@ const app = express();
 const PORT = config.app.port || 5109;
 
 // Database pool with production-ready configuration
+// Auto-detect RDS and enable SSL
+const isRDS = config.db.host && config.db.host.includes('.rds.amazonaws.com');
 const pool = new Pool({
   user: config.db.user,
   host: config.db.host,
@@ -28,6 +30,8 @@ const pool = new Pool({
   min: 2,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 5000,
+  // Always use SSL for RDS instances
+  ssl: isRDS ? { rejectUnauthorized: false } : false,
 });
 
 pool.on('error', (err) => console.error('[Settlement Pool Error]', err));
@@ -221,6 +225,86 @@ app.get('/api/settlement-batches', async (req, res) => {
   }
 });
 
+// Get all settlements (alias for settlement-batches for frontend compatibility)
+app.get('/api/settlements', async (req, res) => {
+  try {
+    const client = await pool.connect();
+
+    const query = `
+      SELECT
+        id, merchant_id, cycle_date, total_transactions,
+        gross_amount_paise, total_commission_paise, total_gst_paise,
+        total_reserve_paise, net_amount_paise,
+        status, created_at, updated_at
+      FROM sp_v2_settlement_batches
+      ORDER BY created_at DESC
+      LIMIT 50
+    `;
+
+    const result = await client.query(query);
+    client.release();
+
+    res.json({
+      success: true,
+      count: result.rows.length,
+      batches: result.rows,
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error('❌ [Settlement API] Settlements error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// Get single settlement batch by ID
+app.get('/api/settlements/:batchId', async (req, res) => {
+  try {
+    const { batchId } = req.params;
+    const client = await pool.connect();
+
+    const query = `
+      SELECT
+        id, merchant_id, cycle_date, total_transactions,
+        gross_amount_paise, total_commission_paise, total_gst_paise,
+        total_reserve_paise, net_amount_paise, total_tds_paise,
+        status, created_at, updated_at, approved_at, sent_to_bank_at,
+        bank_reference, failure_reason
+      FROM sp_v2_settlement_batches
+      WHERE id = $1
+    `;
+
+    const result = await client.query(query, [batchId]);
+    client.release();
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Settlement batch not found',
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    res.json({
+      success: true,
+      batch: result.rows[0],
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error('❌ [Settlement API] Settlement details error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
 // Health check endpoint with database connectivity test
 // createHealthCheckEndpoint(app, 'settlement-engine', pool);
 app.get('/health', (req, res) => res.json({ status: 'ok', service: 'settlement-engine' }));
@@ -232,6 +316,8 @@ app.listen(PORT, () => {
   log(`💳 Calculate (with deductions): POST http://localhost:${PORT}/api/settlements/calculate-with-deductions`);
   log(`📋 Pending API: GET http://localhost:${PORT}/api/pending-transactions`);
   log(`🚀 Process API: POST http://localhost:${PORT}/api/process-settlements`);
+  log(`📊 Settlements API: GET http://localhost:${PORT}/api/settlements`);
+  log(`📄 Settlement Details API: GET http://localhost:${PORT}/api/settlements/:batchId`);
   log(`📊 Batches API: GET http://localhost:${PORT}/api/settlement-batches`);
 });
 
