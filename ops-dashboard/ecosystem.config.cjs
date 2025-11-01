@@ -295,6 +295,44 @@ module.exports = {
       log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
       merge_logs: true,
     },
+
+    /**
+     * Exports API - Report exports and file generation
+     * Port: 5113
+     * Entry: server.cjs
+     */
+    {
+      name: 'exports-api',
+      script: './server.cjs',
+      cwd: './services/exports-api',
+      instances: 1,
+      exec_mode: 'fork',
+      env: {
+        NODE_ENV: 'development',
+        PORT: 5113,
+        SERVICE_NAME: 'exports-api',
+      },
+      env_production: {
+        NODE_ENV: 'production',
+        PORT: 5113,
+        SERVICE_NAME: 'exports-api',
+      },
+      env_staging: {
+        NODE_ENV: 'staging',
+        PORT: 5113,
+        SERVICE_NAME: 'exports-api',
+      },
+      // Restart policy
+      max_restarts: 10,
+      min_uptime: '10s',
+      restart_delay: 4000,
+      watch: false,
+      // Logging
+      error_file: './logs/exports-api-error.log',
+      out_file: './logs/exports-api-out.log',
+      log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
+      merge_logs: true,
+    },
   ],
 
   /**
