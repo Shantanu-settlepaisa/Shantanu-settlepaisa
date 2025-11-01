@@ -506,7 +506,7 @@ async function getFinancialAnalytics(from, to, merchantId = null, groupBy = null
          NULLIF(SUM(gross_amount_paise), 0) * 100) as margin_percent
       FROM sp_v2_settlement_batches
       WHERE cycle_date BETWEEN $1 AND $2
-        AND ($3::VARCHAR IS NULL OR merchant_id = $3)
+        AND ($3::UUID IS NULL OR merchant_id = $3)
         AND status IN ('COMPLETED', 'SENT_TO_BANK', 'APPROVED', 'PENDING_APPROVAL')
     `;
 
@@ -642,7 +642,7 @@ async function getFinancialAnalytics(from, to, merchantId = null, groupBy = null
            NULLIF(SUM(gross_amount_paise), 0) * 100) as margin_percent
         FROM sp_v2_settlement_batches
         WHERE cycle_date BETWEEN $1 AND $2
-          AND ($3::VARCHAR IS NULL OR merchant_id = $3)
+          AND ($3::UUID IS NULL OR merchant_id = $3)
           AND status IN ('COMPLETED', 'SENT_TO_BANK', 'APPROVED', 'PENDING_APPROVAL')
         GROUP BY ${dateGroup}
         ORDER BY date ASC
