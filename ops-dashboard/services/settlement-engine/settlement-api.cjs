@@ -244,12 +244,8 @@ app.get('/api/settlements', async (req, res) => {
     const result = await client.query(query);
     client.release();
 
-    res.json({
-      success: true,
-      count: result.rows.length,
-      batches: result.rows,
-      timestamp: new Date().toISOString()
-    });
+    // Return array directly for frontend compatibility
+    res.json(result.rows);
 
   } catch (error) {
     console.error('❌ [Settlement API] Settlements error:', error);
