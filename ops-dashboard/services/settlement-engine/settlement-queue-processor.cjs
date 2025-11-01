@@ -3,12 +3,15 @@ const { Pool } = require('pg');
 const { SettlementCalculatorV3 } = require('./settlement-calculator-v3.cjs');
 const { calculateMerchantSettlement: calculateWithDeductions, completeSettlementProcessing } = require('./settlement-calculator-with-deductions.cjs');
 
+const isRDS = config.db.host && (config.db.host.includes('rds.amazonaws.com') || config.db.host.includes('amazonaws.com'));
+
 const v2Pool = new Pool({
   user: config.db.user,
   host: config.db.host,
   database: config.db.database,
   password: config.db.password,
   port: config.db.port,
+  ssl: isRDS ? { rejectUnauthorized: false } : false,
 });
 
 class SettlementQueueProcessor {
