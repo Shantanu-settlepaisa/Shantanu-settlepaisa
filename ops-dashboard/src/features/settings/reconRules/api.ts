@@ -1,7 +1,8 @@
 import axios from 'axios';
 import { ReconRule, SimulationResult } from './types';
 
-const API_BASE = 'http://localhost:5105/api/recon-rules';
+const API_BASE_URL = import.meta.env.VITE_FINANCIAL_API_URL || 'http://localhost:5105';
+const API_BASE = `${API_BASE_URL}/api/recon-rules`;
 
 export const reconRulesApi = {
   // List rules with filters

@@ -55,10 +55,11 @@ export class ReportExportService {
   // Generate signed URL for S3 object
   private generateSignedUrl(objectKey: string): string {
     // In production, use AWS SDK to generate actual signed URL
-    // For demo, return a mock URL
-    const baseUrl = process.env.S3_ENDPOINT || 'http://localhost:4566'
+    // This method is currently unused in production (only for exportReport which is not called)
+    // Using production S3 URL as fallback instead of localhost
+    const baseUrl = import.meta.env.VITE_S3_ENDPOINT || 'https://settlepaisa-exports.s3.ap-south-1.amazonaws.com'
     const expiresAt = new Date(Date.now() + this.SIGNED_URL_TTL * 1000)
-    
+
     // Mock signed URL with expiry
     return `${baseUrl}/${this.S3_BUCKET}/${objectKey}?X-Amz-Expires=${this.SIGNED_URL_TTL}&X-Amz-SignedHeaders=host&X-Amz-Signature=mock_signature`
   }

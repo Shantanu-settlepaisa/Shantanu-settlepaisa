@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react'
-import { 
-  Zap, 
-  Info, 
-  CheckCircle, 
+import {
+  Zap,
+  Info,
+  CheckCircle,
   AlertCircle,
   Clock,
   TrendingUp,
@@ -18,6 +18,8 @@ import {
 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
+
+const API_BASE = import.meta.env.VITE_MERCHANT_API_URL || 'http://localhost:8080'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
@@ -101,7 +103,7 @@ export function SettleNowAdvanced({
   const fetchAvailableBalance = async () => {
     setIsLoadingBalance(true)
     try {
-      const response = await fetch('http://localhost:8080/v1/merchant/available-balance')
+      const response = await fetch(`${API_BASE}/v1/merchant/available-balance`)
       const data = await response.json()
       setBalanceData(data)
     } catch (error) {

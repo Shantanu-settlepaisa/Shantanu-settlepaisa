@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
-import { 
-  Activity, 
-  RefreshCw, 
-  Pause, 
+import {
+  Activity,
+  RefreshCw,
+  Pause,
   Play,
   AlertCircle
 } from 'lucide-react';
@@ -16,10 +16,12 @@ import { TimeRangePicker, getTimeRangeLabel, getTimeRangeShortLabel, getTimeRang
 import type { TimeRange } from '../../components/TimeRangePicker';
 import type { OverviewConsistentData } from '../../types/overview-consistent';
 
+const FINANCIAL_API_URL = import.meta.env.VITE_FINANCIAL_API_URL || 'http://localhost:5105';
+
 // API client to fetch overview data
 const fetchOverviewData = async (from: string, to: string, tz: string): Promise<OverviewConsistentData> => {
   const params = new URLSearchParams({ from, to, tz });
-  const url = `http://localhost:5105/api/ops/overview?${params}`;
+  const url = `${FINANCIAL_API_URL}/api/ops/overview?${params}`;
   console.log('[OverviewConsistent] Fetching from:', url);
   
   const response = await fetch(url);

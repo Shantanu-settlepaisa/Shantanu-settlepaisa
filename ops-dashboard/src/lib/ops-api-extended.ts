@@ -10,6 +10,8 @@ const RECON_API_URL = import.meta.env.VITE_RECON_API_URL || 'http://localhost:51
 const OVERVIEW_API_URL = import.meta.env.VITE_OVERVIEW_API_URL || 'http://localhost:5108'
 const UPLOAD_API_URL = import.meta.env.VITE_UPLOAD_API_URL || 'http://localhost:5109'
 const PG_API_URL = import.meta.env.VITE_PG_API_URL || 'http://localhost:5101'
+const FINANCIAL_API_URL = import.meta.env.VITE_FINANCIAL_API_URL || 'http://localhost:5105'
+const SETTLEMENT_API_URL = import.meta.env.VITE_SETTLEMENT_API_URL || 'http://localhost:5110'
 
 // Extended types for reconciliation
 export interface ReconJob {
@@ -1530,8 +1532,8 @@ export class OpsApiExtended {
       return `https://mock-export.s3.amazonaws.com/recon-export-${params.cycleDate}-${params.subset}.csv?signature=abc123`
     }
     
-    // Call real backend on port 5110
-    const response = await fetch('http://localhost:5110/api/ops/recon/export', {
+    // Call real backend
+    const response = await fetch(`${SETTLEMENT_API_URL}/api/ops/recon/export`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1965,8 +1967,8 @@ export class OpsApiExtended {
       }
     }
     
-    // Call real backend on port 5110
-    const response = await fetch('http://localhost:5110/api/ops/exceptions/export', {
+    // Call real backend
+    const response = await fetch(`${SETTLEMENT_API_URL}/api/ops/exceptions/export`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(request)
@@ -2896,7 +2898,7 @@ export class OpsApiExtended {
       queryParams.append('offset', params.cursor);
     }
     
-    const response = await fetch(`http://localhost:5105/api/chargebacks?${queryParams.toString()}`);
+    const response = await fetch(`${FINANCIAL_API_URL}/api/chargebacks?${queryParams.toString()}`);
     const data = await response.json();
     
     return {

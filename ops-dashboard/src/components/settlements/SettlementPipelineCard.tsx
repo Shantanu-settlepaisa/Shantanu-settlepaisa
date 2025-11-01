@@ -5,6 +5,8 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Info, RefreshCw } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
+const FINANCIAL_API_URL = import.meta.env.VITE_FINANCIAL_API_URL || 'http://localhost:5105';
+
 // Type definitions
 type Bucket = {
   count: number;
@@ -51,7 +53,7 @@ export function useSettlementPipeline(params: { from: string; to: string }) {
     queryKey: ['settlement-pipeline', params],
     queryFn: async () => {
       const response = await fetch(
-        `http://localhost:5105/api/settlement/pipeline?from=${params.from}&to=${params.to}`
+        `${FINANCIAL_API_URL}/api/settlement/pipeline?from=${params.from}&to=${params.to}`
       );
       
       if (!response.ok) {

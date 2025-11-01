@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { 
-  Wifi, 
+import {
+  Wifi,
   Activity,
   Play,
   Eye,
@@ -25,6 +25,8 @@ import { ReconciliationErrorModal } from './recon/ReconciliationErrorModal';
 import { JobResultsPanel } from './connectors/JobResultsPanel';
 import { toast } from 'sonner';
 import type { Connector, JobRun, ConnectorEvent } from '@/types/connector';
+
+const FINANCIAL_API_URL = import.meta.env.VITE_FINANCIAL_API_URL || 'http://localhost:5105';
 
 export function ConnectorsAutomated() {
   const queryClient = useQueryClient();
@@ -242,7 +244,7 @@ export function ConnectorsAutomated() {
       });
       
       // Send the same data to Overview API
-      fetch('http://localhost:5105/api/recon-results/connectors', {
+      fetch(`${FINANCIAL_API_URL}/api/recon-results/connectors`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -474,7 +476,7 @@ export function ConnectorsAutomated() {
                     setIsReconciling(false);
                     
                     // Send the same data to Overview API
-                    fetch('http://localhost:5105/api/recon-results/connectors', {
+                    fetch(`${FINANCIAL_API_URL}/api/recon-results/connectors`, {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify({

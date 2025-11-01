@@ -426,7 +426,7 @@ export default function MerchantReports() {
     }
 
     try {
-      const res = await fetch('http://localhost:8080/v1/merchant/reports/scheduled', {
+      const res = await fetch(`${API_BASE}/v1/merchant/reports/scheduled`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -693,7 +693,7 @@ export default function MerchantReports() {
                               variant="outline"
                               onClick={() => {
                                 // Download the report using real API
-                                window.location.href = `http://localhost:8080/v1/merchant/reports/${reportId}/download?merchant_id=MERCH001`;
+                                window.location.href = `${API_BASE}/v1/merchant/reports/${reportId}/download?merchant_id=MERCH001`;
                                 toast.success(`Downloading ${reportName}`);
                               }}
                             >
