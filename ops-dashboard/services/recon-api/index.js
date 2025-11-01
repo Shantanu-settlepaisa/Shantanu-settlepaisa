@@ -41,6 +41,8 @@ app.use(cors(corsOptions))
 app.use(express.json())
 
 // Database pool for health checks with production-ready configuration
+// Auto-detect RDS and enable SSL
+const isRDS = config.db.host && config.db.host.includes('.rds.amazonaws.com');
 const pool = new Pool({
   user: config.db.user,
   host: config.db.host,
@@ -51,20 +53,33 @@ const pool = new Pool({
   min: 2,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 5000,
+  // Always use SSL for RDS instances
+  ssl: isRDS ? { rejectUnauthorized: false } : false,
 })
 
 pool.on('error', (err) => console.error('[Recon Pool Error]', err))
 
-// Mount routes
+// Mount routes - with /api/recon prefix for ALB compatibility
+app.use('/api/recon/recon', jobRoutes)
+app.use('/api/recon/exceptions', exceptionsRoutes)  // Legacy route
+app.use('/api/recon/exceptions-v2', exceptionsV2Routes)  // New workflow-based route
+app.use('/api/recon/exception-saved-views', exceptionSavedViewsRoutes)
+app.use('/api/recon/exception-rules', exceptionRulesRoutes)
+app.use('/api/recon/reports', reportsRoutes)
+app.use('/api/recon/bank-mappings', bankMappingsRoutes)
+app.use('/api/recon/pg-transactions', pgTransactionsRoutes)
+app.use('/api/recon/connectors', connectorsRoutes)  // Auth handled per-route if needed
+
+// Also mount without prefix for backward compatibility (local development)
 app.use('/recon', jobRoutes)
-app.use('/exceptions', exceptionsRoutes)  // Legacy route
-app.use('/exceptions-v2', exceptionsV2Routes)  // New workflow-based route
+app.use('/exceptions', exceptionsRoutes)
+app.use('/exceptions-v2', exceptionsV2Routes)
 app.use('/exception-saved-views', exceptionSavedViewsRoutes)
 app.use('/exception-rules', exceptionRulesRoutes)
 app.use('/reports', reportsRoutes)
 app.use('/bank-mappings', bankMappingsRoutes)
 app.use('/pg-transactions', pgTransactionsRoutes)
-app.use('/connectors', connectorsRoutes)  // Auth handled per-route if needed
+app.use('/connectors', connectorsRoutes)
 
 // Store reconciliation results in memory
 const reconResults = new Map()

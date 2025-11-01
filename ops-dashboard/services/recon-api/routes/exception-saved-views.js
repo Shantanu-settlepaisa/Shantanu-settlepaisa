@@ -3,12 +3,22 @@ const { Pool } = require('pg');
 
 const router = express.Router();
 
+// Auto-detect RDS and enable SSL
+const dbHost = process.env.DB_HOST || 'localhost';
+const isRDS = dbHost.includes('.rds.amazonaws.com');
+
 const pool = new Pool({
-  host: process.env.DB_HOST || 'localhost',
+  host: dbHost,
   port: process.env.DB_PORT || 5433,
   database: process.env.DB_NAME || 'settlepaisa_v2',
   user: process.env.DB_USER || 'postgres',
-  password: process.env.DB_PASSWORD || 'settlepaisa123'
+  password: process.env.DB_PASSWORD || 'settlepaisa123',
+  max: 20,
+  min: 2,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 5000,
+  // Always use SSL for RDS instances
+  ssl: isRDS ? { rejectUnauthorized: false } : false,
 });
 
 // =====================================================

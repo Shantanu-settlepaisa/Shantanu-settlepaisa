@@ -79,6 +79,37 @@ app.use('/api/users', authenticate, adminOnly, usersRoutes);
 // Mount recon-rules routes (protected)
 app.use('/api/recon-rules', authenticate, require('./routes/recon-rules'));
 
+// Proxy for recon-api exceptions endpoints
+const RECON_API_URL = `http://localhost:${config.services?.reconApiPort || 5103}`;
+app.use('/api/recon', async (req, res, next) => {
+  // Skip if it's /api/recon-rules or other more specific routes
+  if (req.path.startsWith('/api/recon-rules') || req.path.startsWith('/api/recon-results') || req.path.startsWith('/api/recon-sources')) {
+    return next();
+  }
+
+  try {
+    console.log(`[Recon Proxy] ${req.method} ${req.url} -> ${RECON_API_URL}${req.url}`);
+    // Build full URL with query string from req.url (which includes query params)
+    const url = `${RECON_API_URL}${req.url}`;
+    const response = await axios({
+      method: req.method,
+      url,
+      data: req.body,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(req.headers.authorization && { Authorization: req.headers.authorization })
+      }
+      // Don't pass params separately - they're already in req.url
+    });
+    res.status(response.status).json(response.data);
+  } catch (error) {
+    console.error('[Recon Proxy Error]', error.message, 'URL:', `${RECON_API_URL}${req.url}`);
+    res.status(error.response?.status || 500).json(
+      error.response?.data || { success: false, error: error.message }
+    );
+  }
+});
+
 // Register settlement endpoints (protected)
 registerSettlementEndpoints(app);
 
@@ -2173,6 +2204,21 @@ app.post('/api/settlement/initialize', async (req, res) => {
 // - /api/analytics/* (use authenticate middleware)
 // - /api/settlement/* (use authenticate + canApprove for approval endpoints)
 // - /api/exceptions/* (use authenticate middleware)
+
+// DEBUG: Catch-all route for unmatched /api/recon requests
+app.use('/api/recon*', (req, res) => {
+  console.log(`[DEBUG] Unmatched /api/recon* request: ${req.method} ${req.path} ${req.url}`);
+  console.log('[DEBUG] Headers:', req.headers);
+  res.status(404).json({
+    error: 'Route not found',
+    debug: {
+      method: req.method,
+      path: req.path,
+      url: req.url,
+      originalUrl: req.originalUrl
+    }
+  });
+});
 
 app.listen(PORT, async () => {
   console.log(`[Overview API] Server running on port ${PORT}`);

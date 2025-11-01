@@ -4,9 +4,13 @@ const { Parser } = require('json2csv');
 
 const router = express.Router();
 
+// Auto-detect RDS and enable SSL
+const dbHost = process.env.DB_HOST || 'settlepaisa-staging.c9u0agyyg6q9.ap-south-1.rds.amazonaws.com';
+const isRDS = dbHost.includes('.rds.amazonaws.com');
+
 const pool = new Pool({
   user: process.env.DB_USER || 'postgres',
-  host: process.env.DB_HOST || 'settlepaisa-staging.c9u0agyyg6q9.ap-south-1.rds.amazonaws.com',
+  host: dbHost,
   database: process.env.DB_NAME || 'settlepaisa_v2',
   password: process.env.DB_PASSWORD || 'SettlePaisa2024',
   port: process.env.DB_PORT || 5432,
@@ -14,6 +18,8 @@ const pool = new Pool({
   min: 2,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 5000,
+  // Always use SSL for RDS instances
+  ssl: isRDS ? { rejectUnauthorized: false } : false,
 });
 
 // =====================================================

@@ -1131,7 +1131,7 @@ export class OpsApiExtended {
         return true
       })
     }
-    const response = await apiClient.get('/ops/connectors', { params: filters })
+    const response = await apiClient.get(`${RECON_API_URL}/api/recon/connectors`, { params: filters })
     return response.data
   }
 
@@ -1144,7 +1144,7 @@ export class OpsApiExtended {
         updatedAt: new Date().toISOString()
       }
     }
-    const response = await apiClient.post('/ops/connectors', data)
+    const response = await apiClient.post(`${RECON_API_URL}/api/recon/connectors`, data)
     return response.data
   }
 
@@ -1156,7 +1156,7 @@ export class OpsApiExtended {
         updatedAt: new Date().toISOString()
       }
     }
-    const response = await apiClient.put(`/ops/connectors/${sourceId}`, data)
+    const response = await apiClient.put(`${RECON_API_URL}/api/recon/connectors/${sourceId}`, data)
     return response.data
   }
 
@@ -1180,7 +1180,7 @@ export class OpsApiExtended {
         throw new Error('Connection timeout: Unable to reach server')
       }
     }
-    const response = await apiClient.post(`/ops/connectors/${connector.sourceId}/test`)
+    const response = await apiClient.post(`${RECON_API_URL}/api/recon/connectors/${connector.sourceId}/test`)
     return response.data
   }
 
@@ -1194,7 +1194,7 @@ export class OpsApiExtended {
         createdAt: new Date().toISOString()
       }
     }
-    const response = await apiClient.post(`/ops/connectors/${sourceId}/run`, { cycleDate })
+    const response = await apiClient.post(`${RECON_API_URL}/api/recon/connectors/${sourceId}/run`, { cycleDate })
     return response.data
   }
 
@@ -1733,7 +1733,7 @@ export class OpsApiExtended {
     if (params.limit) queryParams.append('limit', params.limit.toString())
     
     const reconApiUrl = import.meta.env.VITE_RECON_API_URL || 'http://localhost:5103'
-    const response = await fetch(`${reconApiUrl}/exceptions-v2?${queryParams.toString()}`)
+    const response = await fetch(`${reconApiUrl}/api/recon/exceptions-v2?${queryParams.toString()}`)
     const data = await response.json()
     return data
   }
@@ -1925,7 +1925,7 @@ export class OpsApiExtended {
     }
     
     // Use V2 API
-    const response = await fetch(`${RECON_API_URL}/exception-saved-views?userId=current_user`)
+    const response = await fetch(`${RECON_API_URL}/api/recon/exception-saved-views?userId=current_user`)
     const data = await response.json()
     return data.success ? data.data : []
   }
@@ -2066,7 +2066,7 @@ export class OpsApiExtended {
     }
     
     // Use V2 API
-    const response = await fetch(`${RECON_API_URL}/exception-rules`)
+    const response = await fetch(`${RECON_API_URL}/api/recon/exception-rules`)
     const data = await response.json()
     return data.success ? data.data : []
   }
