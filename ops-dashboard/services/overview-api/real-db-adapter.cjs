@@ -12,6 +12,7 @@ const pool = new Pool({
   database: process.env.DB_NAME || 'settlepaisa_v2',
   user: process.env.DB_USER || 'postgres',
   password: process.env.DB_PASSWORD || 'settlepaisa123',
+  ssl: { rejectUnauthorized: false }  // Required for RDS connections
 });
 
 /**
