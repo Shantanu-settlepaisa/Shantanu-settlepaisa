@@ -1,0 +1,3 @@
+transaction_id,merchant_id,chargeback_amount,reason_code,status
+TXN123,MERCH001,200000,FRAUD,LOST
+TXN456,MERCH001,150000,AUTHORIZATION_ISSUE,OPEN

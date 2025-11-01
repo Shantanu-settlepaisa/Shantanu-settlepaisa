@@ -9,6 +9,7 @@
     "build:staging-ops": "vite build --mode staging-ops",
     "build:staging-merchant": "vite build --mode staging-merchant",
     "build:production": "vite build --mode production",
+    "build:production-ops": "vite build --mode production-ops",
     "preview": "vite preview",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0"
   },

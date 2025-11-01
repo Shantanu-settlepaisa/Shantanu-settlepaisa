@@ -1,0 +1,1 @@
+import{I as e,X as a}from"./index-BoHhBTDt.js";function o(r,t){const s=e(r);return isNaN(t)?a(r,NaN):(t&&s.setDate(s.getDate()+t),s)}function c(r){const t=e(r);return t.setDate(1),t.setHours(0,0,0,0),t}export{o as a,c as s};
