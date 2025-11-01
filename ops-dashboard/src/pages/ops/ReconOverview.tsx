@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { formatIndianCurrency } from '@/lib/utils';
 import { toast } from 'sonner';
+import { reconClient } from '@/services/recon-service';
 import { SettlementProgressBar } from '@/components/SettlementProgressBar';
 import type { SettlementProgressData } from '@/types/settlementProgress';
 import { ExceptionAgeingChart } from '@/components/ExceptionAgeingChart';
@@ -134,10 +135,9 @@ export default function ReconOverview() {
         range: dateRange,
         ...(dateRange === 'custom' && { from: customDates.from, to: customDates.to })
       });
-      
-      const response = await fetch(`http://localhost:5103/ops/recon/overview?${params}`);
-      if (!response.ok) throw new Error('Failed to fetch overview');
-      const data = await response.json();
+
+      const response = await reconClient.get(`/api/ops/recon/overview?${params}`);
+      const data = response.data;
       
       // Apply Definition A: matched = in_settlement + sent_to_bank + credited
       // Mock the consistent metrics
@@ -192,7 +192,8 @@ export default function ReconOverview() {
   useEffect(() => {
     if (!liveUpdates) return;
 
-    const eventSource = new EventSource('http://localhost:5103/api/events');
+    const reconApiUrl = import.meta.env.VITE_RECON_API_URL || 'http://localhost:5103';
+    const eventSource = new EventSource(`${reconApiUrl}/api/events`);
     
     eventSource.addEventListener('recon.job.completed', (event) => {
       const data = JSON.parse(event.data);
@@ -214,9 +215,11 @@ export default function ReconOverview() {
         range: dateRange,
         ...(dateRange === 'custom' && { from: customDates.from, to: customDates.to })
       });
-      
-      const response = await fetch(`http://localhost:5103/ops/recon/export?${params}`);
-      const blob = await response.blob();
+
+      const response = await reconClient.get(`/api/ops/recon/export?${params}`, {
+        responseType: 'blob'
+      });
+      const blob = response.data;
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;

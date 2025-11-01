@@ -18,7 +18,7 @@ const reconClient = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
-  timeout: 30000, // 30 second timeout for recon operations
+  timeout: 300000, // 5 minute timeout for recon operations (matches Nginx)
 })
 
 // Request interceptor - Add JWT token to all requests
@@ -53,3 +53,4 @@ reconClient.interceptors.response.use(
 )
 
 export default reconClient
+export { reconClient }

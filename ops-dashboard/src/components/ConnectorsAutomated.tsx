@@ -19,6 +19,7 @@ import {
   Loader2
 } from 'lucide-react';
 import { opsApiExtended } from '@/lib/ops-api-extended';
+import { reconClient } from '@/services/recon-service';
 import { ConnectorCard } from './connectors/ConnectorCard';
 import { JobsList } from './connectors/JobsList';
 import { ReconciliationErrorModal } from './recon/ReconciliationErrorModal';
@@ -115,20 +116,16 @@ export function ConnectorsAutomated() {
     
     // Trigger reconciliation
     try {
-      const response = await fetch('http://localhost:5103/api/reconcile', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          cycleDate: new Date().toISOString().split('T')[0],
-          pgSource: 'PG Demo API',
-          bankSource: connectorId.includes('axis') ? 'AXIS Bank SFTP' : 'Bank SFTP'
-        })
+      const response = await reconClient.post('/api/reconcile', {
+        cycleDate: new Date().toISOString().split('T')[0],
+        pgSource: 'PG Demo API',
+        bankSource: connectorId.includes('axis') ? 'AXIS Bank SFTP' : 'Bank SFTP'
       });
-      const data = await response.json();
+      const data = response.data;
       if (data.success && data.resultId) {
         // Fetch and show results
-        const resultResponse = await fetch(`http://localhost:5103/api/reconcile/${data.resultId}`);
-        const resultData = await resultResponse.json();
+        const resultResponse = await reconClient.get(`/api/reconcile/${data.resultId}`);
+        const resultData = resultResponse.data;
         setReconResults(resultData);
         setShowResults(true);
         toast.success(`Reconciliation complete: ${data.summary.matchRate} match rate`);
@@ -154,13 +151,13 @@ export function ConnectorsAutomated() {
     const connector = connectors.find(c => c.id === connectorId);
     if (!connector) return { status: 'unhealthy', error: 'Connector not found' };
     
-    const endpoint = connector.type === 'PG_API' 
-      ? 'http://localhost:5103/connectors/pg/health'
-      : 'http://localhost:5103/connectors/bank/health';
-    
+    const endpoint = connector.type === 'PG_API'
+      ? '/api/connectors/pg/health'
+      : '/api/connectors/bank/health';
+
     try {
-      const response = await fetch(endpoint);
-      const data = await response.json();
+      const response = await reconClient.get(endpoint);
+      const data = response.data;
       return {
         status: data.status,
         error: data.error,
@@ -170,7 +167,7 @@ export function ConnectorsAutomated() {
       return {
         status: 'unhealthy',
         error: 'Failed to check connector',
-        hint: 'Check if the reconciliation service is running on port 5103'
+        hint: 'Check if the reconciliation service is running'
       };
     }
   };
@@ -268,19 +265,15 @@ export function ConnectorsAutomated() {
     const runInitialRecon = async () => {
       const currentDate = new Date().toISOString().split('T')[0];
       try {
-        const response = await fetch('http://localhost:5103/api/reconcile', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            cycleDate: currentDate,
-            pgSource: 'api',
-            bankSource: 'api'
-          })
+        const response = await reconClient.post('/api/reconcile', {
+          cycleDate: currentDate,
+          pgSource: 'api',
+          bankSource: 'api'
         });
-        const data = await response.json();
+        const data = response.data;
         if (data.success && data.resultId) {
-          const resultResponse = await fetch(`http://localhost:5103/api/reconcile/${data.resultId}`);
-          const resultData = await resultResponse.json();
+          const resultResponse = await reconClient.get(`/api/reconcile/${data.resultId}`);
+          const resultData = resultResponse.data;
           setReconResults(resultData);
           setCycleStats({
             pgIngested: resultData.totalPGTransactions || 0,
@@ -501,24 +494,20 @@ export function ConnectorsAutomated() {
                 
                 try {
                   // Use the new job-based API
-                  const response = await fetch('http://localhost:5103/recon/run', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                      date: today,
-                      merchantId: 'demo_merchant',
-                      acquirerId: 'axis_bank',
-                      dryRun: isDryRun,
-                      limit: 1000
-                    })
+                  const response = await reconClient.post('/api/recon/run', {
+                    date: today,
+                    merchantId: 'demo_merchant',
+                    acquirerId: 'axis_bank',
+                    dryRun: isDryRun,
+                    limit: 1000
                   });
-                  
-                  const data = await response.json();
-                  
-                  if (!response.ok || !data.success) {
+
+                  const data = response.data;
+
+                  if (!data.success) {
                     // Show error modal with job details
-                    setReconciliationError({ 
-                      jobId: data.jobId, 
+                    setReconciliationError({
+                      jobId: data.jobId,
                       error: data.error || { code: 'API_ERROR', message: 'Failed to start reconciliation' }
                     });
                     return;
@@ -531,25 +520,21 @@ export function ConnectorsAutomated() {
                   const maxAttempts = 30; // 30 seconds max
                   
                   const checkJob = async () => {
-                    const jobResponse = await fetch(`http://localhost:5103/recon/jobs/${jobId}`);
-                    const jobData = await jobResponse.json();
-                    
+                    const jobResponse = await reconClient.get(`/api/recon/jobs/${jobId}`);
+                    const jobData = jobResponse.data;
+
                     if (jobData.status === 'completed') {
                       // Fetch legacy format results for display
-                      const legacyResponse = await fetch('http://localhost:5103/api/reconcile', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                          cycleDate: today,
-                          pgSource: 'PG Demo API',
-                          bankSource: 'AXIS Bank SFTP'
-                        })
+                      const legacyResponse = await reconClient.post('/api/reconcile', {
+                        cycleDate: today,
+                        pgSource: 'PG Demo API',
+                        bankSource: 'AXIS Bank SFTP'
                       });
-                      const legacyData = await legacyResponse.json();
-                      
+                      const legacyData = legacyResponse.data;
+
                       if (legacyData.success && legacyData.resultId) {
-                        const resultResponse = await fetch(`http://localhost:5103/api/reconcile/${legacyData.resultId}`);
-                        const resultData = await resultResponse.json();
+                        const resultResponse = await reconClient.get(`/api/reconcile/${legacyData.resultId}`);
+                        const resultData = resultResponse.data;
                         setReconResults(resultData);
                         setShowResults(true);
                         
@@ -573,7 +558,7 @@ export function ConnectorsAutomated() {
                               exceptionsCount: jobData.counters.exceptions || 0
                             };
                             
-                            const overviewResponse = await fetch('http://localhost:5105/api/recon-results/connectors', {
+                            const overviewResponse = await fetch(`${FINANCIAL_API_URL}/api/recon-results/connectors`, {
                               method: 'POST',
                               headers: { 'Content-Type': 'application/json' },
                               body: JSON.stringify({
@@ -582,7 +567,7 @@ export function ConnectorsAutomated() {
                                 summary
                               })
                             });
-                            
+
                             if (overviewResponse.ok) {
                               console.log('Connector results sent to Overview API');
                             }

@@ -1,7 +1,6 @@
 import { X, AlertTriangle, CheckCircle, XCircle, Clock, FileText, RefreshCw } from 'lucide-react';
 import { useState, useEffect } from 'react';
-
-const RECON_API_URL = import.meta.env.VITE_RECON_API_URL || 'http://localhost:5103';
+import { reconClient } from '@/services/recon-service';
 
 interface ReconciliationError {
   code: string;
@@ -61,14 +60,11 @@ export function ReconciliationErrorModal({
 
   const fetchJobDetails = async () => {
     if (!jobId) return;
-    
+
     setLoading(true);
     try {
-      const response = await fetch(`${RECON_API_URL}/recon/jobs/${jobId}`);
-      if (response.ok) {
-        const data = await response.json();
-        setJob(data);
-      }
+      const response = await reconClient.get(`/api/recon/jobs/${jobId}`);
+      setJob(response.data);
     } catch (error) {
       console.error('Failed to fetch job details:', error);
     } finally {
@@ -79,24 +75,22 @@ export function ReconciliationErrorModal({
   const checkConnectorHealth = async () => {
     // Check PG connector
     try {
-      const pgResponse = await fetch(`${RECON_API_URL}/connectors/pg/health`);
-      const pgData = await pgResponse.json();
-      setConnectorHealth(prev => ({ ...prev, pg: pgData }));
+      const pgResponse = await reconClient.get('/api/connectors/pg/health');
+      setConnectorHealth(prev => ({ ...prev, pg: pgResponse.data }));
     } catch (error) {
-      setConnectorHealth(prev => ({ 
-        ...prev, 
+      setConnectorHealth(prev => ({
+        ...prev,
         pg: { status: 'error', error: 'Failed to check PG connector' }
       }));
     }
 
     // Check Bank connector
     try {
-      const bankResponse = await fetch(`${RECON_API_URL}/connectors/bank/health`);
-      const bankData = await bankResponse.json();
-      setConnectorHealth(prev => ({ ...prev, bank: bankData }));
+      const bankResponse = await reconClient.get('/api/connectors/bank/health');
+      setConnectorHealth(prev => ({ ...prev, bank: bankResponse.data }));
     } catch (error) {
-      setConnectorHealth(prev => ({ 
-        ...prev, 
+      setConnectorHealth(prev => ({
+        ...prev,
         bank: { status: 'error', error: 'Failed to check Bank connector' }
       }));
     }
