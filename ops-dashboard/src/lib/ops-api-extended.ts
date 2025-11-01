@@ -2174,7 +2174,7 @@ export class OpsApiExtended {
       }
     }
 
-    const response = await apiClient.get(`${RECON_API_URL}/connectors`, { params })
+    const response = await apiClient.get(`${RECON_API_URL}/api/recon/connectors`, { params })
     return response.data
   }
 
@@ -2232,7 +2232,7 @@ export class OpsApiExtended {
       }
     }
 
-    const response = await apiClient.get(`${RECON_API_URL}/connectors/${id}`)
+    const response = await apiClient.get(`${RECON_API_URL}/api/recon/connectors/${id}`)
     return response.data
   }
 
@@ -2247,7 +2247,7 @@ export class OpsApiExtended {
       }
     }
 
-    const response = await apiClient.post(`${RECON_API_URL}/connectors`, params)
+    const response = await apiClient.post(`${RECON_API_URL}/api/recon/connectors`, params)
     return response.data
   }
 
@@ -2260,7 +2260,7 @@ export class OpsApiExtended {
       }
     }
 
-    const response = await apiClient.put(`${RECON_API_URL}/connectors/${id}`, params)
+    const response = await apiClient.put(`${RECON_API_URL}/api/recon/connectors/${id}`, params)
     return response.data
   }
 
@@ -2279,7 +2279,7 @@ export class OpsApiExtended {
       }
     }
 
-    const response = await apiClient.post(`${RECON_API_URL}/connectors/${id}/test`)
+    const response = await apiClient.post(`${RECON_API_URL}/api/recon/connectors/${id}/test`)
     return response.data
   }
 
@@ -2294,10 +2294,10 @@ export class OpsApiExtended {
       }
     }
 
-    const response = await apiClient.post(`${RECON_API_URL}/connectors/${id}/run`, params)
+    const response = await apiClient.post(`${RECON_API_URL}/api/recon/connectors/${id}/run`, params)
     return response.data
   }
-  
+
   async pauseConnector(id: string): Promise<any> {
     if (USE_MOCK_API) {
       return {
@@ -2307,10 +2307,10 @@ export class OpsApiExtended {
       }
     }
 
-    const response = await apiClient.post(`${RECON_API_URL}/connectors/${id}/pause`)
+    const response = await apiClient.post(`${RECON_API_URL}/api/recon/connectors/${id}/pause`)
     return response.data
   }
-  
+
   async resumeConnector(id: string): Promise<any> {
     if (USE_MOCK_API) {
       return {
@@ -2320,7 +2320,7 @@ export class OpsApiExtended {
       }
     }
 
-    const response = await apiClient.post(`${RECON_API_URL}/connectors/${id}/resume`)
+    const response = await apiClient.post(`${RECON_API_URL}/api/recon/connectors/${id}/resume`)
     return response.data
   }
 
@@ -2332,7 +2332,7 @@ export class OpsApiExtended {
       }
     }
 
-    const response = await apiClient.delete(`${RECON_API_URL}/connectors/${id}`)
+    const response = await apiClient.delete(`${RECON_API_URL}/api/recon/connectors/${id}`)
     return response.data
   }
 
@@ -2349,7 +2349,7 @@ export class OpsApiExtended {
       }
     }
 
-    const response = await apiClient.post(`/ops/connectors/${id}/backfill`, params, {
+    const response = await apiClient.post(`${RECON_API_URL}/api/recon/connectors/${id}/backfill`, params, {
       headers: { 'X-Idempotency-Key': `backfill_${id}_${Date.now()}` }
     })
     return response.data
