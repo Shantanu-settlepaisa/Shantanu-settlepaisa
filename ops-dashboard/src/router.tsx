@@ -58,7 +58,11 @@ const routes = [
 if (ENABLE_OPS_DASHBOARD) {
   routes.push({
     path: '/ops',
-    element: <OpsLayout />,
+    element: (
+      <ProtectedRoute>
+        <OpsLayout />
+      </ProtectedRoute>
+    ),
     children: [
       {
         index: true,
@@ -148,7 +152,11 @@ if (ENABLE_OPS_DASHBOARD) {
 if (ENABLE_MERCHANT_DASHBOARD) {
   routes.push({
     path: '/merchant',
-    element: <MerchantLayout />,
+    element: (
+      <ProtectedRoute>
+        <MerchantLayout />
+      </ProtectedRoute>
+    ),
     children: [
       {
         index: true,
