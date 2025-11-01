@@ -16,7 +16,8 @@ const v2Pool = new Pool({
 
 class SettlementQueueProcessor {
   constructor() {
-    this.calculator = new SettlementCalculatorV3();
+    // Pass shared v2Pool to calculator to ensure SSL configuration is inherited
+    this.calculator = new SettlementCalculatorV3(v2Pool);
     this.batchWindow = 5 * 60 * 1000; // 5 minutes
     this.batchSize = 100;
     this.processingIntervalMs = 2 * 60 * 1000; // 2 minutes

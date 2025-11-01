@@ -2,16 +2,27 @@ require('dotenv').config();
 const { Pool } = require('pg');
 
 class SettlementCalculatorV3 {
-  constructor() {
-    const dbConfig = {
-      user: process.env.DB_USER || 'postgres',
-      host: process.env.DB_HOST || 'localhost',
-      database: process.env.DB_NAME || 'settlepaisa_v2',
-      password: process.env.DB_PASSWORD || 'settlepaisa123',
-      port: parseInt(process.env.DB_PORT) || 5433
-    };
-    console.log('[Calculator] DB Config:', { ...dbConfig, password: '***' });
-    this.v2Pool = new Pool(dbConfig);
+  constructor(dbPool = null) {
+    // Accept external database pool (recommended) or create own
+    if (dbPool) {
+      console.log('[Calculator V3] Using shared database pool (SSL configured)');
+      this.v2Pool = dbPool;
+    } else {
+      // Fallback: create own pool (for backward compatibility)
+      const dbHost = process.env.DB_HOST || 'localhost';
+      const isRDS = dbHost && (dbHost.includes('rds.amazonaws.com') || dbHost.includes('amazonaws.com'));
+
+      const dbConfig = {
+        user: process.env.DB_USER || 'postgres',
+        host: dbHost,
+        database: process.env.DB_NAME || 'settlepaisa_v2',
+        password: process.env.DB_PASSWORD || 'settlepaisa123',
+        port: parseInt(process.env.DB_PORT) || 5433,
+        ssl: isRDS ? { rejectUnauthorized: false } : false
+      };
+      console.log('[Calculator V3] Creating own DB pool:', { ...dbConfig, password: '***', ssl: isRDS ? 'enabled (RDS)' : 'disabled' });
+      this.v2Pool = new Pool(dbConfig);
+    }
   }
   
   async getMerchantConfig(merchantId) {
