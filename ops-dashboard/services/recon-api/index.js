@@ -60,7 +60,7 @@ const pool = new Pool({
 pool.on('error', (err) => console.error('[Recon Pool Error]', err))
 
 // Mount routes - with /api/recon prefix for ALB compatibility
-app.use('/api/recon/recon', jobRoutes)
+app.use('/api/recon', jobRoutes)
 app.use('/api/recon/exceptions', exceptionsRoutes)  // Legacy route
 app.use('/api/recon/exceptions-v2', exceptionsV2Routes)  // New workflow-based route
 app.use('/api/recon/exception-saved-views', exceptionSavedViewsRoutes)
