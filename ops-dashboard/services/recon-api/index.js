@@ -11,7 +11,7 @@ const exceptionsRoutes = require('./routes/exceptions')
 const exceptionsV2Routes = require('./routes/exceptions-v2')
 const exceptionSavedViewsRoutes = require('./routes/exception-saved-views')
 const exceptionRulesRoutes = require('./routes/exception-rules')
-const reportsRoutes = require('./routes/reports')
+const createReportsRouter = require('./routes/reports')
 const bankMappingsRoutes = require('./routes/bank-mappings')
 const pgTransactionsRoutes = require('./routes/pg-transactions')
 const connectorsRoutes = require('./routes/connectors')
@@ -65,7 +65,7 @@ app.use('/api/recon/exceptions', exceptionsRoutes)  // Legacy route
 app.use('/api/recon/exceptions-v2', exceptionsV2Routes)  // New workflow-based route
 app.use('/api/recon/exception-saved-views', exceptionSavedViewsRoutes)
 app.use('/api/recon/exception-rules', exceptionRulesRoutes)
-app.use('/api/recon/reports', reportsRoutes)
+app.use('/api/recon/reports', createReportsRouter(pool))  // Pass shared pool with SSL
 app.use('/api/recon/bank-mappings', bankMappingsRoutes)
 app.use('/api/recon/pg-transactions', pgTransactionsRoutes)
 app.use('/api/recon/connectors', connectorsRoutes)  // Auth handled per-route if needed
@@ -76,7 +76,7 @@ app.use('/exceptions', exceptionsRoutes)
 app.use('/exceptions-v2', exceptionsV2Routes)
 app.use('/exception-saved-views', exceptionSavedViewsRoutes)
 app.use('/exception-rules', exceptionRulesRoutes)
-app.use('/reports', reportsRoutes)
+app.use('/reports', createReportsRouter(pool))  // Pass shared pool with SSL
 app.use('/bank-mappings', bankMappingsRoutes)
 app.use('/pg-transactions', pgTransactionsRoutes)
 app.use('/connectors', connectorsRoutes)

@@ -1,15 +1,8 @@
 const express = require('express');
-const router = express.Router();
-const { Pool } = require('pg');
 
-const pool = new Pool({
-  host: process.env.DB_HOST || 'settlepaisa-staging.c9u0agyyg6q9.ap-south-1.rds.amazonaws.com',
-  port: process.env.DB_PORT || 5432,
-  user: process.env.DB_USER || 'postgres',
-  password: process.env.DB_PASSWORD || 'SettlePaisa2024',
-  database: process.env.DB_NAME || 'settlepaisa_v2',
-  ssl: false
-});
+// Accept shared database pool with proper SSL configuration
+function createReportsRouter(pool) {
+  const router = express.Router();
 
 router.get('/settlement-summary', async (req, res) => {
   try {
@@ -355,4 +348,7 @@ router.get('/tax-report', async (req, res) => {
   }
 });
 
-module.exports = router;
+  return router;
+}
+
+module.exports = createReportsRouter;
