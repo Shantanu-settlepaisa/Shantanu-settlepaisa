@@ -28,6 +28,8 @@ const app = express();
 const PORT = config.app.port || 5108;
 
 // Shared database pool for report endpoints
+// Auto-detect RDS and enable SSL
+const isRDS = config.db.host && config.db.host.includes('.rds.amazonaws.com');
 const pool = new Pool({
   user: config.db.user,
   host: config.db.host,
@@ -37,7 +39,9 @@ const pool = new Pool({
   max: 20,
   min: 2,
   idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 5000
+  connectionTimeoutMillis: 5000,
+  // Always use SSL for RDS instances
+  ssl: isRDS ? { rejectUnauthorized: false } : false
 });
 
 pool.on('error', (err) => {
