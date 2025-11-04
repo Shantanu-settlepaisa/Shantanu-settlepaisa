@@ -1093,24 +1093,26 @@ app.get('/api/overview', async (req, res) => {
       const connectorsResult = await pool.query(connectorsQuery);
 
       connectorsHealth = connectorsResult.rows.map(connector => {
-        // Calculate health status using same logic as /api/connectors/health endpoint
-        const health =
-          connector.connector_status === 'ACTIVE' && connector.last_run_status === 'SUCCESS' ? 'HEALTHY' :
-          connector.connector_status === 'ACTIVE' && connector.last_run_status === 'FAILED' ? 'DEGRADED' :
-          connector.connector_status !== 'ACTIVE' ? 'DOWN' :
-          'UNKNOWN';
+        // Map to frontend expected format: status = 'OK' | 'LAGGING' | 'FAILING'
+        // Frontend expects: { name, status, lastSync, queuedFiles, failures }
+        let status;
+        if (connector.connector_status === 'ACTIVE' && connector.last_run_status === 'SUCCESS') {
+          status = 'OK';
+        } else if (connector.connector_status === 'ACTIVE' && connector.last_run_status === 'FAILED') {
+          status = 'FAILING';
+        } else if (connector.connector_status !== 'ACTIVE') {
+          status = 'FAILING';  // DOWN status maps to FAILING for frontend
+        } else {
+          // UNKNOWN - never run yet, show as LAGGING to indicate needs attention
+          status = 'LAGGING';
+        }
 
         return {
-          id: connector.id,
           name: connector.name,
-          type: connector.connector_type,
-          status: connector.connector_status,
-          health: health,
-          lastSync: connector.last_run_at,
-          lastRunStatus: connector.last_run_status,
-          successCount: connector.success_count || 0,
-          failureCount: connector.failure_count || 0,
-          totalRuns: connector.total_runs || 0
+          status: status,
+          lastSync: connector.last_run_at || null,
+          queuedFiles: 0,  // TODO: Add queue tracking
+          failures: connector.failure_count || 0
         };
       });
 
@@ -1175,7 +1177,7 @@ app.get('/api/overview', async (req, res) => {
       reconciliation: `matched=${result.reconciliation.matched}, exceptions=${result.reconciliation.exceptions}`,
       bySource: `manual=${result.reconciliation.bySource.manual}, connector=${result.reconciliation.bySource.connector}`,
       bySourceArray: `Connectors: ${result.bySource[0].matchRate}% (${result.bySource[0].matched}/${result.bySource[0].total}), Manual: ${result.bySource[1].matchRate}% (${result.bySource[1].matched}/${result.bySource[1].total})`,
-      connectorsHealth: `${connectorsHealth.length} connectors (${connectorsHealth.filter(c => c.health === 'HEALTHY').length} healthy, ${connectorsHealth.filter(c => c.health === 'DEGRADED').length} degraded, ${connectorsHealth.filter(c => c.health === 'DOWN').length} down)`
+      connectorsHealth: `${connectorsHealth.length} connectors (${connectorsHealth.filter(c => c.status === 'OK').length} OK, ${connectorsHealth.filter(c => c.status === 'LAGGING').length} lagging, ${connectorsHealth.filter(c => c.status === 'FAILING').length} failing)`
     });
 
     res.json(result);
