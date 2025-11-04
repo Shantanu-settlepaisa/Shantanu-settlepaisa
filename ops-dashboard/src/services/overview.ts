@@ -426,21 +426,9 @@ async function transformV2DatabaseResponse(v2Data: any, window: OverviewWindow):
     ];
   }
 
-  // Fetch real connectors health from V2 API
-  let connectorsHealth: ConnectorsHealthItem[] = [];
-  try {
-    const overviewApiUrl = import.meta.env.VITE_OVERVIEW_API_URL || 'http://localhost:5108';
-    const connectorsResponse = await fetch(`${overviewApiUrl}/api/connectors/health`);
-    if (connectorsResponse.ok) {
-      const connectorsData = await connectorsResponse.json();
-      connectorsHealth = connectorsData.connectors || [];
-      console.log('✅ [V2] Real connector health data loaded:', connectorsHealth);
-    } else {
-      console.warn('⚠️ [V2] Connector health API failed, using empty list');
-    }
-  } catch (error) {
-    console.warn('⚠️ [V2] Failed to fetch connector health:', error);
-  }
+  // Use connectors health data from /api/overview response (embedded)
+  const connectorsHealth: ConnectorsHealthItem[] = v2Data.connectorsHealth || [];
+  console.log('✅ [V2] Connector health data from /api/overview:', connectorsHealth);
 
   // Mock bank feed lag (enhance later with real data)
   const bankFeedLag: BankLagItem[] = [
