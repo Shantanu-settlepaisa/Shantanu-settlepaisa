@@ -789,18 +789,11 @@ app.get('/api/connectors/health-summary', async (req, res) => {
 
 // Connector health endpoint (alternative format for frontend compatibility)
 // FIXED (Oct 21): Query real database instead of returning mock data
+// FIXED (Nov 4): Use shared pool with correct SSL configuration
 app.get('/api/connectors/health', async (req, res) => {
   try {
-    // Use the existing pool from real-db-adapter
-    const { Pool } = require('pg');
-    const pool = new Pool({
-      user: config.db.user,
-      host: config.db.host,
-      database: config.db.database,
-      password: config.db.password,
-      port: config.db.port,
-      ssl: config.db.ssl
-    });
+    // Use the shared pool that already has correct SSL configuration (line 33-45)
+    // No need to create a new Pool instance
 
     // Query actual connectors from database
     const connectorsQuery = `
