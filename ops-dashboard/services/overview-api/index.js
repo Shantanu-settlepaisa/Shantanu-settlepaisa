@@ -1061,6 +1061,65 @@ app.get('/api/overview', async (req, res) => {
     // Get real source breakdown from database
     const sourceBreakdown = await realDB.getSourceBreakdownFromDatabase(startDate, endDate);
 
+    // Fetch connector health data for Overview page widget
+    let connectorsHealth = [];
+    try {
+      const connectorsQuery = `
+        SELECT
+          c.id,
+          c.name,
+          c.connector_type,
+          c.status as connector_status,
+          c.last_run_at,
+          c.last_run_status,
+          c.success_count,
+          c.failure_count,
+          c.total_runs,
+          cr.status as run_status,
+          cr.started_at as run_started_at,
+          cr.duration_seconds,
+          cr.records_failed
+        FROM sp_v2_connectors c
+        LEFT JOIN LATERAL (
+          SELECT status, started_at, duration_seconds, records_failed
+          FROM sp_v2_connector_runs
+          WHERE connector_id = c.id
+          ORDER BY started_at DESC
+          LIMIT 1
+        ) cr ON true
+        ORDER BY c.name
+      `;
+
+      const connectorsResult = await pool.query(connectorsQuery);
+
+      connectorsHealth = connectorsResult.rows.map(connector => {
+        // Calculate health status using same logic as /api/connectors/health endpoint
+        const health =
+          connector.connector_status === 'ACTIVE' && connector.last_run_status === 'SUCCESS' ? 'HEALTHY' :
+          connector.connector_status === 'ACTIVE' && connector.last_run_status === 'FAILED' ? 'DEGRADED' :
+          connector.connector_status !== 'ACTIVE' ? 'DOWN' :
+          'UNKNOWN';
+
+        return {
+          id: connector.id,
+          name: connector.name,
+          type: connector.connector_type,
+          status: connector.connector_status,
+          health: health,
+          lastSync: connector.last_run_at,
+          lastRunStatus: connector.last_run_status,
+          successCount: connector.success_count || 0,
+          failureCount: connector.failure_count || 0,
+          totalRuns: connector.total_runs || 0
+        };
+      });
+
+      console.log(`[Overview API /api/overview] ✅ Loaded ${connectorsHealth.length} connectors for health widget`);
+    } catch (connectorError) {
+      console.error('[Overview API /api/overview] ⚠️ Failed to load connectors, using empty array:', connectorError.message);
+      connectorsHealth = [];
+    }
+
     // Return V2 nested structure expected by frontend
     const result = {
       pipeline: {
@@ -1105,7 +1164,9 @@ app.get('/api/overview', async (req, res) => {
           exceptions: 0,
           lastSync: null
         }
-      ]
+      ],
+      // Connector health data for ConnectorsHealth widget on Overview page
+      connectorsHealth: connectorsHealth
     };
 
     console.log('[Overview API /api/overview] ✅ Real data (V2 structure):', {
@@ -1113,7 +1174,8 @@ app.get('/api/overview', async (req, res) => {
       breakdown: `${result.pipeline.inSettlement}/${result.pipeline.sentToBank}/${result.pipeline.credited}/${result.pipeline.unsettled}`,
       reconciliation: `matched=${result.reconciliation.matched}, exceptions=${result.reconciliation.exceptions}`,
       bySource: `manual=${result.reconciliation.bySource.manual}, connector=${result.reconciliation.bySource.connector}`,
-      bySourceArray: `Connectors: ${result.bySource[0].matchRate}% (${result.bySource[0].matched}/${result.bySource[0].total}), Manual: ${result.bySource[1].matchRate}% (${result.bySource[1].matched}/${result.bySource[1].total})`
+      bySourceArray: `Connectors: ${result.bySource[0].matchRate}% (${result.bySource[0].matched}/${result.bySource[0].total}), Manual: ${result.bySource[1].matchRate}% (${result.bySource[1].matched}/${result.bySource[1].total})`,
+      connectorsHealth: `${connectorsHealth.length} connectors (${connectorsHealth.filter(c => c.health === 'HEALTHY').length} healthy, ${connectorsHealth.filter(c => c.health === 'DEGRADED').length} degraded, ${connectorsHealth.filter(c => c.health === 'DOWN').length} down)`
     });
 
     res.json(result);
