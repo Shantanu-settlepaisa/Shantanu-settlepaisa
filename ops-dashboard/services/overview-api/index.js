@@ -28,8 +28,10 @@ const app = express();
 const PORT = config.app.port || 5108;
 
 // Shared database pool for report endpoints
-// Auto-detect RDS and enable SSL
-const isRDS = config.db.host && config.db.host.includes('.rds.amazonaws.com');
+// Always use SSL in production (RDS requires SSL)
+// In development, SSL is disabled automatically when host is localhost
+const isProduction = config.db.host && config.db.host !== 'localhost' && config.db.host !== '127.0.0.1';
+console.log(`[Pool Init] DB Host: ${config.db.host}, isProduction: ${isProduction}, SSL: ${isProduction ? 'enabled' : 'disabled'}`);
 const pool = new Pool({
   user: config.db.user,
   host: config.db.host,
@@ -40,8 +42,8 @@ const pool = new Pool({
   min: 2,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 5000,
-  // Always use SSL for RDS instances
-  ssl: isRDS ? { rejectUnauthorized: false } : false
+  // Always use SSL for non-localhost connections (RDS requires SSL)
+  ssl: isProduction ? { rejectUnauthorized: false } : false
 });
 
 pool.on('error', (err) => {
