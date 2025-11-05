@@ -1201,13 +1201,22 @@ export function ManualUploadEnhanced() {
   
   // Clear all and start fresh
   const handleStartNew = async () => {
+    // Prevent duplicate calls
+    if (isLoading) {
+      console.log(`[ManualUploadEnhanced] Already cleaning, skipping duplicate call`);
+      return;
+    }
+
     console.log(`[ManualUploadEnhanced] Starting new reconciliation - cleaning database for ${cycleDate}...`);
+    setIsLoading(true);
 
     try {
       // Call the cleanup API to delete test data for the selected date
       const response = await uploadClient.post('/api/upload/clean-test-data', {
         date: cycleDate
       });
+
+      console.log(`[ManualUploadEnhanced] Cleanup response:`, response.data);
 
       if (response.data.success) {
         console.log(`[ManualUploadEnhanced] ✅ Database cleaned successfully for ${cycleDate}:`, response.data.deleted);
@@ -1235,9 +1244,16 @@ export function ManualUploadEnhanced() {
       }
     } catch (error) {
       console.error('[ManualUploadEnhanced] ❌ Failed to clean database:', error);
-      toast.error(error.response?.data?.details || "Failed to clean test data. Please try again.", {
+      console.error('[ManualUploadEnhanced] Error details:', {
+        message: error.message,
+        response: error.response?.data,
+        status: error.response?.status
+      });
+      toast.error(error.response?.data?.details || error.message || "Failed to clean test data. Please try again.", {
         description: "Cleanup Failed"
       });
+    } finally {
+      setIsLoading(false);
     }
   }
 
