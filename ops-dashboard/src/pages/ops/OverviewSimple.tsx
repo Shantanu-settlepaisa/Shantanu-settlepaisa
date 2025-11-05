@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Activity, RefreshCw, Pause, Play, AlertCircle, CheckCircle, IndianRupee, FileText, Calendar, Upload } from 'lucide-react';
 import { SettlementPipeline } from '@/components/SettlementPipeline';
 import { fetchOverview } from '@/services/overview';
-import { ConnectorHealthCardSimple } from '@/features/ingest/ConnectorHealthCardSimple';
+import { ConnectorsHealth } from '@/components/overview/ConnectorsHealth';
 import { RefundUploadModal } from '@/components/ops/RefundUploadModal';
 import { ChargebackUploadModal } from '@/components/ops/ChargebackUploadModal';
 
@@ -263,8 +263,11 @@ export default function OverviewSimple() {
         </div>
       </div>
 
-      {/* Connector Health Card - Always shown for debugging */}
-      <ConnectorHealthCardSimple />
+      {/* Connector Health Card */}
+      <ConnectorsHealth
+        connectors={overview?.connectorsHealth || []}
+        isLoading={isLoading}
+      />
 
       {/* Additional Analysis Sections */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

@@ -2,11 +2,24 @@ const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 
+// 🔒 SECURITY: Import authentication and security middleware
+const { authenticate, authorize } = require('../shared/authMiddleware.cjs');
+const corsConfig = require('../shared/corsConfig.cjs');
+const { apiLimiter } = require('../shared/rateLimiter.cjs');
+
 const app = express();
 const PORT = process.env.PORT || 5106;
 
-app.use(cors());
+// 🔒 SECURITY: Apply CORS whitelist (only allows approved domains)
+app.use(cors(corsConfig));
+
+// 🔒 SECURITY: Apply rate limiting (100 requests per 15 minutes per IP)
+app.use(apiLimiter);
+
 app.use(bodyParser.json());
+
+// 🔒 SECURITY: ALL routes require authentication
+app.use(authenticate);
 
 // Mock data generator for chargebacks
 function generateMockChargebacks() {

@@ -117,6 +117,35 @@ Toggle via `VITE_USE_MOCK_API` environment variable.
 - API authorization via `X-User-Role` header
 - UI element visibility based on user role
 
+## Security Features
+
+### Authentication & Authorization
+- **JWT-based authentication** with database session tracking
+- **Password hashing** using bcryptjs (10 rounds)
+- **Role-based access control (RBAC)** with 4 roles: ADMIN, OPS_MANAGER, OPS_VIEWER, FINANCE
+- **Session management** with token revocation support
+
+### API Protection
+- **CORS whitelist** (production/staging/local origins only)
+- **Rate limiting**:
+  - General API: 100 requests/15 minutes
+  - Authentication: 5 failed attempts/15 minutes
+  - File uploads: 10 uploads/hour
+- **Input validation** and SQL injection prevention
+- **Parameterized queries** for all database operations
+
+### Transport Security
+- **HTTPS/TLS** enforced in production via ALB
+- **SSL/TLS database connections** to Amazon RDS
+- **No secrets in code** - all credentials in environment variables
+
+### Documentation
+- **Security implementation**: [`SECURITY_FIXES_COMPLETE_NOV5.md`](./SECURITY_FIXES_COMPLETE_NOV5.md)
+- **Security audit**: [`security/README.md`](./security/README.md)
+- **Vulnerability reporting**: See [`SECURITY.md`](./SECURITY.md)
+
+For detailed security documentation, see [SECURITY.md](./SECURITY.md).
+
 ## Reconciliation Workflow
 
 1. **File Upload** - Manual upload or SFTP/API ingestion
@@ -139,13 +168,39 @@ docker build -t settlepaisa-ops-dashboard .
 
 ## Testing
 
-```bash
-# Run unit tests (coming soon)
-npm run test
+### Test Infrastructure
+- **Framework**: Jest 30.2.0
+- **Total Tests**: 71 tests (58 passing - 81.7%)
+- **Coverage Target**: 60% (branches, functions, lines, statements)
+- **Coverage Reports**: `coverage/lcov-report/index.html`
 
-# Run E2E tests (coming soon)
-npm run test:e2e
+### Test Suites
+- **Reconciliation Matching** (58 tests) - UTR matching, confidence scoring
+- **Settlement Calculator** (19 tests) - Commission, GST, reserve calculations
+- **Authentication** (70+ tests) - JWT, password validation, RBAC
+- **API Integration** (5 tests) - HTTP endpoint testing
+- **React Components** (12 tests) - UI component testing
+
+### Running Tests
+
+```bash
+# Run all tests
+npm test
+
+# Generate coverage report
+npm run test:coverage
+
+# Run unit tests only
+npm run test:unit
+
+# Run integration tests only
+npm run test:integration
+
+# Run in watch mode
+npm run test:watch
 ```
+
+For detailed testing documentation, see [TESTING.md](./TESTING.md).
 
 ## Contributing
 

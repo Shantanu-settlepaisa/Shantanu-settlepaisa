@@ -9,6 +9,7 @@ const { calculateMerchantSettlement, completeSettlementProcessing } = require('.
 // Security: Authentication middleware (CRIT-003)
 const { authenticate, canApprove, opsStaffOnly } = require('../overview-api/middleware/authMiddleware.cjs');
 const { corsOptions } = require('../config/corsConfig.cjs');
+const { apiLimiter } = require('../shared/rateLimiter.cjs');
 
 // Development logging (gated in production)
 const isDev = config.app.nodeEnv !== 'production';
@@ -42,6 +43,10 @@ const calculator = new SettlementCalculator();
 // Middleware
 // Security: Restrict CORS to whitelisted origins (HIGH-001)
 app.use(cors(corsOptions));
+
+// 🔒 SECURITY: Apply rate limiting (100 requests per 15 minutes per IP)
+app.use(apiLimiter);
+
 app.use(express.json());
 
 // Get commission tier for merchant

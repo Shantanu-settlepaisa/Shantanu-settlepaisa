@@ -19,6 +19,7 @@ const connectorsRoutes = require('./routes/connectors')
 // Security: Authentication middleware (CRIT-001, HIGH-006)
 const { authenticate, opsStaffOnly } = require('../overview-api/middleware/authMiddleware.cjs')
 const { corsOptions } = require('../config/corsConfig.cjs')
+const { apiLimiter } = require('../shared/rateLimiter.cjs')
 
 // Development logging (gated in production)
 const isDev = config.app.nodeEnv !== 'production'
@@ -37,6 +38,9 @@ const app = express()
 
 // Security: Restrict CORS to whitelisted origins (HIGH-001)
 app.use(cors(corsOptions))
+
+// 🔒 SECURITY: Apply rate limiting (100 requests per 15 minutes per IP)
+app.use(apiLimiter)
 
 app.use(express.json())
 

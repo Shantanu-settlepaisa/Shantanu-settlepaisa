@@ -24,6 +24,7 @@ const { convertV1CSVToV2, detectFormat } = require('../shared/v1-column-mapper.c
 // Security: Authentication middleware (CRIT-002)
 const { authenticate, opsStaffOnly } = require('../overview-api/middleware/authMiddleware.cjs');
 const { corsOptions } = require('../config/corsConfig.cjs');
+const { uploadLimiter } = require('../shared/rateLimiter.cjs');
 
 // Development logging (gated in production)
 const isDev = config.app.nodeEnv !== 'production';
@@ -120,7 +121,8 @@ const upload = multer({
 
 // Enhanced File Upload Endpoint - Multiple Files
 // Security: Requires authentication and ops staff role (CRIT-002)
-app.post('/api/upload/multiple', authenticate, opsStaffOnly, upload.array('files', 10), async (req, res) => {
+// 🔒 SECURITY: Rate limited to 10 uploads per hour per user
+app.post('/api/upload/multiple', uploadLimiter, authenticate, opsStaffOnly, upload.array('files', 10), async (req, res) => {
   try {
     log('📁 [V2 Upload] Received files:', req.files?.map(f => f.originalname));
     
@@ -179,7 +181,8 @@ app.post('/api/upload/multiple', authenticate, opsStaffOnly, upload.array('files
 
 // Single File Upload with Type Detection + Upload Session Tracking
 // Security: Requires authentication and ops staff role (CRIT-002)
-app.post('/api/upload/single', authenticate, opsStaffOnly, upload.single('file'), async (req, res) => {
+// 🔒 SECURITY: Rate limited to 10 uploads per hour per user
+app.post('/api/upload/single', uploadLimiter, authenticate, opsStaffOnly, upload.single('file'), async (req, res) => {
   const client = await pool.connect();
   let uploadSessionId = null;
 

@@ -2,11 +2,24 @@ const express = require('express');
 const cors = require('cors');
 const { Pool } = require('pg');
 
+// 🔒 SECURITY: Import authentication and security middleware
+const { authenticate, authorize } = require('../shared/authMiddleware.cjs');
+const corsConfig = require('../shared/corsConfig.cjs');
+const { apiLimiter } = require('../shared/rateLimiter.cjs');
+
 const app = express();
 const PORT = process.env.PORT || 5113;
 
-app.use(cors());
+// 🔒 SECURITY: Apply CORS whitelist (only allows approved domains)
+app.use(cors(corsConfig));
+
+// 🔒 SECURITY: Apply rate limiting (100 requests per 15 minutes per IP)
+app.use(apiLimiter);
+
 app.use(express.json());
+
+// 🔒 SECURITY: ALL routes require authentication
+app.use(authenticate);
 
 const pool = new Pool({
   host: process.env.DB_HOST || 'settlepaisa-staging.c9u0agyyg6q9.ap-south-1.rds.amazonaws.com',

@@ -17,6 +17,7 @@ const jwt = require('jsonwebtoken');
 const { hashPassword, verifyPassword, validatePasswordStrength } = require('./lib/passwordUtils.cjs');
 const logger = require('./lib/logger.cjs');
 const { getDbPool } = require('./real-db-adapter.cjs');
+const { authenticate, adminOnly } = require('./middleware/authMiddleware.cjs');
 
 const router = express.Router();
 
@@ -28,8 +29,9 @@ const REFRESH_TOKEN_EXPIRES_IN = process.env.REFRESH_TOKEN_EXPIRES_IN || '7d';
 /**
  * POST /api/auth/register
  * Register a new user (admin only)
+ * 🔒 SECURED: Requires authentication + ADMIN role
  */
-router.post('/register', async (req, res) => {
+router.post('/register', authenticate, adminOnly, async (req, res) => {
   const { email, password, full_name, role } = req.body;
 
   try {
