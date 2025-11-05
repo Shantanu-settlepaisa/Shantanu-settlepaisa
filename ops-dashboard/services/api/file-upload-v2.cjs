@@ -59,12 +59,17 @@ if (PORT === 5107 && config.db.host === 'localhost') {
 
 console.log(`[Upload API] Database config: ${dbConfig.host}:${dbConfig.port}/${dbConfig.database}`);
 
+// Determine if we need SSL (for RDS connections)
+const isProduction = config.app.nodeEnv === 'production' || dbConfig.host.includes('rds.amazonaws.com');
+
 const pool = new Pool({
   ...dbConfig,
   max: 20,
   min: 2,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 5000,
+  // Always use SSL for non-localhost connections (RDS requires SSL)
+  ssl: isProduction ? { rejectUnauthorized: false } : false
 });
 
 pool.on('error', (err) => console.error('[Upload Pool Error]', err));
