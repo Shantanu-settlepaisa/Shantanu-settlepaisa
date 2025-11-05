@@ -116,6 +116,37 @@ app.use('/api/recon', async (req, res, next) => {
   }
 });
 
+// Proxy for upload-api endpoints
+const UPLOAD_API_URL = `http://localhost:${config.services?.uploadApiPort || 5107}`;
+app.use('/api/upload', async (req, res, next) => {
+  try {
+    console.log(`[Upload Proxy] ${req.method} ${req.url} -> ${UPLOAD_API_URL}${req.url}`);
+    // Build full URL with query string from req.url (which includes query params)
+    const url = `${UPLOAD_API_URL}${req.url}`;
+
+    // For file uploads, we need to handle multipart/form-data differently
+    const isMultipart = req.headers['content-type']?.includes('multipart/form-data');
+
+    const response = await axios({
+      method: req.method,
+      url,
+      data: req.body,
+      headers: {
+        ...(isMultipart ? {} : { 'Content-Type': 'application/json' }),
+        ...(req.headers.authorization && { Authorization: req.headers.authorization })
+      },
+      maxBodyLength: Infinity,
+      maxContentLength: Infinity
+    });
+    res.status(response.status).json(response.data);
+  } catch (error) {
+    console.error('[Upload Proxy Error]', error.message, 'URL:', `${UPLOAD_API_URL}${req.url}`);
+    res.status(error.response?.status || 500).json(
+      error.response?.data || { success: false, error: error.message }
+    );
+  }
+});
+
 // Register settlement endpoints (protected)
 registerSettlementEndpoints(app);
 
