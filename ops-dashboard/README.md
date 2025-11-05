@@ -146,6 +146,40 @@ Toggle via `VITE_USE_MOCK_API` environment variable.
 
 For detailed security documentation, see [SECURITY.md](./SECURITY.md).
 
+## Infrastructure as Code
+
+### Terraform
+
+All AWS infrastructure is managed as code using **Terraform 1.6+**:
+- **EC2**: Application server (t3.medium) with PM2 services
+- **RDS**: PostgreSQL 17.6 (db.t3.large) with automated backups
+- **S3**: Static website hosting with versioning
+- **ALB**: Path-based routing to 8 backend services
+- **CloudWatch**: Monitoring, logging, and alarms
+- **Secrets Manager**: Secure password and JWT secret storage
+
+### Benefits
+- **Reproducible**: Recreate entire infrastructure from code
+- **Version Controlled**: Track infrastructure changes in Git
+- **Disaster Recovery**: Restore production in < 30 minutes
+- **Environment Parity**: Staging mirrors production exactly
+- **Documentation**: Infrastructure is self-documenting
+
+### Quick Start
+
+```bash
+# Setup backend (first time only)
+cd terraform/
+terraform init && terraform apply
+
+# Deploy production environment
+cd environments/production/
+cp terraform.tfvars.example terraform.tfvars
+terraform init && terraform plan && terraform apply
+```
+
+For detailed infrastructure documentation, see [INFRASTRUCTURE.md](./INFRASTRUCTURE.md) and [terraform/README.md](./terraform/README.md).
+
 ## Reconciliation Workflow
 
 1. **File Upload** - Manual upload or SFTP/API ingestion
