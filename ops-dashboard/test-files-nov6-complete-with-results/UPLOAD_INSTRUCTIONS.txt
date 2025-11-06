@@ -1,0 +1,107 @@
+================================================================================
+                    ⚠️  CRITICAL: READ THIS FIRST  ⚠️
+================================================================================
+
+YOU ARE UPLOADING THE WRONG AXIS FILE!
+
+Your logs show:
+  [Bank Detection] Matched "test-axis-60-records-nov6.csv" → "AXIS BANK"
+  📊 Processing: Inserted=0, Skipped=0, Duplicates=0  ← WRONG FILE!
+
+================================================================================
+                         CORRECT UPLOAD SEQUENCE
+================================================================================
+
+1. test-pg-180-records-nov6.csv           ✅ CORRECT (use .csv)
+   ↓
+2. test-hdfc-60-records-nov6.csv          ✅ CORRECT (use .csv)
+   ↓
+3. test-bob-60-records-nov6.csv           ✅ CORRECT (use .csv)
+   ↓
+4. test-axis-60-records-nov6.TXT          ✅ CORRECT (use .TXT not .csv!)
+                                ^^^
+                           MUST BE .TXT FILE!
+
+================================================================================
+                           WHY THIS MATTERS
+================================================================================
+
+File Extension        Delimiter Used    AXIS Result
+─────────────────────────────────────────────────────────────────────────────
+.csv                  Comma (,)         ❌ Inserted=0  (FAILS)
+.txt                  Tilde (~)         ✅ Inserted=60 (WORKS)
+
+AXIS bank files use TILDE (~) delimiters, not commas!
+The backend reads file extension to determine which delimiter to use.
+
+================================================================================
+                         FILES IN THIS FOLDER
+================================================================================
+
+✅ test-pg-180-records-nov6.csv       → Upload this (PG transactions)
+✅ test-hdfc-60-records-nov6.csv      → Upload this (HDFC statements)
+✅ test-bob-60-records-nov6.csv       → Upload this (BOB statements)
+❌ test-axis-60-records-nov6.csv      → DO NOT USE (wrong extension)
+✅ test-axis-60-records-nov6.txt      → UPLOAD THIS! (correct extension)
+
+================================================================================
+                      HOW TO SELECT THE .TXT FILE
+================================================================================
+
+When uploading AXIS file:
+
+1. Click "Add more files" or file picker
+2. Look for: test-axis-60-records-nov6.txt  (with .txt extension)
+3. DO NOT select: test-axis-60-records-nov6.csv
+4. Upload the .txt file
+
+Both files have IDENTICAL content - only the extension differs!
+
+================================================================================
+                         WHAT YOU'LL SEE
+================================================================================
+
+WRONG FILE (.csv):
+  [Bank Detection] Matched "test-axis-60-records-nov6.csv" → "AXIS BANK"
+  📊 Processing: Inserted=0, Skipped=0, Duplicates=0
+  ↑ This means file was not parsed correctly!
+
+CORRECT FILE (.txt):
+  [Bank Detection] Matched "test-axis-60-records-nov6.txt" → "AXIS BANK"
+  📊 Processing: Inserted=60, Skipped=0, Duplicates=0
+  ↑ This means all 60 records were inserted!
+
+================================================================================
+                      FILE LOCATION ON YOUR COMPUTER
+================================================================================
+
+Folder: /Users/shantanusingh/ops-dashboard/test-files-nov6-complete-with-results/
+
+Files:
+  test-axis-60-records-nov6.csv  ← Has .csv extension (WRONG)
+  test-axis-60-records-nov6.txt  ← Has .txt extension (CORRECT)
+
+Make sure you're selecting the file with .txt extension!
+
+================================================================================
+                         NEED MORE HELP?
+================================================================================
+
+Read: IMPORTANT_AXIS_FILE_NOTE.md (in same folder)
+
+The file explains:
+- Why .csv doesn't work
+- How the backend parser works
+- Technical details about delimiter handling
+
+================================================================================
+                              SUMMARY
+================================================================================
+
+❌ You uploaded: test-axis-60-records-nov6.csv (WRONG)
+✅ You should upload: test-axis-60-records-nov6.txt (CORRECT)
+
+The .txt file is in the same folder as the .csv file.
+Look for the file ending in .txt when selecting!
+
+================================================================================
