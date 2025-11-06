@@ -29,13 +29,24 @@ const webhookLimiter = rateLimit({
 });
 
 // PostgreSQL V2 Database connection with validated config
+// Auto-detect RDS and enable SSL
+const isRDS = config.db.host && config.db.host.includes('.rds.amazonaws.com');
+
 const pool = new Pool({
   user: config.db.user,
   host: config.db.host,
   database: config.db.database,
   password: config.db.password,
   port: config.db.port,
+  max: 20,                          // Maximum pool size
+  min: 2,                           // Minimum connections kept alive
+  idleTimeoutMillis: 30000,         // Close idle connections after 30s
+  connectionTimeoutMillis: 5000,    // Fail fast on connection issues
+  // Always use SSL for RDS instances
+  ssl: isRDS ? { rejectUnauthorized: false } : false
 });
+
+pool.on('error', (err) => console.error('[PG Ingestion Pool Error]', err));
 
 // V1 SettlePaisa Production API Configuration
 const V1_CONFIG = {

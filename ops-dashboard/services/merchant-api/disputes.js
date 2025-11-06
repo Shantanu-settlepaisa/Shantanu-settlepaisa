@@ -2,15 +2,20 @@ const express = require('express');
 const { Pool } = require('pg');
 const router = express.Router();
 
+// Auto-detect RDS and enable SSL
+const isRDS = (process.env.DB_HOST || 'localhost').includes('.rds.amazonaws.com');
+
 const v2Pool = new Pool({
-  host: 'localhost',
-  port: 5433,
-  user: 'postgres',
-  password: 'settlepaisa123',
-  database: 'settlepaisa_v2',
+  host: process.env.DB_HOST || 'localhost',
+  port: parseInt(process.env.DB_PORT || '5432'),
+  user: process.env.DB_USER || 'postgres',
+  password: process.env.DB_PASSWORD,  // No fallback for security
+  database: process.env.DB_NAME || 'settlepaisa_v2',
   max: 10,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 2000,
+  // Always use SSL for RDS instances
+  ssl: isRDS ? { rejectUnauthorized: false } : false
 });
 
 const MERCHANT_ID = process.env.DEFAULT_MERCHANT_ID || 'MERCH001';

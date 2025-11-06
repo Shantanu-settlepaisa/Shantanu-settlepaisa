@@ -21,12 +21,21 @@ app.use(express.json());
 // 🔒 SECURITY: ALL routes require authentication
 app.use(authenticate);
 
+// Auto-detect RDS and enable SSL
+const isRDS = (process.env.DB_HOST || 'settlepaisa-staging.c9u0agyyg6q9.ap-south-1.rds.amazonaws.com').includes('.rds.amazonaws.com');
+
 const pool = new Pool({
   host: process.env.DB_HOST || 'settlepaisa-staging.c9u0agyyg6q9.ap-south-1.rds.amazonaws.com',
   port: parseInt(process.env.DB_PORT || '5432'),
   database: process.env.DB_NAME || 'settlepaisa_v2',
   user: process.env.DB_USER || 'postgres',
-  password: process.env.DB_PASSWORD || 'SettlePaisa2024'
+  password: process.env.DB_PASSWORD || 'SettlePaisa2024',
+  max: 20,
+  min: 2,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 5000,
+  // Always use SSL for RDS instances
+  ssl: isRDS ? { rejectUnauthorized: false } : false
 });
 
 pool.connect((err, client, release) => {

@@ -1,14 +1,23 @@
 const express = require('express');
 const { Pool } = require('pg');
+const { authenticate, opsStaffOnly } = require('../../shared/authMiddleware.cjs');
 
 const router = express.Router();
 
+// Auto-detect RDS and enable SSL
+const dbHost = process.env.DB_HOST || 'localhost';
+const isRDS = dbHost.includes('.rds.amazonaws.com');
+
 const pool = new Pool({
-  host: process.env.DB_HOST || 'localhost',
-  port: process.env.DB_PORT || 5433,
+  host: dbHost,
+  port: process.env.DB_PORT || 5432,
   database: process.env.DB_NAME || 'settlepaisa_v2',
   user: process.env.DB_USER || 'postgres',
-  password: process.env.DB_PASSWORD || 'settlepaisa123'
+  password: process.env.DB_PASSWORD,  // No fallback for security
+  max: 10,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 5000,
+  ssl: isRDS ? { rejectUnauthorized: false } : false
 });
 
 // Get all exceptions with filtering
@@ -133,7 +142,7 @@ router.get('/:id', async (req, res) => {
 });
 
 // Resolve exception (mark as RECONCILED)
-router.post('/:id/resolve', async (req, res) => {
+router.post('/:id/resolve', authenticate, opsStaffOnly, async (req, res) => {
   try {
     const { id } = req.params;
     const { resolvedBy, resolution, notes } = req.body;
@@ -175,7 +184,7 @@ router.post('/:id/resolve', async (req, res) => {
 });
 
 // Manual match - link PG transaction with bank statement
-router.post('/manual-match', async (req, res) => {
+router.post('/manual-match', authenticate, opsStaffOnly, async (req, res) => {
   try {
     const { pgTransactionId, bankStatementId, matchedBy } = req.body;
 
@@ -245,7 +254,7 @@ router.post('/manual-match', async (req, res) => {
 });
 
 // Bulk resolve exceptions
-router.post('/bulk-resolve', async (req, res) => {
+router.post('/bulk-resolve', authenticate, opsStaffOnly, async (req, res) => {
   try {
     const { exceptionIds, resolvedBy } = req.body;
 

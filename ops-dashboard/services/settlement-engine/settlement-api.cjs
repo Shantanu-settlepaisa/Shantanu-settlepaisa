@@ -7,7 +7,7 @@ const { calculateMerchantSettlement, completeSettlementProcessing } = require('.
 // const { createHealthCheckEndpoint } = require('../health-check');
 
 // Security: Authentication middleware (CRIT-003)
-const { authenticate, canApprove, opsStaffOnly } = require('../overview-api/middleware/authMiddleware.cjs');
+const { authenticate, canApprove, opsStaffOnly } = require('../shared/authMiddleware.cjs');
 const { corsOptions } = require('../config/corsConfig.cjs');
 const { apiLimiter } = require('../shared/rateLimiter.cjs');
 

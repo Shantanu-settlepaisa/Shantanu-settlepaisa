@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { Pool } = require('pg');
 const config = require('../../config/env.cjs');
+const { authenticate, opsStaffOnly } = require('../../shared/authMiddleware.cjs');
 
 const pool = new Pool({
   user: config.db.user,
@@ -114,7 +115,7 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-router.post('/', async (req, res) => {
+router.post('/', authenticate, opsStaffOnly, async (req, res) => {
   try {
     const {
       name,
@@ -245,7 +246,7 @@ router.put('/:id', async (req, res) => {
   }
 });
 
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', authenticate, opsStaffOnly, async (req, res) => {
   try {
     const { id } = req.params;
     
@@ -407,7 +408,7 @@ router.post('/:id/test', async (req, res) => {
   }
 });
 
-router.post('/:id/run', async (req, res) => {
+router.post('/:id/run', authenticate, opsStaffOnly, async (req, res) => {
   try {
     const { id } = req.params;
     const { run_date, triggered_by } = req.body;

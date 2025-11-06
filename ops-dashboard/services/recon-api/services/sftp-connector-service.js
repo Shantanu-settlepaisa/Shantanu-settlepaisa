@@ -2,12 +2,23 @@ const Client = require('ssh2-sftp-client');
 const { parseCsvContent, transformBankDataToV2 } = require('./bank-data-transformer');
 const { Pool } = require('pg');
 
+// Load config from environment
+const config = require('../../../config/env.cjs');
+
+// Auto-detect RDS and enable SSL
+const isRDS = config.db.host && config.db.host.includes('.rds.amazonaws.com');
+
 const pool = new Pool({
-  host: 'localhost',
-  port: 5433,
-  user: 'postgres',
-  password: 'settlepaisa123',
-  database: 'settlepaisa_v2'
+  host: config.db.host || 'localhost',
+  port: config.db.port || 5432,
+  user: config.db.user || 'postgres',
+  password: config.db.password,  // No fallback for security
+  database: config.db.database || 'settlepaisa_v2',
+  max: 10,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 5000,
+  // Always use SSL for RDS instances
+  ssl: isRDS ? { rejectUnauthorized: false } : false
 });
 
 async function testSftpConnection(config) {

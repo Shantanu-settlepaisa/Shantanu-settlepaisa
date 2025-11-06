@@ -17,7 +17,7 @@ const pgTransactionsRoutes = require('./routes/pg-transactions')
 const connectorsRoutes = require('./routes/connectors')
 
 // Security: Authentication middleware (CRIT-001, HIGH-006)
-const { authenticate, opsStaffOnly } = require('../overview-api/middleware/authMiddleware.cjs')
+const { authenticate, opsStaffOnly } = require('../shared/authMiddleware.cjs')
 const { corsOptions } = require('../config/corsConfig.cjs')
 const { apiLimiter } = require('../shared/rateLimiter.cjs')
 
