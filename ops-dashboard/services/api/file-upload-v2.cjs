@@ -22,7 +22,8 @@ const { convertV1CSVToV2, detectFormat } = require('../shared/v1-column-mapper.c
 // const { createHealthCheckEndpoint } = require('../health-check');
 
 // Security: Authentication middleware (CRIT-002)
-const { authenticate, opsStaffOnly } = require('../overview-api/middleware/authMiddleware.cjs');
+// Use Upload API's own auth middleware to avoid cross-service pool dependency
+const { createAuthMiddleware } = require('./middleware/authMiddleware.cjs');
 const { corsOptions } = require('../config/corsConfig.cjs');
 const { uploadLimiter } = require('../shared/rateLimiter.cjs');
 
@@ -73,6 +74,10 @@ const pool = new Pool({
 });
 
 pool.on('error', (err) => console.error('[Upload Pool Error]', err));
+
+// Create authentication middleware with Upload API's pool
+const { authenticate, opsStaffOnly } = createAuthMiddleware(pool, config.auth.jwtSecret);
+console.log('[Upload API] Authentication middleware initialized with local database pool');
 
 // Middleware
 // Security: Restrict CORS to whitelisted origins (HIGH-001)
