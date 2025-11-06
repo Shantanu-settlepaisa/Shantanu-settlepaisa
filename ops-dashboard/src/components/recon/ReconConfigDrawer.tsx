@@ -113,7 +113,7 @@ export function ReconConfigDrawer({ isOpen, onClose }: ReconConfigDrawerProps) {
   const { data: bankMappingsResponse, isLoading } = useQuery({
     queryKey: ['bank-mappings'],
     queryFn: async () => {
-      const response = await reconClient.get('/api/bank-mappings')
+      const response = await reconClient.get('/bank-mappings')
       return response.data
     },
     enabled: isOpen
@@ -125,7 +125,7 @@ export function ReconConfigDrawer({ isOpen, onClose }: ReconConfigDrawerProps) {
   const updateMutation = useMutation({
     mutationFn: async (data: { bankName: string; mappings: Record<string, string> }) => {
       const response = await reconClient.put(
-        `/api/bank-mappings/${encodeURIComponent(data.bankName)}`,
+        `/bank-mappings/${encodeURIComponent(data.bankName)}`,
         {
           v1_column_mappings: data.mappings
         }
@@ -147,7 +147,7 @@ export function ReconConfigDrawer({ isOpen, onClose }: ReconConfigDrawerProps) {
   // Create mutation
   const createMutation = useMutation({
     mutationFn: async (data: typeof newBankForm) => {
-      const response = await reconClient.post('/api/bank-mappings', {
+      const response = await reconClient.post('/bank-mappings', {
         config_name: data.config_name.toUpperCase(),
         bank_name: data.bank_name,
         file_type: data.file_type,
@@ -181,7 +181,7 @@ export function ReconConfigDrawer({ isOpen, onClose }: ReconConfigDrawerProps) {
   const deleteMutation = useMutation({
     mutationFn: async (bankName: string) => {
       const response = await reconClient.delete(
-        `/api/bank-mappings/${encodeURIComponent(bankName)}`
+        `/bank-mappings/${encodeURIComponent(bankName)}`
       )
       return response.data
     },
