@@ -69,7 +69,8 @@ export default function SettlementApprove() {
       const API_BASE_URL = import.meta.env.VITE_OVERVIEW_API_URL || import.meta.env.VITE_API_BASE_URL || 'http://localhost:5108'
       const response = await fetch(`${API_BASE_URL}/api/settlements/${batchId}`)
       if (!response.ok) throw new Error('Failed to fetch settlement details')
-      return response.json()
+      const data = await response.json()
+      return data.batch || data // Handle both { batch } and direct batch responses
     },
     enabled: !!batchId,
   })

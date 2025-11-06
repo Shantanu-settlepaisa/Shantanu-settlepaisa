@@ -1,6 +1,6 @@
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { formatPaiseToINR, formatDateTime } from '@/lib/utils'
+import { formatPaiseToINR, formatDateTime, formatDate } from '@/lib/utils'
 import { ArrowLeft, CheckCircle, Clock, AlertCircle, DollarSign, FileText } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -27,7 +27,8 @@ export default function SettlementDetails() {
         if (response.status === 404) throw new Error('Settlement batch not found')
         throw new Error('Failed to fetch settlement details')
       }
-      return response.json()
+      const data = await response.json()
+      return data.batch || data // Handle both { batch } and direct batch responses
     },
     enabled: !!batchId,
   })
@@ -104,7 +105,7 @@ export default function SettlementDetails() {
             <CardTitle className="text-sm font-medium text-gray-600">Cycle Date</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{settlement.cycle_date}</div>
+            <div className="text-2xl font-bold">{formatDate(settlement.cycle_date)}</div>
           </CardContent>
         </Card>
 
