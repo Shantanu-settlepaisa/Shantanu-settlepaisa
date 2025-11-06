@@ -1,0 +1,197 @@
+================================================================================
+QUICK REFERENCE - November 6, 2025 Test Files
+================================================================================
+
+FOLDER LOCATION:
+  /Users/shantanusingh/ops-dashboard/test-files-nov6-complete-with-results/
+
+FILES INCLUDED:
+  ✓ test-pg-180-records-nov6.csv       (180 records, UTR001-UTR180)
+  ✓ test-hdfc-60-records-nov6.csv      (60 records, UTR001-UTR060)
+  ✓ test-bob-60-records-nov6.csv       (60 records, UTR061-UTR120)
+  ✓ test-axis-60-records-nov6.csv      (60 records, UTR121-UTR180)
+  ✓ README.md                          (Quick start guide)
+  ✓ RECONCILIATION_RESULTS.md          (Complete documentation)
+  ✓ QUICK_REFERENCE.txt                (This file)
+
+================================================================================
+UPLOAD SEQUENCE
+================================================================================
+
+1. Upload test-pg-180-records-nov6.csv
+   → Source Type: Payment Gateway
+   → Expected: 180 PG transactions uploaded
+
+2. Upload test-hdfc-60-records-nov6.csv
+   → Source Type: Bank Statement
+   → Bank: HDFC BANK
+   → Expected: 60 bank statements with fees
+
+3. Upload test-bob-60-records-nov6.csv
+   → Source Type: Bank Statement
+   → Bank: BANK OF BARODA
+   → Expected: 60 bank statements with fees
+
+4. Upload test-axis-60-records-nov6.csv
+   → Source Type: Bank Statement
+   → Bank: AXIS BANK
+   → Expected: 60 bank statements with fees ✨ NOW WORKING
+
+5. Run Reconciliation
+   → Expected: 180/180 matches (100%)
+
+6. Check Financial Dashboard
+   → Expected: All 180 transactions show bank fees
+
+================================================================================
+EXPECTED RESULTS
+================================================================================
+
+RECONCILIATION:
+  Total Matches:           180/180 (100%)
+  Total Exceptions:        0
+  HDFC Matches:            60/60
+  BOB Matches:             60/60
+  AXIS Matches:            60/60 ✨ WITH BANK FEES
+
+FINANCIAL METRICS:
+  Total Gross Amount:      ₹81,90,000
+  Total Net Amount:        ~₹80,46,300
+  Total Bank Fees:         ~₹1,43,700
+
+BANK FEE BREAKDOWN:
+  HDFC Bank Fees:          ~₹14,550 (60 txns)
+  BOB Bank Fees:           ~₹43,650 (60 txns)
+  AXIS Bank Fees:          ~₹85,500 (60 txns) ✨ NOW CALCULABLE
+
+FEE RATE DISTRIBUTION:
+  UPI (1.5%):              108 transactions (60%)
+  NETBANKING (1.8%):       36 transactions (20%)
+  CARD (2.0%):             36 transactions (20%)
+
+================================================================================
+WHAT'S NEW - AXIS BANK FIX
+================================================================================
+
+BEFORE:
+  ❌ File: Amount~PRNNo~Date (3 columns)
+  ❌ Config: Both paid_amount and payee_amount → "Amount"
+  ❌ Result: gross_amount_paise = NULL, bank fees = ₹0
+  ❌ Impact: Only 120/180 transactions showed bank fees (66.7%)
+
+AFTER:
+  ✅ File: GrossAmount~NetAmount~PRNNo~Date (4 columns)
+  ✅ Config: paid_amount → "GrossAmount", payee_amount → "NetAmount"
+  ✅ Result: Both fields populated, bank fees calculated
+  ✅ Impact: All 180/180 transactions show bank fees (100%)
+
+PRODUCTION DATABASE UPDATED:
+  Table: sp_v2_bank_column_mappings
+  Row: AXIS BANK
+  Updated: November 6, 2025
+  Status: ✅ Live in production
+
+================================================================================
+FILE FORMATS
+================================================================================
+
+PG FILE (CSV - comma-delimited):
+  transaction_id,client_code,payee_amount,paid_amount,payment_mode,...
+  TXN_001,MERCH001,985.00,1000.00,UPI,...
+
+HDFC FILE (CSV - comma-delimited):
+  MERCHANT_TRACKID,DOMESTIC AMT,Net Amount,SETTLE DATE,TRANS DATE
+  UTR001,1000.00,985.00,06-11-2025,06-11-2025
+
+BOB FILE (CSV - comma-delimited):
+  Settlement Amount,Net Amount,Merchant Track ID,Payment Date,...
+  30500.00,30042.50,UTR061,06/11/2025,...
+
+AXIS FILE (CSV - TILDE-delimited):
+  GrossAmount~NetAmount~PRNNo~Date
+  60500.00~59592.50~UTR121~06/11/2025
+
+================================================================================
+VERIFICATION QUERIES
+================================================================================
+
+Check AXIS bank fee calculation:
+
+  SELECT
+    utr,
+    amount_paise / 100.0 as net_amount,
+    gross_amount_paise / 100.0 as gross_amount,
+    (gross_amount_paise - amount_paise) / 100.0 as bank_fee
+  FROM sp_v2_transactions
+  WHERE bank_name = 'AXIS BANK'
+    AND utr BETWEEN 'UTR121' AND 'UTR180'
+  ORDER BY utr;
+
+Check all bank fees:
+
+  SELECT
+    bank_name,
+    COUNT(*) as txn_count,
+    SUM((gross_amount_paise - amount_paise)) / 100.0 as total_fees
+  FROM sp_v2_transactions
+  WHERE source_type = 'BANK'
+    AND utr BETWEEN 'UTR001' AND 'UTR180'
+  GROUP BY bank_name;
+
+================================================================================
+TROUBLESHOOTING
+================================================================================
+
+If AXIS bank fees don't show:
+
+1. Check V1 config:
+   SELECT v1_column_mappings FROM sp_v2_bank_column_mappings
+   WHERE bank_name = 'AXIS BANK';
+
+   Expected:
+   {"paid_amount": "GrossAmount", "payee_amount": "NetAmount", ...}
+
+2. Check file structure:
+   head -3 test-axis-60-records-nov6.csv
+
+   Expected:
+   GrossAmount~NetAmount~PRNNo~Date
+
+3. Check uploaded values:
+   SELECT utr, amount_paise, gross_amount_paise
+   FROM sp_v2_transactions
+   WHERE bank_name = 'AXIS BANK' AND utr = 'UTR121';
+
+   Expected:
+   UTR121 | 5959250 | 6050000
+
+================================================================================
+DOCUMENTATION
+================================================================================
+
+For complete details:
+  → README.md (Quick start guide)
+  → RECONCILIATION_RESULTS.md (12KB comprehensive documentation)
+
+For questions or issues:
+  → Check troubleshooting section in RECONCILIATION_RESULTS.md
+  → Verify production database configuration
+  → Contact: ops-dashboard team
+
+================================================================================
+SUMMARY
+================================================================================
+
+✅ All files ready for testing
+✅ All banks support bank fee calculation
+✅ 100% match expected
+✅ Complete financial metrics available
+✅ AXIS BANK issue resolved
+✅ Production database updated
+
+Total Impact: Bank fee visibility increased from 66.7% to 100% of transactions
+
+Generated: November 6, 2025
+Location: test-files-nov6-complete-with-results/
+Version: 1.0 (AXIS bank fees enabled)
+================================================================================
