@@ -59,30 +59,48 @@ class SettlementCalculatorV1Logic {
           mdrRates.convcharges,
           mdrRates.convchargestype
         );
-        
+
         const epCharges = this.calculateEpCharges(
           txn.paid_amount,
           mdrRates.endpointcharge,
           mdrRates.endpointchargestypes
         );
-        
+
         const gst = this.calculateGST(
           convCharges + epCharges,
           mdrRates.gst,
           mdrRates.gsttype
         );
-        
-        const pgCharge = convCharges + epCharges + gst;
-        
+
+        // V1 Logic: Calculate convChargeGst (SabPaisa's internal adjustment)
+        const convChargeGst = this.calculateConvChargeGst(
+          convCharges,
+          mdrRates.sp_conv_rate,
+          mdrRates.sp_conv_rate_type
+        );
+
+        // V1 Logic: Total charges = convcharges + ep_charges + gst + convChargeGst
+        // Apply same rounding as V1 (.toFixed(2))
+        let charges = convCharges + epCharges + gst;
+        charges = Number(charges.toFixed(2));
+        charges += Number(convChargeGst);
+
+        const pgCharge = charges;
+
         let settlementAmount = 0;
-        
+
         if (feeBearerConfig.fee_bearer_id === '1') {
+          // Bank bears the fee
           settlementAmount = txn.paid_amount;
         } else if (feeBearerConfig.fee_bearer_id === '2') {
+          // Merchant bears the fee
           settlementAmount = txn.paid_amount - pgCharge;
         } else if (feeBearerConfig.fee_bearer_id === '3') {
+          // Payer bears the fee - use payee_amount, recalculate charges
           settlementAmount = txn.payee_amount;
+          charges = Number(txn.paid_amount) - Number(txn.payee_amount);
         } else if (feeBearerConfig.fee_bearer_id === '4') {
+          // Subscriber bears the fee
           settlementAmount = txn.paid_amount;
         }
         
@@ -116,6 +134,7 @@ class SettlementCalculatorV1Logic {
           convcharges: convCharges,
           ep_charges: epCharges,
           gst: gst,
+          conv_charge_gst: convChargeGst,  // V1 specific adjustment for audit
           pg_charge: pgCharge,
           fee_bearer_id: feeBearerConfig.fee_bearer_id,
           fee_bearer_name: feeBearerConfig.fee_bearer_name,
@@ -252,7 +271,9 @@ class SettlementCalculatorV1Logic {
           endpointcharge: '2',
           endpointchargestypes: 'percentage',
           gst: '18',
-          gsttype: 'percentage'
+          gsttype: 'percentage',
+          sp_conv_rate: '0',
+          sp_conv_rate_type: 'fixed'
         };
       }
 
@@ -263,7 +284,9 @@ class SettlementCalculatorV1Logic {
           endpointcharge,
           endpointchargestypes,
           gst,
-          gsttype
+          gsttype,
+          sp_conv_rate,
+          sp_conv_rate_type
          FROM merchant_base_rate
          WHERE client_code = $1 AND paymodeid = $2
          LIMIT 1`,
@@ -277,7 +300,9 @@ class SettlementCalculatorV1Logic {
           endpointcharge: '2',
           endpointchargestypes: 'percentage',
           gst: '18',
-          gsttype: 'percentage'
+          gsttype: 'percentage',
+          sp_conv_rate: '0',
+          sp_conv_rate_type: 'fixed'
         };
       }
 
@@ -291,8 +316,25 @@ class SettlementCalculatorV1Logic {
         endpointcharge: '2',
         endpointchargestypes: 'percentage',
         gst: '18',
-        gsttype: 'percentage'
+        gsttype: 'percentage',
+        sp_conv_rate: '0',
+        sp_conv_rate_type: 'fixed'
       };
+    }
+  }
+
+  /**
+   * Calculate convChargeGst - V1 specific adjustment
+   * This is SabPaisa's internal adjustment for convenience charge GST
+   */
+  calculateConvChargeGst(convCharges, spConvRate, spConvRateType) {
+    const spRate = parseFloat(spConvRate) || 0;
+
+    if (spConvRateType === 'fixed') {
+      return convCharges - spRate;
+    } else {
+      // Percentage type
+      return (convCharges - (convCharges * spRate)) / 100;
     }
   }
 
