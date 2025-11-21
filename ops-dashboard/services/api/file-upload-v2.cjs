@@ -592,6 +592,12 @@ async function processFile(file, fileType, sourceType = null, includePreview = t
     processedData = data;
   }
 
+  // Preprocess Ops PG Excel format (handles quoted columns, scientific notation, paise conversion)
+  if ((detectedType === 'transactions' || detectedType === 'pg_transactions' || detectedType === 'pg_data') &&
+      ['.xlsx', '.xls'].includes(ext)) {
+    processedData = preprocessOpsPGExcel(processedData);
+  }
+
   // Validate and process data
   log(`🔍 [V2 Upload] Calling validateData with fileType: "${detectedType}"`);
   const { validRecords, errors } = validateData(processedData, detectedType);
@@ -675,6 +681,12 @@ async function processFileWithSession(file, fileType, sourceType = null, include
     processedData = data;
   }
 
+  // Preprocess Ops PG Excel format (handles quoted columns, scientific notation, paise conversion)
+  if ((detectedType === 'transactions' || detectedType === 'pg_transactions' || detectedType === 'pg_data') &&
+      ['.xlsx', '.xls'].includes(ext)) {
+    processedData = preprocessOpsPGExcel(processedData);
+  }
+
   // Validate and process data
   log(`🔍 [V2 Upload] Calling validateData with fileType: "${detectedType}"`);
   const { validRecords, errors } = validateData(processedData, detectedType);
@@ -747,6 +759,82 @@ function parseExcel(filePath) {
   } catch (error) {
     return Promise.reject(error);
   }
+}
+
+// Preprocess Ops Team PG Excel Format
+// Handles quoted column names, scientific notation, and rupees→paise conversion
+function preprocessOpsPGExcel(data) {
+  if (!data || data.length === 0) return data;
+
+  // Detect Ops PG Excel format (check for quoted column names)
+  const firstRow = data[0];
+  const hasQuotedColumns = Object.keys(firstRow).some(k => k.startsWith('"') && k.endsWith('"'));
+
+  if (!hasQuotedColumns) {
+    // Not Ops format, return as-is
+    return data;
+  }
+
+  console.log('[PG Excel Preprocessor] Detected Ops team PG Excel format - applying preprocessing');
+
+  return data.map((row, index) => {
+    const processed = {};
+
+    // Helper: Convert large number from scientific notation to integer string
+    const convertLargeNumber = (value) => {
+      if (!value && value !== 0) return null;
+      if (typeof value === 'string') return value.trim();
+      if (typeof value === 'number') return Math.floor(value).toString();
+      return String(value);
+    };
+
+    // Helper: Convert rupees to paise
+    const convertToPaise = (value) => {
+      if (!value && value !== 0) return 0;
+      const num = typeof value === 'number' ? value : parseFloat(value);
+      if (isNaN(num)) return 0;
+      return Math.round(num * 100);
+    };
+
+    // Helper: Get string safely
+    const getString = (value) => {
+      if (!value && value !== 0) return null;
+      return String(value).trim() || null;
+    };
+
+    // Map Ops Excel columns to standard sp_v2_transactions schema
+    processed.transaction_id = convertLargeNumber(row['"txn_id"']);
+    processed.merchant_id = getString(row['"client_txn_id"'] || row['client_code']);
+    processed.gateway_ref = getString(row['"pg_txn_id"'] || row['"bank_txn_id"']);
+    processed.utr = getString(row['"challan_no"']);
+
+    // Amounts: Gross = customer pays, Amount = merchant receives (net)
+    processed.gross_amount_paise = convertToPaise(row['Gross Amount'] || row['paid_amount']);
+    processed.amount_paise = convertToPaise(row['payee_amount'] || row['act_amount']);
+
+    processed.currency = 'INR';
+    processed.payment_method = getString(row['payment_mode'] || row['pg_pay_mode']);
+    processed.status = getString(row['status']) || 'SUCCESS';
+
+    // Dates
+    const transDate = row['trans_date'] || row['trans_complete_date'];
+    if (transDate) {
+      try {
+        const date = new Date(transDate);
+        processed.transaction_date = date.toISOString().split('T')[0];
+        processed.transaction_timestamp = date.toISOString();
+      } catch (e) {
+        processed.transaction_date = null;
+        processed.transaction_timestamp = null;
+      }
+    }
+
+    // Source metadata
+    processed.source_type = 'MANUAL_UPLOAD';
+    processed.source_name = 'ops_pg_excel';
+
+    return processed;
+  });
 }
 
 // File type detection based on column headers
