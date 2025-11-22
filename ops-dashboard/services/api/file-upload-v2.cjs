@@ -819,7 +819,32 @@ function preprocessOpsPGExcel(data) {
     const convertLargeNumber = (value) => {
       if (!value && value !== 0) return null;
       if (typeof value === 'string') return value.trim();
-      if (typeof value === 'number') return Math.floor(value).toString();
+      if (typeof value === 'number') {
+        // Handle scientific notation without precision loss
+        // Convert to string with fixed notation, then parse as integer
+        const str = value.toExponential();
+        const match = str.match(/^(-?\d+\.?\d*)e([+-]?\d+)$/);
+        if (match) {
+          const [, mantissa, exponent] = match;
+          const exp = parseInt(exponent);
+          const num = parseFloat(mantissa);
+
+          // For large numbers, use BigInt-like string manipulation
+          if (exp > 0) {
+            const parts = mantissa.split('.');
+            const intPart = parts[0].replace('-', '');
+            const fracPart = parts[1] || '';
+            const zerosNeeded = exp - fracPart.length;
+
+            if (zerosNeeded >= 0) {
+              const result = (mantissa.startsWith('-') ? '-' : '') + intPart + fracPart + '0'.repeat(zerosNeeded);
+              return result;
+            }
+          }
+        }
+        // Fallback: use toFixed(0) which is better than Math.floor for display
+        return value.toFixed(0);
+      }
       return String(value);
     };
 
