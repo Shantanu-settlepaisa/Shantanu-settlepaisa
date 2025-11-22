@@ -134,8 +134,12 @@ const upload = multer({
 // 🔒 SECURITY: Rate limited to 10 uploads per hour per user
 app.post('/api/upload/multiple', uploadLimiter, authenticate, opsStaffOnly, upload.array('files', 10), async (req, res) => {
   try {
+    // Add custom header to identify this server
+    res.setHeader('X-Server-Instance', '15.207.207.203-v2-with-preprocessing');
+    res.setHeader('X-Server-Timestamp', new Date().toISOString());
+
     log('📁 [V2 Upload] Received files:', req.files?.map(f => f.originalname));
-    
+
     if (!req.files || req.files.length === 0) {
       return res.status(400).json({ error: 'No files uploaded' });
     }
@@ -593,9 +597,14 @@ async function processFile(file, fileType, sourceType = null, includePreview = t
   }
 
   // Preprocess Ops PG Excel format (handles quoted columns, scientific notation, paise conversion)
+  log(`🔍 [Preprocessing Check] detectedType="${detectedType}", ext="${ext}", isExcel=${['.xlsx', '.xls'].includes(ext)}, isPG=${detectedType === 'transactions' || detectedType === 'pg_transactions' || detectedType === 'pg_data'}`);
   if ((detectedType === 'transactions' || detectedType === 'pg_transactions' || detectedType === 'pg_data') &&
       ['.xlsx', '.xls'].includes(ext)) {
+    log(`✅ [Preprocessing] Calling preprocessOpsPGExcel for ${processedData.length} records`);
     processedData = preprocessOpsPGExcel(processedData);
+    log(`✅ [Preprocessing] Returned ${processedData.length} records after preprocessing`);
+  } else {
+    log(`⏭️  [Preprocessing] Skipped - conditions not met`);
   }
 
   // Validate and process data
@@ -682,9 +691,14 @@ async function processFileWithSession(file, fileType, sourceType = null, include
   }
 
   // Preprocess Ops PG Excel format (handles quoted columns, scientific notation, paise conversion)
+  log(`🔍 [Preprocessing Check] detectedType="${detectedType}", ext="${ext}", isExcel=${['.xlsx', '.xls'].includes(ext)}, isPG=${detectedType === 'transactions' || detectedType === 'pg_transactions' || detectedType === 'pg_data'}`);
   if ((detectedType === 'transactions' || detectedType === 'pg_transactions' || detectedType === 'pg_data') &&
       ['.xlsx', '.xls'].includes(ext)) {
+    log(`✅ [Preprocessing] Calling preprocessOpsPGExcel for ${processedData.length} records`);
     processedData = preprocessOpsPGExcel(processedData);
+    log(`✅ [Preprocessing] Returned ${processedData.length} records after preprocessing`);
+  } else {
+    log(`⏭️  [Preprocessing] Skipped - conditions not met`);
   }
 
   // Validate and process data
