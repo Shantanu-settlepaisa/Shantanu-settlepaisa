@@ -270,6 +270,7 @@ export function ManualUploadEnhanced() {
   }, [jobId]);
   
   // Save PG file metadata to localStorage (serialize without File object)
+  // Store only summary to avoid quota exceeded errors with large files
   useEffect(() => {
     if (pgFiles.length > 0) {
       const metadata = pgFiles.map(f => ({
@@ -279,14 +280,22 @@ export function ManualUploadEnhanced() {
         md5: f.md5,
         analysis: f.analysis,
         preview: f.preview,
-        parsedData: f.parsedData
+        // Don't store full parsedData - just count to avoid localStorage quota
+        parsedDataCount: f.parsedData?.length || 0
       }));
-      console.log('[ManualUploadEnhanced] Saving PG file metadata to localStorage');
-      localStorage.setItem('lastPgFileMetadata', JSON.stringify(metadata));
+      try {
+        console.log('[ManualUploadEnhanced] Saving PG file metadata to localStorage');
+        localStorage.setItem('lastPgFileMetadata', JSON.stringify(metadata));
+      } catch (error) {
+        console.error('[ManualUploadEnhanced] Failed to save PG metadata to localStorage:', error);
+        // Clear if too large
+        localStorage.removeItem('lastPgFileMetadata');
+      }
     }
   }, [pgFiles]);
   
   // Save Bank file metadata to localStorage (serialize without File object)
+  // Store only summary to avoid quota exceeded errors with large files
   useEffect(() => {
     if (bankFiles.length > 0) {
       const metadata = bankFiles.map(f => ({
@@ -296,10 +305,17 @@ export function ManualUploadEnhanced() {
         md5: f.md5,
         analysis: f.analysis,
         preview: f.preview,
-        parsedData: f.parsedData
+        // Don't store full parsedData - just count to avoid localStorage quota
+        parsedDataCount: f.parsedData?.length || 0
       }));
-      console.log('[ManualUploadEnhanced] Saving Bank file metadata to localStorage');
-      localStorage.setItem('lastBankFileMetadata', JSON.stringify(metadata));
+      try {
+        console.log('[ManualUploadEnhanced] Saving Bank file metadata to localStorage');
+        localStorage.setItem('lastBankFileMetadata', JSON.stringify(metadata));
+      } catch (error) {
+        console.error('[ManualUploadEnhanced] Failed to save Bank metadata to localStorage:', error);
+        // Clear if too large
+        localStorage.removeItem('lastBankFileMetadata');
+      }
     }
   }, [bankFiles]);
   
