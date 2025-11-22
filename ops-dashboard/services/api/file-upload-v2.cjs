@@ -786,10 +786,17 @@ function parseCSV(filePath) {
 // Excel Parser
 function parseExcel(filePath) {
   try {
-    const workbook = XLSX.readFile(filePath);
+    const workbook = XLSX.readFile(filePath, { cellText: false, cellDates: true });
     const sheetName = workbook.SheetNames[0];
     const worksheet = workbook.Sheets[sheetName];
-    const data = XLSX.utils.sheet_to_json(worksheet);
+
+    // Read with raw:true to preserve large numbers as strings
+    // This prevents JavaScript number precision loss for transaction IDs
+    const data = XLSX.utils.sheet_to_json(worksheet, {
+      raw: false,  // Format cells as displayed (preserves large numbers as text)
+      defval: null // Use null for empty cells instead of undefined
+    });
+
     return Promise.resolve(data);
   } catch (error) {
     return Promise.reject(error);
