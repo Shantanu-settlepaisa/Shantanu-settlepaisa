@@ -10,6 +10,12 @@ const config = initEnv('api', {
   skipValidation: false,
   fallbackToShared: true, // Load JWT_SECRET from overview-api/.env
 });
+
+// CRITICAL FIX: Reload PORT from local .env to override fallback from overview-api
+// The fallbackToShared loads JWT_SECRET correctly, but overwrites PORT with 5108
+// We need PORT=5107 from services/api/.env, not overview-api/.env
+require('dotenv').config({ path: path.join(__dirname, '.env'), override: true });
+
 const express = require('express');
 const multer = require('multer');
 const cors = require('cors');
