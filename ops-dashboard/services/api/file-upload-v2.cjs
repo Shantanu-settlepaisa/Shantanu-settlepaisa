@@ -790,12 +790,49 @@ function parseExcel(filePath) {
     const sheetName = workbook.SheetNames[0];
     const worksheet = workbook.Sheets[sheetName];
 
-    // Read with raw:true to preserve large numbers as strings
-    // This prevents JavaScript number precision loss for transaction IDs
-    const data = XLSX.utils.sheet_to_json(worksheet, {
-      raw: false,  // Format cells as displayed (preserves large numbers as text)
-      defval: null // Use null for empty cells instead of undefined
+    // First, read raw data to get actual cell values
+    const rawData = XLSX.utils.sheet_to_json(worksheet, {
+      raw: true,  // Get raw cell values (numbers as numbers)
+      defval: null
     });
+
+    // Convert large numbers to string BEFORE JavaScript loses precision
+    // We need to access the raw worksheet cells to get the original values
+    const range = XLSX.utils.decode_range(worksheet['!ref']);
+    const headers = [];
+
+    // Get headers from first row
+    for (let col = range.s.c; col <= range.e.c; col++) {
+      const cellAddress = XLSX.utils.encode_cell({ r: range.s.r, c: col });
+      const cell = worksheet[cellAddress];
+      if (cell && cell.v !== undefined) {
+        headers.push(cell.v);
+      }
+    }
+
+    // Process each data row
+    const data = [];
+    for (let row = range.s.r + 1; row <= range.e.r; row++) {
+      const rowData = {};
+      for (let col = range.s.c; col <= range.e.c; col++) {
+        const cellAddress = XLSX.utils.encode_cell({ r: row, c: col });
+        const cell = worksheet[cellAddress];
+        const header = headers[col - range.s.c];
+
+        if (cell && cell.v !== undefined) {
+          // For large numbers, convert to string with full precision
+          if (cell.t === 'n' && Math.abs(cell.v) > 1e15) {
+            // Store the formatted text value if available, otherwise convert carefully
+            rowData[header] = cell.w || cell.v.toFixed(0);
+          } else {
+            rowData[header] = cell.v;
+          }
+        } else {
+          rowData[header] = null;
+        }
+      }
+      data.push(rowData);
+    }
 
     return Promise.resolve(data);
   } catch (error) {
