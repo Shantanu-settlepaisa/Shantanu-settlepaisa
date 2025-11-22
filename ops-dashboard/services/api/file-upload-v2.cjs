@@ -571,6 +571,19 @@ async function processFile(file, fileType, sourceType = null, includePreview = t
 
   log(`📊 [V2 Upload] Parsed ${data.length} rows from ${file.originalname}`);
 
+  // Preprocess Ops PG Excel format BEFORE format detection
+  // This handles quoted column names, scientific notation, paise conversion
+  if (['.xlsx', '.xls'].includes(ext)) {
+    log(`🔍 [Preprocessing] Checking for Ops PG Excel format...`);
+    const preprocessed = preprocessOpsPGExcel(data);
+    if (preprocessed !== data) {
+      log(`✅ [Preprocessing] Applied Ops PG Excel preprocessing to ${data.length} records`);
+      data = preprocessed;
+    } else {
+      log(`⏭️  [Preprocessing] Not Ops format, skipping`);
+    }
+  }
+
   // Auto-detect file type based on columns
   const detectedType = fileType === 'auto-detect' ? detectFileType(data[0]) : fileType;
 
@@ -600,17 +613,6 @@ async function processFile(file, fileType, sourceType = null, includePreview = t
     console.error(`Stack:`, conversionError.stack);
     // Use original data if conversion fails
     processedData = data;
-  }
-
-  // Preprocess Ops PG Excel format (handles quoted columns, scientific notation, paise conversion)
-  log(`🔍 [Preprocessing Check] detectedType="${detectedType}", ext="${ext}", isExcel=${['.xlsx', '.xls'].includes(ext)}, isPG=${detectedType === 'transactions' || detectedType === 'pg_transactions' || detectedType === 'pg_data'}`);
-  if ((detectedType === 'transactions' || detectedType === 'pg_transactions' || detectedType === 'pg_data') &&
-      ['.xlsx', '.xls'].includes(ext)) {
-    log(`✅ [Preprocessing] Calling preprocessOpsPGExcel for ${processedData.length} records`);
-    processedData = preprocessOpsPGExcel(processedData);
-    log(`✅ [Preprocessing] Returned ${processedData.length} records after preprocessing`);
-  } else {
-    log(`⏭️  [Preprocessing] Skipped - conditions not met`);
   }
 
   // Validate and process data
@@ -669,6 +671,19 @@ async function processFileWithSession(file, fileType, sourceType = null, include
   }
 
   log(`📊 [V2 Upload] Parsed ${data.length} rows from ${file.originalname}`);
+
+  // Preprocess Ops PG Excel format BEFORE format detection
+  // This handles quoted column names, scientific notation, paise conversion
+  if (['.xlsx', '.xls'].includes(ext)) {
+    log(`🔍 [Preprocessing] Checking for Ops PG Excel format...`);
+    const preprocessed = preprocessOpsPGExcel(data);
+    if (preprocessed !== data) {
+      log(`✅ [Preprocessing] Applied Ops PG Excel preprocessing to ${data.length} records`);
+      data = preprocessed;
+    } else {
+      log(`⏭️  [Preprocessing] Not Ops format, skipping`);
+    }
+  }
 
   // Auto-detect file type based on columns
   const detectedType = fileType === 'auto-detect' ? detectFileType(data[0]) : fileType;
