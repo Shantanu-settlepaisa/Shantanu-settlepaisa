@@ -333,6 +333,48 @@ module.exports = {
       log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
       merge_logs: true,
     },
+
+    /**
+     * Batch Processor Worker - Background job processor for uploads/recon
+     * Entry: batch-processor.cjs
+     *
+     * This worker polls the sp_v2_job_queue table and processes jobs in batches.
+     * Features:
+     * - Processes large file uploads without timeout
+     * - Saves checkpoints for resume on crash
+     * - Supports multiple job types (UPLOAD_PG, UPLOAD_BANK, RECONCILIATION)
+     */
+    {
+      name: 'batch-processor',
+      script: './batch-processor.cjs',
+      cwd: './services/workers',
+      instances: 1,
+      exec_mode: 'fork',
+      env: {
+        NODE_ENV: 'development',
+        SERVICE_NAME: 'batch-processor',
+      },
+      env_production: {
+        NODE_ENV: 'production',
+        SERVICE_NAME: 'batch-processor',
+      },
+      env_staging: {
+        NODE_ENV: 'staging',
+        SERVICE_NAME: 'batch-processor',
+      },
+      // Restart policy - be more lenient with worker
+      max_restarts: 20,
+      min_uptime: '30s',
+      restart_delay: 5000,
+      watch: false,
+      // Worker-specific: longer kill timeout for graceful shutdown
+      kill_timeout: 60000,  // 60 seconds to finish current batch
+      // Logging
+      error_file: './logs/batch-processor-error.log',
+      out_file: './logs/batch-processor-out.log',
+      log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
+      merge_logs: true,
+    },
   ],
 
   /**

@@ -25,6 +25,7 @@ const XLSX = require('xlsx');
 const { v4: uuidv4 } = require('uuid');
 const fs = require('fs');
 const { convertV1CSVToV2, detectFormat } = require('../shared/v1-column-mapper.cjs');
+const jobQueue = require('../shared/job-queue.cjs');
 // const { createHealthCheckEndpoint } = require('../health-check');
 
 // Security: Authentication middleware (CRIT-002)
@@ -81,6 +82,10 @@ const pool = new Pool({
 
 pool.on('error', (err) => console.error('[Upload Pool Error]', err));
 
+// Initialize job queue for batch processing
+jobQueue.init(pool);
+console.log('[Upload API] Job queue initialized');
+
 // Create authentication middleware with Upload API's pool
 const { authenticate, opsStaffOnly } = createAuthMiddleware(pool, config.auth.jwtSecret);
 console.log('[Upload API] Authentication middleware initialized with local database pool');
@@ -135,9 +140,13 @@ const upload = multer({
   }
 });
 
+// Track upload job status in memory
+const uploadJobs = new Map();
+
 // Enhanced File Upload Endpoint - Multiple Files
 // Security: Requires authentication and ops staff role (CRIT-002)
-// 🔒 SECURITY: Rate limited to 10 uploads per hour per user
+// 🔒 SECURITY: Rate limited to 100 uploads per hour per user
+// ASYNC MODE: Returns immediately, processes in background to avoid Cloudflare timeout
 app.post('/api/upload/multiple', uploadLimiter, authenticate, opsStaffOnly, upload.array('files', 10), async (req, res) => {
   try {
     // Add custom header to identify this server
@@ -150,47 +159,95 @@ app.post('/api/upload/multiple', uploadLimiter, authenticate, opsStaffOnly, uplo
       return res.status(400).json({ error: 'No files uploaded' });
     }
 
-    const results = [];
-    
-    for (const file of req.files) {
-      try {
-        // CRITICAL FIX: Pass sourceType (bank name) to processFile for DB-driven mapping
-        const result = await processFile(
-          file,
-          req.body.fileType || 'auto-detect',
-          req.body.sourceType  // Pass bank name from frontend
-        );
-        results.push({
-          filename: file.originalname,
-          status: 'success',
-          ...result
-        });
-      } catch (error) {
-        console.error(`❌ [V2 Upload] Error processing ${file.originalname}:`, error);
-        results.push({
-          filename: file.originalname,
-          status: 'error',
-          error: error.message
-        });
-      }
-    }
+    // Generate upload job ID
+    const uploadId = require('crypto').randomUUID();
+    const fileCount = req.files.length;
+    const totalRecords = 0; // Will be updated during processing
 
-    // Clean up uploaded files
-    req.files.forEach(file => {
-      fs.unlink(file.path, (err) => {
-        if (err) console.error('Error deleting file:', err);
-      });
+    // Store job status
+    uploadJobs.set(uploadId, {
+      id: uploadId,
+      status: 'processing',
+      filesTotal: fileCount,
+      filesProcessed: 0,
+      results: [],
+      startedAt: new Date(),
+      completedAt: null
     });
+
+    // Copy files info before async processing (multer may clean up)
+    const filesInfo = req.files.map(f => ({
+      path: f.path,
+      originalname: f.originalname,
+      mimetype: f.mimetype,
+      size: f.size
+    }));
+    const fileType = req.body.fileType || 'auto-detect';
+    const sourceType = req.body.sourceType;
+
+    // Return immediately with upload ID
+    console.log(`📁 [V2 Upload] ASYNC MODE: Starting upload job ${uploadId} with ${fileCount} files`);
 
     res.json({
       success: true,
-      message: `Processed ${results.length} files`,
-      results,
-      summary: {
+      message: `Upload started for ${fileCount} files. Processing in background.`,
+      uploadId: uploadId,
+      status: 'processing',
+      filesTotal: fileCount,
+      pollUrl: `/api/upload/status/${uploadId}`
+    });
+
+    // Process files in background (after response sent)
+    setImmediate(async () => {
+      const results = [];
+      const job = uploadJobs.get(uploadId);
+
+      for (const file of filesInfo) {
+        try {
+          const result = await processFile(
+            file,
+            fileType,
+            sourceType
+          );
+          results.push({
+            filename: file.originalname,
+            status: 'success',
+            ...result
+          });
+          job.filesProcessed++;
+          job.results = results;
+        } catch (error) {
+          console.error(`❌ [V2 Upload] Error processing ${file.originalname}:`, error);
+          results.push({
+            filename: file.originalname,
+            status: 'error',
+            error: error.message
+          });
+          job.filesProcessed++;
+          job.results = results;
+        }
+      }
+
+      // Clean up uploaded files
+      filesInfo.forEach(file => {
+        fs.unlink(file.path, (err) => {
+          if (err) console.error('Error deleting file:', err);
+        });
+      });
+
+      // Update job status
+      job.status = 'completed';
+      job.completedAt = new Date();
+      job.summary = {
         total: results.length,
         successful: results.filter(r => r.status === 'success').length,
         failed: results.filter(r => r.status === 'error').length
-      }
+      };
+
+      console.log(`✅ [V2 Upload] ASYNC job ${uploadId} completed:`, job.summary);
+
+      // Clean up old jobs after 1 hour
+      setTimeout(() => uploadJobs.delete(uploadId), 60 * 60 * 1000);
     });
 
   } catch (error) {
@@ -198,6 +255,262 @@ app.post('/api/upload/multiple', uploadLimiter, authenticate, opsStaffOnly, uplo
     res.status(500).json({ error: error.message });
   }
 });
+
+// Upload Status Endpoint - Check async upload progress
+app.get('/api/upload/status/:uploadId', authenticate, async (req, res) => {
+  const { uploadId } = req.params;
+  const job = uploadJobs.get(uploadId);
+
+  if (!job) {
+    return res.status(404).json({
+      success: false,
+      error: 'Upload job not found',
+      hint: 'Job may have expired or never existed'
+    });
+  }
+
+  res.json({
+    success: true,
+    uploadId: job.id,
+    status: job.status,
+    filesTotal: job.filesTotal,
+    filesProcessed: job.filesProcessed,
+    results: job.results,
+    summary: job.summary || null,
+    startedAt: job.startedAt,
+    completedAt: job.completedAt
+  });
+});
+
+// ============================================================================
+// BATCH JOB QUEUE ENDPOINTS - Persistent job queue for large file processing
+// ============================================================================
+
+/**
+ * Batch Upload Endpoint - Uses persistent job queue for large files
+ * Files are stored and processed by a background worker
+ *
+ * POST /api/upload/batch
+ * Body: multipart/form-data with 'file' field
+ * Query: ?fileType=transactions|bank_statements&batchSize=5000
+ *
+ * Response: { jobId, status: 'QUEUED', pollUrl: '/api/jobs/:jobId/status' }
+ */
+app.post('/api/upload/batch', uploadLimiter, authenticate, opsStaffOnly, upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
+
+    const {
+      fileType = 'auto-detect',
+      sourceType = null,
+      batchSize = 5000,
+      priority = 5
+    } = req.body;
+
+    // Determine job type
+    let jobType = 'UPLOAD_PG';
+    if (fileType === 'bank_statements' || fileType === 'bank_data') {
+      jobType = 'UPLOAD_BANK';
+    }
+
+    // Count records in file (quick scan)
+    let totalRecords = 0;
+    try {
+      const ext = path.extname(req.file.originalname).toLowerCase();
+      if (ext === '.xlsx' || ext === '.xls') {
+        const workbook = XLSX.readFile(req.file.path, { sheetRows: 1000000 });
+        const sheet = workbook.Sheets[workbook.SheetNames[0]];
+        const range = XLSX.utils.decode_range(sheet['!ref'] || 'A1:A1');
+        totalRecords = range.e.r; // Last row index (0-based, so this is count - 1 for header)
+      } else {
+        // CSV - count lines
+        const content = fs.readFileSync(req.file.path, 'utf-8');
+        const lines = content.split('\n').filter(l => l.trim());
+        totalRecords = Math.max(0, lines.length - 1); // Subtract header
+      }
+    } catch (countError) {
+      console.warn('[Batch Upload] Could not count records:', countError.message);
+    }
+
+    console.log(`📦 [Batch Upload] Creating job for ${req.file.originalname} (${totalRecords} records)`);
+
+    // Create job in queue
+    const job = await jobQueue.createJob({
+      jobType,
+      jobName: `Upload: ${req.file.originalname}`,
+      payloadPath: req.file.path,  // File stored by multer
+      payloadMetadata: {
+        fileName: req.file.originalname,
+        fileSize: req.file.size,
+        mimeType: req.file.mimetype,
+        sourceType: sourceType,
+        bankName: sourceType // For bank uploads
+      },
+      config: {
+        batchSize: parseInt(batchSize) || 5000,
+        batchDelayMs: 100
+      },
+      priority: parseInt(priority) || 5,
+      createdBy: req.user?.email || 'unknown',
+      totalRecords
+    });
+
+    console.log(`✅ [Batch Upload] Job ${job.jobId} created with ${totalRecords} records`);
+
+    res.json({
+      success: true,
+      message: `Upload job queued. File will be processed in batches of ${batchSize}.`,
+      jobId: job.jobId,
+      jobType: job.jobType,
+      status: job.status,
+      totalRecords,
+      estimatedBatches: Math.ceil(totalRecords / batchSize),
+      pollUrl: `/api/jobs/${job.jobId}/status`
+    });
+
+  } catch (error) {
+    console.error('❌ [Batch Upload] Error:', error);
+
+    // Clean up file on error
+    if (req.file?.path) {
+      fs.unlink(req.file.path, () => {});
+    }
+
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * Get Job Status - Check progress of a batch job
+ *
+ * GET /api/jobs/:jobId/status
+ */
+app.get('/api/jobs/:jobId/status', authenticate, async (req, res) => {
+  try {
+    const { jobId } = req.params;
+
+    const job = await jobQueue.getJobStatus(jobId);
+
+    if (!job) {
+      return res.status(404).json({
+        success: false,
+        error: 'Job not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      ...job
+    });
+
+  } catch (error) {
+    console.error('[Job Status] Error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * Get Job Logs - Detailed logs for a batch job
+ *
+ * GET /api/jobs/:jobId/logs
+ */
+app.get('/api/jobs/:jobId/logs', authenticate, async (req, res) => {
+  try {
+    const { jobId } = req.params;
+    const limit = parseInt(req.query.limit) || 100;
+
+    const logs = await jobQueue.getJobLogs(jobId, limit);
+
+    res.json({
+      success: true,
+      jobId,
+      logs
+    });
+
+  } catch (error) {
+    console.error('[Job Logs] Error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * List Recent Jobs - For monitoring/dashboard
+ *
+ * GET /api/jobs?status=QUEUED&limit=50
+ */
+app.get('/api/jobs', authenticate, opsStaffOnly, async (req, res) => {
+  try {
+    const { status, jobType, limit = 50 } = req.query;
+
+    const jobs = await jobQueue.getRecentJobs({
+      status,
+      jobType,
+      limit: parseInt(limit)
+    });
+
+    res.json({
+      success: true,
+      count: jobs.length,
+      jobs
+    });
+
+  } catch (error) {
+    console.error('[List Jobs] Error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * Cancel a Job - Cancel a queued/paused job
+ *
+ * POST /api/jobs/:jobId/cancel
+ */
+app.post('/api/jobs/:jobId/cancel', authenticate, opsStaffOnly, async (req, res) => {
+  try {
+    const { jobId } = req.params;
+    const { reason = 'Cancelled by user' } = req.body;
+
+    const result = await jobQueue.cancelJob(jobId, reason);
+
+    if (!result) {
+      return res.status(400).json({
+        success: false,
+        error: 'Job cannot be cancelled (may be processing or already completed)'
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'Job cancelled',
+      jobId
+    });
+
+  } catch (error) {
+    console.error('[Cancel Job] Error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// ============================================================================
+// END BATCH JOB QUEUE ENDPOINTS
+// ============================================================================
 
 // Single File Upload with Type Detection + Upload Session Tracking
 // Security: Requires authentication and ops staff role (CRIT-002)
