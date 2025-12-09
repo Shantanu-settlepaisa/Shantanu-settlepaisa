@@ -22,6 +22,8 @@ const config = initEnv('overview-api', {
 });
 
 // DB Configuration - uses validated config from env-loader
+// SSL required for production RDS connections
+const isProduction = config.db.host && !config.db.host.includes('localhost');
 const pool = new Pool({
   host: config.db.host,
   port: config.db.port,
@@ -31,6 +33,7 @@ const pool = new Pool({
   max: 10, // maximum pool size
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 5000,
+  ssl: isProduction ? { rejectUnauthorized: false } : false
 });
 
 console.log('[V1 Mapper] Database connection:', {
@@ -227,6 +230,8 @@ function getV1ToV2Mapping(mode = 'api') {
   // Base mapping for PG transactions (same for both modes)
   const pgMapping = {
     'transaction_id': 'transaction_id',
+    'txn_id': 'transaction_id',                // SabPaisa PG report format alias
+    'client_txn_id': 'client_txn_id',          // SabPaisa client transaction ID
     'client_code': 'merchant_id',
 
     // 🆕 EXPLICIT AMOUNT FIELDS (NO OVERLAP) - Fixes V1-to-V2 ambiguity
@@ -245,9 +250,11 @@ function getV1ToV2Mapping(mode = 'api') {
     'trans_date': 'transaction_date',
     'bank_name': 'bank_name',
     'utr': 'utr',
+    'bank_txn_id': 'utr',                      // SabPaisa PG report: bank_txn_id maps to UTR
     'rrn': 'rrn',
     'approval_code': 'approval_code',
     'transaction_status': 'status',
+    'status': 'status',                        // SabPaisa PG report: direct status field
     'pg_name': 'source_name',
     'pg_pay_mode': 'acquirer_code',
     'client_name': 'merchant_name'
@@ -383,6 +390,9 @@ function detectFormat(headers) {
     'paid_amount',
     'trans_complete_date',
     'pg_name',
+    'txn_id',                // SabPaisa PG report format
+    'client_txn_id',         // SabPaisa PG report format
+    'bank_txn_id',           // SabPaisa PG report format
 
     // Bank statement V1 indicators (from all 21 banks)
     'merchant_trackid',      // HDFC
@@ -508,6 +518,14 @@ function mapV1ToV2(v1Row, type = 'pg_transactions', dbMapping = null, mode = 'ap
             else if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(value.trim())) {
               const [day, month, year] = value.trim().split('/');
               parsedDate = new Date(`${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`);
+            }
+            // Handle YYYYMMDD format (e.g., 20251203 from SBI bank)
+            else if (/^\d{8}$/.test(value.trim())) {
+              const dateStr = value.trim();
+              const year = dateStr.substring(0, 4);
+              const month = dateStr.substring(4, 6);
+              const day = dateStr.substring(6, 8);
+              parsedDate = new Date(`${year}-${month}-${day}`);
             }
             // Handle YYYY-MM-DD or other ISO formats
             else {

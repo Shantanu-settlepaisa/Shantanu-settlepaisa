@@ -112,7 +112,7 @@ const storage = multer.diskStorage({
 
 const upload = multer({
   storage,
-  limits: { fileSize: 100 * 1024 * 1024 }, // 100MB limit
+  limits: { fileSize: 500 * 1024 * 1024 }, // 500MB limit
   fileFilter: (req, file, cb) => {
     // Security: Validate MIME type (not just extension) (CRIT-002)
     const allowedMimes = [
@@ -760,11 +760,23 @@ async function processFileWithSession(file, fileType, sourceType = null, include
   };
 }
 
-// CSV Parser with auto-delimiter detection
+// CSV Parser with auto-delimiter detection and triple-quote fix
 function parseCSV(filePath) {
   return new Promise((resolve, reject) => {
-    // Read first line to detect delimiter
-    const firstLine = fs.readFileSync(filePath, 'utf-8').split('\n')[0];
+    // Read file content
+    let fileContent = fs.readFileSync(filePath, 'utf-8');
+    const firstLine = fileContent.split('\n')[0];
+
+    // 🔧 FIX: Handle SabPaisa PG report triple-quoted columns ("""column_name""")
+    // This happens when CSV is exported from certain systems
+    if (firstLine.includes('"""')) {
+      log(`[CSV Parser] Detected triple-quoted headers, preprocessing file...`);
+      // Replace """ with " throughout the file
+      fileContent = fileContent.replace(/"""/g, '"');
+      // Write preprocessed content back to file
+      fs.writeFileSync(filePath, fileContent);
+      log(`[CSV Parser] Preprocessed file to fix triple quotes`);
+    }
 
     // Detect delimiter: tilde (~) for V1 bank files, comma for standard CSV
     const delimiter = firstLine.includes('~') ? '~' : ',';
@@ -774,7 +786,16 @@ function parseCSV(filePath) {
     const results = [];
     fs.createReadStream(filePath)
       .pipe(csv({ separator: delimiter }))
-      .on('data', (data) => results.push(data))
+      .on('data', (data) => {
+        // 🔧 FIX: Clean up any remaining double quotes in keys
+        const cleanedData = {};
+        for (const [key, value] of Object.entries(data)) {
+          const cleanKey = key.replace(/^"+|"+$/g, '').trim();
+          const cleanValue = typeof value === 'string' ? value.replace(/^"+|"+$/g, '').trim() : value;
+          cleanedData[cleanKey] = cleanValue;
+        }
+        results.push(cleanedData);
+      })
       .on('end', () => {
         log(`[CSV Parser] Parsed ${results.length} rows with delimiter "${delimiter}"`);
         resolve(results);
@@ -855,6 +876,7 @@ function preprocessOpsPGExcel(data) {
   }
 
   console.log('[PG Excel Preprocessor] Detected Ops team PG Excel format - applying preprocessing');
+  console.log('[PG Excel Preprocessor] Sample row keys:', Object.keys(data[0]));
 
   return data.map((row, index) => {
     const processed = {};
@@ -920,13 +942,38 @@ function preprocessOpsPGExcel(data) {
     processed.payment_method = getString(row['payment_mode'] || row['pg_pay_mode']);
     processed.status = getString(row['status']) || 'SUCCESS';
 
-    // Dates
-    const transDate = row['trans_date'] || row['trans_complete_date'];
+    // Dates - check both quoted and unquoted column names
+    // Log sample data for first row to debug date parsing
+    if (index === 0) {
+      console.log('[PG Excel Preprocessor] Row 0 all keys:', Object.keys(row));
+      console.log('[PG Excel Preprocessor] Looking for trans_date in:', {
+        '"trans_date"': row['"trans_date"'],
+        'trans_date': row['trans_date'],
+        '"trans_complete_date"': row['"trans_complete_date"'],
+        'trans_complete_date': row['trans_complete_date']
+      });
+    }
+    const transDate = row['"trans_date"'] || row['trans_date'] || row['"trans_complete_date"'] || row['trans_complete_date'];
+    if (index === 0) {
+      console.log('[PG Excel Preprocessor] transDate value:', transDate, 'type:', typeof transDate);
+    }
     if (transDate) {
       try {
-        const date = new Date(transDate);
-        processed.transaction_date = date.toISOString().split('T')[0];
-        processed.transaction_timestamp = date.toISOString();
+        let date;
+        const dateStr = String(transDate).trim();
+        // Handle YYYYMMDD format (e.g., 20251203)
+        if (/^\d{8}$/.test(dateStr)) {
+          const year = dateStr.substring(0, 4);
+          const month = dateStr.substring(4, 6);
+          const day = dateStr.substring(6, 8);
+          date = new Date(`${year}-${month}-${day}`);
+        } else {
+          date = new Date(transDate);
+        }
+        if (!isNaN(date.getTime())) {
+          processed.transaction_date = date.toISOString().split('T')[0];
+          processed.transaction_timestamp = date.toISOString();
+        }
       } catch (e) {
         processed.transaction_date = null;
         processed.transaction_timestamp = null;
@@ -1045,6 +1092,8 @@ function validateTransaction(row, rowNumber) {
     currency: row.currency || 'INR',
     payment_mode: row.payment_mode || row.payment_method || 'UPI',
     status: validStatus,
+    transaction_date: row.transaction_date || null,           // 🔧 FIX: Pass through transaction_date from V1 mapper
+    transaction_timestamp: row.transaction_timestamp || row.transaction_date || null, // 🔧 FIX: Pass through timestamp
     customer_email: row.customer_email || null,
     customer_phone: row.customer_phone || null,
     metadata: {
@@ -1143,106 +1192,215 @@ function findColumnVariant(row, field) {
   return possibleKeys.find(key => row[key] !== undefined);
 }
 
-// Insert transactions into V2 database (original - for backward compatibility)
+// Insert transactions into V2 database (OPTIMIZED - batch inserts)
+// Used by /api/upload/multiple endpoint
+// Each batch is an independent transaction to prevent cascade failures
 async function insertTransactions(transactions) {
-  const client = await pool.connect();
   let inserted = 0, skipped = 0, duplicates = 0;
+  const BATCH_SIZE = 1000;
+  const totalBatches = Math.ceil(transactions.length / BATCH_SIZE);
 
-  try {
-    await client.query('BEGIN');
+  console.log(`🚀 [Batch Insert Multi] Starting batch insert of ${transactions.length} transactions in ${totalBatches} batches`);
 
-    for (const txn of transactions) {
-      try {
-        await client.query('SAVEPOINT sp_txn');
+  for (let batchNum = 0; batchNum < totalBatches; batchNum++) {
+    const start = batchNum * BATCH_SIZE;
+    const end = Math.min(start + BATCH_SIZE, transactions.length);
+    const batch = transactions.slice(start, end);
 
-        // Check for duplicates
-        const existing = await client.query(
-          'SELECT id FROM sp_v2_transactions WHERE transaction_id = $1',
-          [txn.pgw_ref]
-        );
+    // Each batch gets its own connection/transaction to prevent cascade failures
+    const client = await pool.connect();
 
-        if (existing.rows.length > 0) {
-          duplicates++;
-          await client.query('RELEASE SAVEPOINT sp_txn');
-          continue;
+    try {
+      // Build batch INSERT with multiple VALUES
+      const values = [];
+      const params = [];
+      let paramIndex = 1;
+
+      for (const txn of batch) {
+        const placeholders = [];
+        for (let i = 0; i < 13; i++) {
+          placeholders.push(`$${paramIndex++}`);
         }
+        values.push(`(${placeholders.join(', ')})`);
 
-        // Insert transaction into sp_v2_transactions
-        // DEBUG: Log the values being inserted
-        console.log(`[DEBUG] Inserting PG txn ${txn.pgw_ref}: amount_paise=${txn.amount_paise}, gross_amount_paise=${txn.gross_amount_paise}`);
+        // Use transaction date from CSV if available, otherwise use current date
+        const txnDate = txn.transaction_date ? new Date(txn.transaction_date) : new Date();
+        const txnTimestamp = txn.transaction_timestamp ? new Date(txn.transaction_timestamp) : txnDate;
 
-        await client.query(`
-          INSERT INTO sp_v2_transactions
-          (transaction_id, merchant_id, gateway_ref, utr, amount_paise, gross_amount_paise, currency, payment_method, status,
-           transaction_date, transaction_timestamp, source_type, source_name)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-        `, [
-          txn.pgw_ref, txn.merchant_id, txn.pgw_ref, txn.utr, txn.amount_paise, txn.gross_amount_paise,
-          txn.currency, txn.payment_mode, txn.status,
-          new Date(), new Date(), 'MANUAL_UPLOAD', 'manual_upload'
-        ]);
-
-        await client.query('RELEASE SAVEPOINT sp_txn');
-        inserted++;
-      } catch (error) {
-        await client.query('ROLLBACK TO SAVEPOINT sp_txn');
-        console.error(`[V2 Upload] Error inserting transaction ${txn.pgw_ref}:`, error.message);
-        console.error(`[V2 Upload] Transaction data:`, JSON.stringify(txn));
-        skipped++;
+        params.push(
+          txn.pgw_ref,           // transaction_id
+          txn.merchant_id,       // merchant_id
+          txn.pgw_ref,           // gateway_ref
+          txn.utr,               // utr
+          txn.amount_paise,      // amount_paise
+          txn.gross_amount_paise,// gross_amount_paise
+          txn.currency,          // currency
+          txn.payment_mode,      // payment_method
+          txn.status,            // status
+          txnDate,               // transaction_date (from CSV)
+          txnTimestamp,          // transaction_timestamp (from CSV)
+          'MANUAL_UPLOAD',       // source_type
+          'manual_upload'        // source_name
+        );
       }
+
+      const sql = `
+        INSERT INTO sp_v2_transactions
+        (transaction_id, merchant_id, gateway_ref, utr, amount_paise, gross_amount_paise, currency, payment_method, status,
+         transaction_date, transaction_timestamp, source_type, source_name)
+        VALUES ${values.join(', ')}
+        ON CONFLICT (transaction_id, merchant_id, source_type) DO NOTHING
+      `;
+
+      const result = await client.query(sql, params);
+      const batchInserted = result.rowCount || 0;
+      const batchDuplicates = batch.length - batchInserted;
+
+      inserted += batchInserted;
+      duplicates += batchDuplicates;
+
+      // Progress log every 10 batches or at completion
+      if ((batchNum + 1) % 10 === 0 || batchNum === totalBatches - 1) {
+        console.log(`📊 [Batch Insert Multi] Progress: ${batchNum + 1}/${totalBatches} batches (${inserted} inserted, ${duplicates} duplicates)`);
+      }
+
+    } catch (error) {
+      console.error(`❌ [Batch Insert Multi] Error in batch ${batchNum + 1}:`, error.message);
+      // Fall back to individual inserts for this failed batch (with fresh connections)
+      for (const txn of batch) {
+        const rowClient = await pool.connect();
+        try {
+          const result = await rowClient.query(`
+            INSERT INTO sp_v2_transactions
+            (transaction_id, merchant_id, gateway_ref, utr, amount_paise, gross_amount_paise, currency, payment_method, status,
+             transaction_date, transaction_timestamp, source_type, source_name)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+            ON CONFLICT (transaction_id, merchant_id, source_type) DO NOTHING
+            RETURNING id
+          `, [
+            txn.pgw_ref, txn.merchant_id, txn.pgw_ref, txn.utr, txn.amount_paise, txn.gross_amount_paise,
+            txn.currency, txn.payment_mode, txn.status,
+            txn.transaction_date ? new Date(txn.transaction_date) : new Date(),
+            txn.transaction_timestamp ? new Date(txn.transaction_timestamp) : new Date(),
+            'MANUAL_UPLOAD', 'manual_upload'
+          ]);
+          if (result.rowCount > 0) inserted++;
+          else duplicates++;
+        } catch (rowError) {
+          console.error(`[V2 Upload] Error inserting transaction ${txn.pgw_ref}:`, rowError.message);
+          skipped++;
+        } finally {
+          rowClient.release();
+        }
+      }
+    } finally {
+      client.release();
     }
-
-    await client.query('COMMIT');
-    log(`✅ [V2 Upload] Transactions - Inserted: ${inserted}, Skipped: ${skipped}, Duplicates: ${duplicates}`);
-
-  } catch (error) {
-    await client.query('ROLLBACK');
-    throw error;
-  } finally {
-    client.release();
   }
 
+  console.log(`✅ [Batch Insert Multi] Completed: ${inserted} inserted, ${skipped} skipped, ${duplicates} duplicates`);
   return { inserted, skipped, duplicates };
 }
 
-// Insert transactions with session tracking (NEW - atomic version)
+// Insert transactions with session tracking (OPTIMIZED - batch inserts)
+// Uses batch inserts of 1000 rows per query for ~100x faster performance
 async function insertTransactionsWithSession(transactions, uploadSessionId, client) {
   let inserted = 0, skipped = 0, duplicates = 0;
+  const BATCH_SIZE = 1000;
+  const totalBatches = Math.ceil(transactions.length / BATCH_SIZE);
 
-  for (const txn of transactions) {
+  console.log(`🚀 [Batch Insert] Starting batch insert of ${transactions.length} transactions in ${totalBatches} batches`);
+
+  for (let batchNum = 0; batchNum < totalBatches; batchNum++) {
+    const start = batchNum * BATCH_SIZE;
+    const end = Math.min(start + BATCH_SIZE, transactions.length);
+    const batch = transactions.slice(start, end);
+
     try {
-      // Use ON CONFLICT for duplicate detection (prevents race conditions)
-      const params = [
-        txn.pgw_ref, txn.merchant_id, txn.pgw_ref, txn.utr, txn.amount_paise, txn.gross_amount_paise,
-        txn.currency, txn.payment_mode, txn.status,
-        new Date(), new Date(), 'MANUAL_UPLOAD', 'manual_upload', uploadSessionId
-      ];
+      // Build batch INSERT with multiple VALUES
+      const values = [];
+      const params = [];
+      let paramIndex = 1;
 
-      // DEBUG: Log actual SQL parameters
-      console.log(`[DEBUG insertWithSession] ${txn.pgw_ref}: params[4]=$5=amount=${params[4]}, params[5]=$6=gross=${params[5]}`);
+      for (const txn of batch) {
+        const placeholders = [];
+        for (let i = 0; i < 14; i++) {
+          placeholders.push(`$${paramIndex++}`);
+        }
+        values.push(`(${placeholders.join(', ')})`);
 
-      const result = await client.query(`
+        // Use transaction date from CSV if available, otherwise use current date
+        const txnDate = txn.transaction_date ? new Date(txn.transaction_date) : new Date();
+        const txnTimestamp = txn.transaction_timestamp ? new Date(txn.transaction_timestamp) : txnDate;
+
+        params.push(
+          txn.pgw_ref,           // transaction_id
+          txn.merchant_id,       // merchant_id
+          txn.pgw_ref,           // gateway_ref
+          txn.utr,               // utr
+          txn.amount_paise,      // amount_paise
+          txn.gross_amount_paise,// gross_amount_paise
+          txn.currency,          // currency
+          txn.payment_mode,      // payment_method
+          txn.status,            // status
+          txnDate,               // transaction_date (from CSV)
+          txnTimestamp,          // transaction_timestamp (from CSV)
+          'MANUAL_UPLOAD',       // source_type
+          'manual_upload',       // source_name
+          uploadSessionId        // upload_session_id
+        );
+      }
+
+      const sql = `
         INSERT INTO sp_v2_transactions
         (transaction_id, merchant_id, gateway_ref, utr, amount_paise, gross_amount_paise, currency, payment_method, status,
          transaction_date, transaction_timestamp, source_type, source_name, upload_session_id)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+        VALUES ${values.join(', ')}
         ON CONFLICT (transaction_id, merchant_id, source_type) DO NOTHING
-        RETURNING id
-      `, params);
+      `;
 
-      if (result.rowCount > 0) {
-        inserted++;
-      } else {
-        duplicates++;
+      const result = await client.query(sql, params);
+      const batchInserted = result.rowCount || 0;
+      const batchDuplicates = batch.length - batchInserted;
+
+      inserted += batchInserted;
+      duplicates += batchDuplicates;
+
+      // Progress log every 10 batches or at completion
+      if ((batchNum + 1) % 10 === 0 || batchNum === totalBatches - 1) {
+        console.log(`📊 [Batch Insert] Progress: ${batchNum + 1}/${totalBatches} batches (${inserted} inserted, ${duplicates} duplicates)`);
       }
+
     } catch (error) {
-      console.error(`[V2 Upload] Error inserting transaction ${txn.pgw_ref}:`, error.message);
-      console.error(`[V2 Upload] Transaction data:`, JSON.stringify(txn));
-      skipped++;
+      console.error(`❌ [Batch Insert] Error in batch ${batchNum + 1}:`, error.message);
+      // Fall back to individual inserts for this batch to identify problematic rows
+      for (const txn of batch) {
+        try {
+          const result = await client.query(`
+            INSERT INTO sp_v2_transactions
+            (transaction_id, merchant_id, gateway_ref, utr, amount_paise, gross_amount_paise, currency, payment_method, status,
+             transaction_date, transaction_timestamp, source_type, source_name, upload_session_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+            ON CONFLICT (transaction_id, merchant_id, source_type) DO NOTHING
+            RETURNING id
+          `, [
+            txn.pgw_ref, txn.merchant_id, txn.pgw_ref, txn.utr, txn.amount_paise, txn.gross_amount_paise,
+            txn.currency, txn.payment_mode, txn.status,
+            txn.transaction_date ? new Date(txn.transaction_date) : new Date(),
+            txn.transaction_timestamp ? new Date(txn.transaction_timestamp) : new Date(),
+            'MANUAL_UPLOAD', 'manual_upload', uploadSessionId
+          ]);
+          if (result.rowCount > 0) inserted++;
+          else duplicates++;
+        } catch (rowError) {
+          console.error(`[V2 Upload] Error inserting transaction ${txn.pgw_ref}:`, rowError.message);
+          skipped++;
+        }
+      }
     }
   }
 
-  log(`✅ [V2 Upload Session] Transactions - Inserted: ${inserted}, Skipped: ${skipped}, Duplicates: ${duplicates}`);
+  console.log(`✅ [Batch Insert] Completed: ${inserted} inserted, ${skipped} skipped, ${duplicates} duplicates`);
   return { inserted, skipped, duplicates };
 }
 
@@ -1324,71 +1482,129 @@ async function insertBankStatements(statements) {
   return { inserted, skipped, duplicates, errors };
 }
 
-// Insert bank statements with session tracking (NEW - atomic version)
+// Insert bank statements with session tracking (OPTIMIZED - batch inserts)
+// Uses batch inserts of 1000 rows per query for ~100x faster performance
 async function insertBankStatementsWithSession(statements, uploadSessionId, client) {
   let inserted = 0, skipped = 0, duplicates = 0;
   const errors = [];
+  const BATCH_SIZE = 1000;
 
-  for (const stmt of statements) {
+  // First, get existing UTRs to filter duplicates (one query instead of N)
+  const utrs = statements.map(s => s.utr).filter(Boolean);
+  const existingResult = await client.query(`
+    SELECT utr, bank_name FROM sp_v2_bank_statements
+    WHERE utr = ANY($1)
+  `, [utrs]);
+
+  const existingSet = new Set(existingResult.rows.map(r => `${r.utr}|${r.bank_name}`));
+
+  // Filter out duplicates
+  const newStatements = statements.filter(stmt => {
+    const key = `${stmt.utr}|${stmt.acquirer}`;
+    if (existingSet.has(key)) {
+      duplicates++;
+      return false;
+    }
+    return true;
+  });
+
+  if (newStatements.length === 0) {
+    console.log(`✅ [Batch Insert Bank] All ${statements.length} statements are duplicates, skipping insert`);
+    return { inserted: 0, skipped: 0, duplicates };
+  }
+
+  const totalBatches = Math.ceil(newStatements.length / BATCH_SIZE);
+  console.log(`🚀 [Batch Insert Bank] Starting batch insert of ${newStatements.length} statements in ${totalBatches} batches (${duplicates} duplicates filtered)`);
+
+  for (let batchNum = 0; batchNum < totalBatches; batchNum++) {
+    const start = batchNum * BATCH_SIZE;
+    const end = Math.min(start + BATCH_SIZE, newStatements.length);
+    const batch = newStatements.slice(start, end);
+
     try {
-      // Use INSERT with duplicate check (bank statements don't have UNIQUE constraint yet)
-      // Check for duplicates first
-      const existing = await client.query(
-        'SELECT id FROM sp_v2_bank_statements WHERE utr = $1 AND bank_name = $2',
-        [stmt.utr, stmt.acquirer]
-      );
+      // Build batch INSERT with multiple VALUES
+      const values = [];
+      const params = [];
+      let paramIndex = 1;
 
-      if (existing.rows.length > 0) {
-        duplicates++;
-        continue;
+      for (const stmt of batch) {
+        const placeholders = [];
+        for (let i = 0; i < 12; i++) {
+          placeholders.push(`$${paramIndex++}`);
+        }
+        values.push(`(${placeholders.join(', ')})`);
+
+        params.push(
+          stmt.bank_reference || stmt.bank_ref || stmt.utr || stmt.id || `BANK_${Date.now()}_${Math.random()}`,
+          stmt.acquirer || stmt.bank_name,
+          stmt.utr || stmt.bank_reference || stmt.bank_ref || null,
+          stmt.amount_paise,
+          stmt.gross_amount_paise || stmt.amount_paise,
+          stmt.bank_fee_paise || null,
+          stmt.bank_gst_paise || null,
+          stmt.credited_at,
+          stmt.cycle_date,
+          'MANUAL_UPLOAD',
+          'manual_upload',
+          'CREDIT'
+        );
       }
 
-      // Insert bank statement with upload_session_id
-      // DEBUG: Log the values being inserted
-      console.log(`[DEBUG] Inserting bank stmt ${stmt.utr}: amount_paise=${stmt.amount_paise}, gross_amount_paise=${stmt.gross_amount_paise}, credited_at=${stmt.credited_at}, cycle_date=${stmt.cycle_date}`);
-
-      await client.query(`
+      const sql = `
         INSERT INTO sp_v2_bank_statements
         (bank_ref, bank_name, utr, amount_paise, gross_amount_paise, bank_fee_paise, bank_gst_paise,
          transaction_date, value_date, source_type, source_file, debit_credit)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-      `, [
-        stmt.bank_reference || stmt.bank_ref || stmt.utr || stmt.id || `BANK_${Date.now()}_${Math.random()}`,
-        stmt.acquirer || stmt.bank_name,
-        stmt.utr || stmt.bank_reference || stmt.bank_ref || null,
-        stmt.amount_paise,
-        stmt.gross_amount_paise || stmt.amount_paise,
-        stmt.bank_fee_paise || null,
-        stmt.bank_gst_paise || null,
-        stmt.credited_at,
-        stmt.cycle_date,
-        'MANUAL_UPLOAD',
-        'manual_upload',
-        'CREDIT'
-      ]);
+        VALUES ${values.join(', ')}
+      `;
 
-      inserted++;
+      await client.query(sql, params);
+      inserted += batch.length;
+
+      // Progress log every 10 batches or at completion
+      if ((batchNum + 1) % 10 === 0 || batchNum === totalBatches - 1) {
+        console.log(`📊 [Batch Insert Bank] Progress: ${batchNum + 1}/${totalBatches} batches (${inserted} inserted)`);
+      }
+
     } catch (error) {
-      console.error(`❌ [Bank Insert Error] ${stmt.acquirer || 'UNKNOWN'} - UTR: ${stmt.utr}:`, error.message);
-      console.error(`[Bank Insert Error] Statement data:`, JSON.stringify(stmt, null, 2));
-      errors.push({
-        bank: stmt.acquirer,
-        utr: stmt.utr,
-        error: error.message,
-        stmt: stmt
-      });
-      skipped++;
+      console.error(`❌ [Batch Insert Bank] Error in batch ${batchNum + 1}:`, error.message);
+      // Fall back to individual inserts for this batch to identify problematic rows
+      for (const stmt of batch) {
+        try {
+          await client.query(`
+            INSERT INTO sp_v2_bank_statements
+            (bank_ref, bank_name, utr, amount_paise, gross_amount_paise, bank_fee_paise, bank_gst_paise,
+             transaction_date, value_date, source_type, source_file, debit_credit)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+          `, [
+            stmt.bank_reference || stmt.bank_ref || stmt.utr || stmt.id || `BANK_${Date.now()}_${Math.random()}`,
+            stmt.acquirer || stmt.bank_name,
+            stmt.utr || stmt.bank_reference || stmt.bank_ref || null,
+            stmt.amount_paise,
+            stmt.gross_amount_paise || stmt.amount_paise,
+            stmt.bank_fee_paise || null,
+            stmt.bank_gst_paise || null,
+            stmt.credited_at,
+            stmt.cycle_date,
+            'MANUAL_UPLOAD',
+            'manual_upload',
+            'CREDIT'
+          ]);
+          inserted++;
+        } catch (rowError) {
+          console.error(`❌ [Bank Insert Error] ${stmt.acquirer || 'UNKNOWN'} - UTR: ${stmt.utr}:`, rowError.message);
+          errors.push({ bank: stmt.acquirer, utr: stmt.utr, error: rowError.message });
+          skipped++;
+        }
+      }
     }
   }
 
   if (errors.length > 0) {
-    log(`❌ [V2 Upload Session] Bank Statements - ${errors.length} errors occurred:`);
-    errors.slice(0, 3).forEach(err => {
-      log(`   - ${err.bank}: ${err.error}`);
-    });
+    log(`❌ [Batch Insert Bank] ${errors.length} errors occurred:`);
+    errors.slice(0, 3).forEach(err => log(`   - ${err.bank}: ${err.error}`));
   }
 
-  log(`✅ [V2 Upload Session] Bank Statements - Inserted: ${inserted}, Skipped: ${skipped}, Duplicates: ${duplicates}`);
+  console.log(`✅ [Batch Insert Bank] Completed: ${inserted} inserted, ${skipped} skipped, ${duplicates} duplicates`);
   return { inserted, skipped, duplicates, errors };
 }
 
@@ -1529,10 +1745,16 @@ app.post('/api/upload/clean-test-data', authenticate, opsStaffOnly, async (req, 
 // createHealthCheckEndpoint(app, 'v2-file-upload', pool);
 app.get('/health', (req, res) => res.json({ status: 'ok', service: 'v2-file-upload' }));
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   log(`🚀 [V2 Upload Service] Running on port ${PORT}`);
   log(`📁 Multiple file upload: POST http://localhost:${PORT}/api/upload/multiple`);
   log(`📄 Single file upload: POST http://localhost:${PORT}/api/upload/single`);
 });
+
+// Increase server timeouts for large file uploads (500MB max)
+server.timeout = 600000; // 10 minutes
+server.keepAliveTimeout = 620000; // Slightly higher than timeout
+server.headersTimeout = 630000; // Slightly higher than keepAliveTimeout
+log(`⏱️  [V2 Upload Service] Server timeout set to 10 minutes for large file uploads`);
 
 module.exports = app;
