@@ -197,6 +197,8 @@ function generateGatewayRef(pgName, transactionId) {
 const V1_TO_V2_COLUMN_MAPPING = {
   pg_transactions: {
     'transaction_id': 'transaction_id',
+    'txn_id': 'transaction_id',                // SabPaisa PG report format alias
+    'client_txn_id': 'client_txn_id',          // SabPaisa client transaction ID
     'client_code': 'merchant_id',
 
     // 🆕 EXPLICIT AMOUNT FIELDS (NO OVERLAP) - Fixes V1-to-V2 ambiguity
@@ -215,9 +217,11 @@ const V1_TO_V2_COLUMN_MAPPING = {
     'trans_date': 'transaction_date',
     'bank_name': 'bank_name',
     'utr': 'utr',
+    'bank_txn_id': 'utr',                      // SabPaisa PG report: bank_txn_id maps to UTR
     'rrn': 'rrn',
     'approval_code': 'approval_code',
     'transaction_status': 'status',
+    'status': 'status',                        // SabPaisa PG report: direct status field
     'pg_name': 'source_name',
     'pg_pay_mode': 'acquirer_code',
     'client_name': 'merchant_name'
@@ -345,6 +349,9 @@ function detectFormat(headers) {
     'paid_amount',
     'trans_complete_date',
     'pg_name',
+    'txn_id',                // SabPaisa PG report format
+    'client_txn_id',         // SabPaisa PG report format
+    'bank_txn_id',           // SabPaisa PG report format
 
     // Bank statement V1 indicators (from all 21 banks)
     'merchant_trackid',      // HDFC

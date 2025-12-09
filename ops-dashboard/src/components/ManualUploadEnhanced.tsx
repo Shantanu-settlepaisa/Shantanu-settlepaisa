@@ -1013,13 +1013,14 @@ export function ManualUploadEnhanced() {
       console.log('  - Bank records:', allBankData.length, `(from ${bankFiles.length} file(s))`);
       console.log('  - Banks:', bankFiles.map(f => f.analysis?.schemaDetected || 'UNKNOWN').join(', '));
 
-      // Call the real recon API with uploaded data (Phase 1 Security - authenticated)
+      // Call the real recon API - data is already in database from upload step
+      // Don't send raw data to avoid 413 Content Too Large for large files
       const response = await reconClient.post('/api/recon/run', {
         date: reconDate,
         dryRun: false,
-        pgTransactions: pgData,
-        bankRecords: allBankData,
-        bankFilename: bankFiles[0]?.file.name || 'multiple_banks.csv'  // Pass first filename for detection
+        // Data is fetched from database by recon API (fetchPGFromDatabase, fetchBankFromDatabase)
+        // Only send metadata for bank file detection
+        bankFilename: bankFiles[0]?.file.name || 'multiple_banks.csv'
       });
 
       const data = response.data;

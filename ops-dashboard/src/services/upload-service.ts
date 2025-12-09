@@ -15,7 +15,7 @@ const UPLOAD_API_URL = import.meta.env.VITE_UPLOAD_API_URL || 'http://localhost:
 // Create axios instance with default config
 const uploadClient = axios.create({
   baseURL: UPLOAD_API_URL,
-  timeout: 60000, // 60 second timeout for file uploads
+  timeout: 600000, // 10 minute timeout for large file uploads (500MB max)
   // Note: Content-Type is set automatically for FormData
 })
 
