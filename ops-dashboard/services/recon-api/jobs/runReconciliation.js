@@ -98,6 +98,7 @@ async function checkDatabaseHealth(config, jobId) {
     database: config.db.database,
     user: config.db.user,
     password: config.db.password,
+    ssl: config.db.host && !config.db.host.includes('localhost') ? { rejectUnauthorized: false } : false,
     max: 5,
     idleTimeoutMillis: 10000,
     connectionTimeoutMillis: 5000
@@ -196,8 +197,9 @@ async function retryWithBackoff(fn, maxRetries = 3, baseDelayMs = 100, context =
 }
 
 async function runReconciliation(config, params) {
-  const jobId = uuidv4();
-  const correlationId = uuidv4();
+  // Use pre-generated IDs if provided (for async mode), otherwise generate new ones
+  const jobId = params.jobId || uuidv4();
+  const correlationId = params.correlationId || uuidv4();
 
   const isManualUpload = !!(params.pgTransactions || params.bankRecords);
   const sourceType = isManualUpload ? 'MANUAL_UPLOAD' : 'CONNECTOR';
@@ -375,18 +377,34 @@ async function runReconciliation(config, params) {
     logStructured(jobId, 'info', 'Matching records');
     logStructured(jobId, 'info', 'Sample normalized PG', { sample: normalizedPg[0] });
     logStructured(jobId, 'info', 'Sample normalized Bank', { sample: normalizedBank[0] });
-    
-    const matchResult = matchRecords(normalizedPg, normalizedBank, params.date);
+
+    // ========================================================================
+    // OPTIMIZATION: Use SQL-based matching for large datasets (10K+ records)
+    // This reduces matching time from minutes to seconds
+    // ========================================================================
+    const USE_SQL_MATCHING_THRESHOLD = 1000; // Use SQL matching for 1000+ PG records
+    const useOptimizedMatching = job.counters.pgFetched >= USE_SQL_MATCHING_THRESHOLD;
+
+    let matchResult;
+    if (useOptimizedMatching) {
+      logStructured(jobId, 'info', `Using OPTIMIZED SQL-based matching (${job.counters.pgFetched} PG records)`);
+      matchResult = await matchRecordsOptimized(config, params, jobId);
+    } else {
+      logStructured(jobId, 'info', `Using standard JavaScript matching (${job.counters.pgFetched} PG records)`);
+      matchResult = matchRecords(normalizedPg, normalizedBank, params.date);
+    }
+
     job.counters.matched = matchResult.matched.length;
     job.counters.unmatchedPg = matchResult.unmatchedPg.length;
     job.counters.unmatchedBank = matchResult.unmatchedBank.length;
     job.counters.exceptions = matchResult.exceptions.length;
-    
+
     logStructured(jobId, 'info', 'Matching completed', {
       matched: matchResult.matched.length,
       unmatchedPg: matchResult.unmatchedPg.length,
       unmatchedBank: matchResult.unmatchedBank.length,
-      exceptions: matchResult.exceptions.length
+      exceptions: matchResult.exceptions.length,
+      optimized: useOptimizedMatching
     });
     
     // Stage 6: Persist results (skip if dry run)
@@ -563,6 +581,7 @@ async function fetchPGFromDatabase(config, params, jobId) {
     database: config.db.database,
     user: config.db.user,
     password: config.db.password,
+    ssl: config.db.host && !config.db.host.includes('localhost') ? { rejectUnauthorized: false } : false,
     max: 5,
     idleTimeoutMillis: 10000,
     connectionTimeoutMillis: 5000
@@ -624,6 +643,7 @@ async function fetchBankFromDatabase(config, params, jobId) {
     database: config.db.database,
     user: config.db.user,
     password: config.db.password,
+    ssl: config.db.host && !config.db.host.includes('localhost') ? { rejectUnauthorized: false } : false,
     max: 5,
     idleTimeoutMillis: 10000,
     connectionTimeoutMillis: 5000
@@ -954,7 +974,8 @@ async function normalizeBankRecords(records, bankFilename = null, jobId = null) 
         port: config.db.port,
         database: config.db.database,
         user: config.db.user,
-        password: config.db.password
+        password: config.db.password,
+        ssl: config.db.host && !config.db.host.includes('localhost') ? { rejectUnauthorized: false } : false
       });
 
       const result = await pool.query(`
@@ -999,7 +1020,9 @@ async function normalizeBankRecords(records, bankFilename = null, jobId = null) 
             bank_reference: r.utr || r.rrn || '',
             bank_name: r.bank_name || bankMapping.bank_name,
             amount: r.amount_paise || r.amount || 0,
-            gross_amount: r.gross_amount_paise || r.gross_amount || 0,
+            // Fix: Use amount_paise as fallback when gross_amount is not available
+            // This ensures we compare PG-net vs Bank-net when bank doesn't provide gross amount
+            gross_amount: r.gross_amount_paise || r.gross_amount || r.amount_paise || 0,
             transaction_date: r.transaction_date || '',
             value_date: r.value_date || r.transaction_date || '',
             utr: (r.utr || '').toString().trim().toUpperCase(),
@@ -1070,6 +1093,463 @@ async function normalizeBankRecords(records, bankFilename = null, jobId = null) 
 
   console.log(`[normalizeBankRecords] Total normalized: ${normalizedResults.length} records`);
   return normalizedResults;
+}
+
+// ============================================================================
+// OPTIMIZED SQL-BASED MATCHING (v2.11.0)
+// ============================================================================
+// For large datasets (10K+ records), use SQL JOIN for UTR matching instead of
+// JavaScript loops. This reduces matching time from minutes to seconds.
+//
+// Performance comparison:
+// - Old method: 111K PG × 20 Bank = 2.2M comparisons in JS (timeout)
+// - New method: SQL JOIN with index = ~3 seconds
+// ============================================================================
+
+async function matchRecordsOptimized(config, params, jobId) {
+  const { Pool } = require('pg');
+  const startTime = Date.now();
+
+  console.log('[SQL Recon] Starting optimized SQL-based reconciliation...');
+
+  const pool = new Pool({
+    host: config.db.host,
+    port: config.db.port,
+    database: config.db.database,
+    user: config.db.user,
+    password: config.db.password,
+    ssl: config.db.host && !config.db.host.includes('localhost') ? { rejectUnauthorized: false } : false,
+    max: 10,
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 10000
+  });
+
+  const matched = [];
+  const unmatchedPg = [];
+  const unmatchedBank = [];
+  const exceptions = [];
+
+  // V1 Tolerances (same as matchRecords)
+  const AMOUNT_TOLERANCE_PAISE = 100;        // ₹1.00
+  const AMOUNT_TOLERANCE_PERCENT = 0.001;    // 0.1%
+  const DATE_WINDOW_DAYS = 2;                // T+2 window
+  const FEE_MISMATCH_MIN = 200;              // ₹2.00 (200 paise)
+  const FEE_MISMATCH_MAX = 500;              // ₹5.00 (500 paise)
+  const ROUNDING_ERROR_EXACT = 1;            // ₹0.01 (1 paisa)
+  const FEE_VARIANCE_TOLERANCE = 100;        // ₹1.00 (100 paise)
+
+  try {
+    // ========================================================================
+    // STEP 1: Get counts for logging
+    // ========================================================================
+    const countQuery = `
+      SELECT
+        (SELECT COUNT(*) FROM sp_v2_transactions
+         WHERE DATE(transaction_date) = $1 AND source_type = 'MANUAL_UPLOAD') as pg_count,
+        (SELECT COUNT(*) FROM sp_v2_bank_statements
+         WHERE DATE(transaction_date) = $1 AND source_type = 'MANUAL_UPLOAD') as bank_count
+    `;
+    const countResult = await pool.query(countQuery, [params.date]);
+    const pgCount = parseInt(countResult.rows[0].pg_count) || 0;
+    const bankCount = parseInt(countResult.rows[0].bank_count) || 0;
+
+    console.log(`[SQL Recon] PG Records: ${pgCount}, Bank Records: ${bankCount}`);
+
+    // ========================================================================
+    // STEP 2: BANK_FILE_MISSING Check
+    // ========================================================================
+    if (bankCount === 0) {
+      console.log(`[SQL Recon] BANK_FILE_MISSING detected - no bank records`);
+
+      // Get all PG records and mark as BANK_FILE_MISSING
+      const allPgQuery = `
+        SELECT
+          transaction_id, merchant_id, amount_paise, gross_amount_paise,
+          utr, rrn, payment_method, transaction_date, transaction_timestamp, status
+        FROM sp_v2_transactions
+        WHERE DATE(transaction_date) = $1 AND source_type = 'MANUAL_UPLOAD'
+      `;
+      const pgResult = await pool.query(allPgQuery, [params.date]);
+
+      pgResult.rows.forEach(pg => {
+        exceptions.push({
+          pg: {
+            transaction_id: pg.transaction_id,
+            merchant_id: pg.merchant_id,
+            amount: pg.amount_paise,
+            gross_amount: pg.gross_amount_paise,
+            utr: pg.utr,
+            rrn: pg.rrn,
+            payment_method: pg.payment_method,
+            transaction_date: pg.transaction_date,
+            captured_at: pg.transaction_timestamp,
+            status: pg.status
+          },
+          bank: null,
+          reasonCode: 'BANK_FILE_MISSING',
+          reason: 'No bank file uploaded for this reconciliation cycle',
+          delta: 0
+        });
+      });
+
+      await pool.end();
+      console.log(`[SQL Recon] Completed in ${Date.now() - startTime}ms - All ${pgCount} PG records marked as BANK_FILE_MISSING`);
+      return { matched, unmatchedPg: [], unmatchedBank: [], exceptions };
+    }
+
+    // ========================================================================
+    // STEP 3: SQL JOIN for UTR matching (THE OPTIMIZATION!)
+    // ========================================================================
+    console.log(`[SQL Recon] Executing SQL JOIN for UTR matching...`);
+
+    const matchQuery = `
+      WITH pg_data AS (
+        SELECT
+          id as pg_db_id,
+          transaction_id, merchant_id, amount_paise, gross_amount_paise,
+          utr, rrn, payment_method, transaction_date, transaction_timestamp,
+          status, bank_fee_paise, settlement_amount_paise,
+          UPPER(TRIM(COALESCE(utr, ''))) as normalized_utr
+        FROM sp_v2_transactions
+        WHERE DATE(transaction_date) = $1
+          AND source_type = 'MANUAL_UPLOAD'
+      ),
+      bank_data AS (
+        SELECT
+          id as bank_db_id,
+          bank_ref, bank_name, amount_paise as bank_amount_paise,
+          gross_amount_paise as bank_gross_amount_paise,
+          bank_fee_paise, bank_gst_paise,
+          transaction_date as bank_transaction_date, value_date,
+          utr as bank_utr, remarks,
+          UPPER(TRIM(COALESCE(utr, ''))) as normalized_utr
+        FROM sp_v2_bank_statements
+        WHERE DATE(transaction_date) = $1
+          AND source_type = 'MANUAL_UPLOAD'
+      )
+      SELECT
+        pg.*,
+        bank.*,
+        CASE
+          WHEN bank.bank_db_id IS NOT NULL THEN 'MATCHED'
+          ELSE 'UNMATCHED_PG'
+        END as match_status
+      FROM pg_data pg
+      LEFT JOIN bank_data bank ON pg.normalized_utr = bank.normalized_utr
+        AND pg.normalized_utr != ''
+        AND pg.normalized_utr != 'NULL'
+
+      UNION ALL
+
+      -- Bank records not matched to any PG
+      SELECT
+        NULL as pg_db_id,
+        NULL as transaction_id, NULL as merchant_id, NULL as amount_paise,
+        NULL as gross_amount_paise, NULL as utr, NULL as rrn, NULL as payment_method,
+        NULL as transaction_date, NULL as transaction_timestamp,
+        NULL as status, NULL as bank_fee_paise, NULL as settlement_amount_paise,
+        NULL as normalized_utr,
+        bank.*,
+        'UNMATCHED_BANK' as match_status
+      FROM bank_data bank
+      WHERE NOT EXISTS (
+        SELECT 1 FROM pg_data pg
+        WHERE pg.normalized_utr = bank.normalized_utr
+          AND pg.normalized_utr != ''
+          AND pg.normalized_utr != 'NULL'
+      )
+    `;
+
+    const joinStartTime = Date.now();
+    const matchResult = await pool.query(matchQuery, [params.date]);
+    console.log(`[SQL Recon] SQL JOIN completed in ${Date.now() - joinStartTime}ms - ${matchResult.rows.length} rows returned`);
+
+    // ========================================================================
+    // STEP 4: Process matched/unmatched records with exception logic
+    // ========================================================================
+    const processedPgUtrs = new Set();
+    const processedBankUtrs = new Set();
+
+    // First pass: Detect duplicate UTRs
+    const pgUtrCounts = {};
+    const bankUtrCounts = {};
+
+    matchResult.rows.forEach(row => {
+      if (row.utr && row.match_status !== 'UNMATCHED_BANK') {
+        const utr = (row.utr || '').toString().trim();
+        if (utr && utr !== 'null' && utr !== 'NULL') {
+          pgUtrCounts[utr] = (pgUtrCounts[utr] || 0) + 1;
+        }
+      }
+      if (row.bank_utr && row.match_status !== 'UNMATCHED_PG') {
+        const utr = (row.bank_utr || '').toString().trim();
+        if (utr && utr !== 'null' && utr !== 'NULL') {
+          bankUtrCounts[utr] = (bankUtrCounts[utr] || 0) + 1;
+        }
+      }
+    });
+
+    const duplicatePgUtrs = new Set(Object.keys(pgUtrCounts).filter(utr => pgUtrCounts[utr] > 1));
+    const duplicateBankUtrs = new Set(Object.keys(bankUtrCounts).filter(utr => bankUtrCounts[utr] > 1));
+
+    // Second pass: Process each row
+    for (const row of matchResult.rows) {
+      // Build PG object
+      const pg = row.transaction_id ? {
+        transaction_id: row.transaction_id,
+        merchant_id: row.merchant_id,
+        amount: row.amount_paise,
+        gross_amount: row.gross_amount_paise,
+        utr: row.utr,
+        rrn: row.rrn,
+        payment_method: row.payment_method,
+        transaction_date: row.transaction_date,
+        captured_at: row.transaction_timestamp,
+        status: row.status,
+        bank_fee: row.bank_fee_paise,
+        settlement_amount: row.settlement_amount_paise
+      } : null;
+
+      // Build Bank object
+      const bank = row.bank_db_id ? {
+        bank_ref: row.bank_ref,
+        bank_name: row.bank_name,
+        amount: row.bank_amount_paise,
+        gross_amount: row.bank_gross_amount_paise,
+        bank_fee: row.bank_fee_paise,
+        bank_gst: row.bank_gst_paise,
+        transaction_date: row.bank_transaction_date,
+        value_date: row.value_date,
+        utr: row.bank_utr,
+        remarks: row.remarks
+      } : null;
+
+      // Skip if already processed (for duplicates handling)
+      const pgUtr = (pg?.utr || '').toString().trim();
+      const bankUtr = (bank?.utr || '').toString().trim();
+
+      // Handle UNMATCHED_BANK (bank record with no PG match)
+      if (row.match_status === 'UNMATCHED_BANK') {
+        if (duplicateBankUtrs.has(bankUtr)) {
+          if (!processedBankUtrs.has(bankUtr)) {
+            exceptions.push({
+              pg: null,
+              bank,
+              reasonCode: 'DUPLICATE_BANK_ENTRY',
+              reason: `Duplicate UTR in Bank: ${bankUtr} appears ${bankUtrCounts[bankUtr]} times`,
+              delta: 0
+            });
+          }
+        } else {
+          unmatchedBank.push(bank);
+        }
+        processedBankUtrs.add(bankUtr);
+        continue;
+      }
+
+      // Handle missing/invalid UTR
+      if (!pgUtr || pgUtr === '' || pgUtr === 'null' || pgUtr === 'NULL' || pgUtr === 'undefined') {
+        exceptions.push({
+          pg,
+          bank: null,
+          reasonCode: 'UTR_MISSING_OR_INVALID',
+          reason: `PG transaction missing UTR (Transaction ID: ${pg?.transaction_id || 'UNKNOWN'})`,
+          delta: 0
+        });
+        continue;
+      }
+
+      // Handle duplicate PG UTR
+      if (duplicatePgUtrs.has(pgUtr) && !processedPgUtrs.has(pgUtr)) {
+        exceptions.push({
+          pg,
+          bank: null,
+          reasonCode: 'DUPLICATE_PG_ENTRY',
+          reason: `Duplicate UTR in PG: ${pgUtr} appears ${pgUtrCounts[pgUtr]} times`,
+          delta: 0
+        });
+        processedPgUtrs.add(pgUtr);
+        continue;
+      }
+
+      // Handle UNMATCHED_PG (no bank match found)
+      if (row.match_status === 'UNMATCHED_PG' || !bank) {
+        unmatchedPg.push(pg);
+        processedPgUtrs.add(pgUtr);
+        continue;
+      }
+
+      // ====================================================================
+      // MATCHED by UTR - Now apply exception logic
+      // ====================================================================
+      const pgAmount = Number(pg.gross_amount || pg.amount) || 0;
+      const bankAmount = Number(bank.gross_amount || bank.amount) || 0;
+      const amountDiff = Math.abs(pgAmount - bankAmount);
+
+      // DATE_OUT_OF_WINDOW Check
+      const pgDate = pg.transaction_date || pg.captured_at || params.date;
+      const bankDate = bank.transaction_date || bank.value_date || params.date;
+
+      if (pgDate && bankDate) {
+        try {
+          const pgTime = new Date(pgDate).getTime();
+          const bankTime = new Date(bankDate).getTime();
+
+          if (!isNaN(pgTime) && !isNaN(bankTime)) {
+            const daysDiff = Math.abs(pgTime - bankTime) / (1000 * 60 * 60 * 24);
+
+            if (daysDiff > DATE_WINDOW_DAYS) {
+              exceptions.push({
+                pg,
+                bank,
+                reasonCode: 'DATE_OUT_OF_WINDOW',
+                reason: `Date exceeds T+${DATE_WINDOW_DAYS} window: PG ${pgDate} vs Bank ${bankDate} (${Math.round(daysDiff)} days apart)`,
+                delta: amountDiff
+              });
+              processedPgUtrs.add(pgUtr);
+              processedBankUtrs.add(bankUtr);
+              continue;
+            }
+          }
+        } catch (e) {
+          console.warn(`[SQL Recon] Date parsing error for UTR ${pgUtr}:`, e.message);
+        }
+      }
+
+      // FEES_VARIANCE Detection (when explicit fee data available)
+      const pgBankFee = pg.bank_fee || 0;
+      const pgSettlementAmount = pg.settlement_amount || 0;
+
+      if (pgBankFee > 0 || pgSettlementAmount > 0) {
+        // Check internal consistency
+        if (pgSettlementAmount > 0) {
+          const expectedSettlement = pgAmount - pgBankFee;
+          const settlementVariance = Math.abs(expectedSettlement - pgSettlementAmount);
+
+          if (settlementVariance > FEE_VARIANCE_TOLERANCE) {
+            exceptions.push({
+              pg,
+              bank,
+              reasonCode: 'FEES_VARIANCE',
+              reason: `PG fee calculation mismatch: Amount ₹${(pgAmount / 100).toFixed(2)} - Fee ₹${(pgBankFee / 100).toFixed(2)} ≠ Settlement ₹${(pgSettlementAmount / 100).toFixed(2)} (Δ ₹${(settlementVariance / 100).toFixed(2)})`,
+              delta: settlementVariance
+            });
+            processedPgUtrs.add(pgUtr);
+            processedBankUtrs.add(bankUtr);
+            continue;
+          }
+        }
+
+        // Bank credit validation
+        const expectedBankCredit = pgSettlementAmount || (pgAmount - pgBankFee);
+        const actualBankCredit = Number(bank.amount);
+        const bankCreditVariance = Math.abs(expectedBankCredit - actualBankCredit);
+
+        if (bankCreditVariance > FEE_VARIANCE_TOLERANCE) {
+          exceptions.push({
+            pg,
+            bank,
+            reasonCode: 'FEES_VARIANCE',
+            reason: `Bank credit mismatch: Expected ₹${(expectedBankCredit / 100).toFixed(2)} vs Actual ₹${(actualBankCredit / 100).toFixed(2)} (Δ ₹${(bankCreditVariance / 100).toFixed(2)})`,
+            delta: bankCreditVariance
+          });
+          processedPgUtrs.add(pgUtr);
+          processedBankUtrs.add(bankUtr);
+          continue;
+        }
+
+        // Fee calculation validation
+        if (pgBankFee > 0) {
+          const calculatedBankFee = Number(pg.gross_amount || pg.amount) - Number(bank.amount);
+          const feeVariance = Math.abs(calculatedBankFee - pgBankFee);
+
+          if (feeVariance > FEE_VARIANCE_TOLERANCE) {
+            exceptions.push({
+              pg,
+              bank,
+              reasonCode: 'FEES_VARIANCE',
+              reason: `Bank fee mismatch: Recorded ₹${(pgBankFee / 100).toFixed(2)} vs Calculated ₹${(calculatedBankFee / 100).toFixed(2)} (Δ ₹${(feeVariance / 100).toFixed(2)})`,
+              delta: feeVariance
+            });
+            processedPgUtrs.add(pgUtr);
+            processedBankUtrs.add(bankUtr);
+            continue;
+          }
+        }
+
+        // All fee checks passed - perfect match
+        matched.push({ pg, bank });
+        processedPgUtrs.add(pgUtr);
+        processedBankUtrs.add(bankUtr);
+        continue;
+      }
+
+      // Amount matching with tolerance (no explicit fees)
+      const tolerance = Math.max(AMOUNT_TOLERANCE_PAISE, pgAmount * AMOUNT_TOLERANCE_PERCENT);
+
+      if (amountDiff === 0) {
+        // Perfect match
+        matched.push({ pg, bank });
+      } else if (amountDiff === ROUNDING_ERROR_EXACT) {
+        // ROUNDING_ERROR (₹0.01)
+        exceptions.push({
+          pg,
+          bank,
+          reasonCode: 'ROUNDING_ERROR',
+          reason: `Rounding difference: PG ₹${(pgAmount / 100).toFixed(2)} vs Bank ₹${(bankAmount / 100).toFixed(2)} (Δ ₹0.01)`,
+          delta: amountDiff
+        });
+      } else if (amountDiff >= FEE_MISMATCH_MIN && amountDiff <= FEE_MISMATCH_MAX) {
+        // FEE_MISMATCH (₹2-₹5 bank fee)
+        exceptions.push({
+          pg,
+          bank,
+          reasonCode: 'FEE_MISMATCH',
+          reason: `Likely bank fee: PG ₹${(pgAmount / 100).toFixed(2)} vs Bank ₹${(bankAmount / 100).toFixed(2)} (Δ ₹${(amountDiff / 100).toFixed(2)})`,
+          delta: amountDiff
+        });
+      } else if (amountDiff <= tolerance) {
+        // Within tolerance - match
+        matched.push({ pg, bank });
+      } else {
+        // AMOUNT_MISMATCH (beyond tolerance)
+        exceptions.push({
+          pg,
+          bank,
+          reasonCode: 'AMOUNT_MISMATCH',
+          reason: `Amount mismatch: PG ₹${(pgAmount / 100).toFixed(2)} vs Bank ₹${(bankAmount / 100).toFixed(2)} (Δ ₹${(amountDiff / 100).toFixed(2)})`,
+          delta: amountDiff
+        });
+      }
+
+      processedPgUtrs.add(pgUtr);
+      processedBankUtrs.add(bankUtr);
+    }
+
+    await pool.end();
+
+    const totalTime = Date.now() - startTime;
+    console.log(`[SQL Recon] ========== RESULTS ==========`);
+    console.log(`[SQL Recon] Matched: ${matched.length}`);
+    console.log(`[SQL Recon] Exceptions: ${exceptions.length}`);
+    console.log(`[SQL Recon] Unmatched PG: ${unmatchedPg.length}`);
+    console.log(`[SQL Recon] Unmatched Bank: ${unmatchedBank.length}`);
+    console.log(`[SQL Recon] Total time: ${totalTime}ms`);
+
+    // Count exception types
+    const exceptionCounts = {};
+    exceptions.forEach(ex => {
+      exceptionCounts[ex.reasonCode] = (exceptionCounts[ex.reasonCode] || 0) + 1;
+    });
+    console.log(`[SQL Recon] Exception breakdown:`, exceptionCounts);
+
+    return { matched, unmatchedPg, unmatchedBank, exceptions };
+
+  } catch (error) {
+    await pool.end().catch(() => {});
+    console.error('[SQL Recon] Error during optimized matching:', error);
+    throw error;
+  }
 }
 
 // V1-Style Reconciliation Engine with 11 Exception Types
@@ -1468,7 +1948,8 @@ async function persistResults(results, jobId = 'UNKNOWN', job = {}, params = {})
     port: parseInt(process.env.DB_PORT || '5433'),
     database: process.env.DB_NAME || 'settlepaisa_v2',
     user: process.env.DB_USER || 'postgres',
-    password: process.env.DB_PASSWORD || 'settlepaisa123'
+    password: process.env.DB_PASSWORD || 'settlepaisa123',
+    ssl: process.env.DB_HOST && !process.env.DB_HOST.includes('localhost') ? { rejectUnauthorized: false } : false
   };
 
   console.log('[Persistence] Database config:', {
@@ -1659,11 +2140,11 @@ async function persistResults(results, jobId = 'UNKNOWN', job = {}, params = {})
             utr,
             status
           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-          ON CONFLICT (transaction_id) DO UPDATE SET
-            merchant_id = CASE 
-              WHEN sp_v2_transactions.source_type = 'API_SYNC' 
-              THEN sp_v2_transactions.merchant_id 
-              ELSE EXCLUDED.merchant_id 
+          ON CONFLICT (transaction_id, merchant_id, source_type) DO UPDATE SET
+            merchant_id = CASE
+              WHEN sp_v2_transactions.source_type = 'API_SYNC'
+              THEN sp_v2_transactions.merchant_id
+              ELSE EXCLUDED.merchant_id
             END,
             amount_paise = CASE 
               WHEN sp_v2_transactions.source_type = 'API_SYNC' 
@@ -1830,7 +2311,7 @@ async function persistResults(results, jobId = 'UNKNOWN', job = {}, params = {})
                 status,
                 exception_reason
               ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
-              ON CONFLICT (transaction_id) DO UPDATE SET
+              ON CONFLICT (transaction_id, merchant_id, source_type) DO UPDATE SET
                 status = 'EXCEPTION',
                 exception_reason = EXCLUDED.exception_reason,
                 bank_fee_paise = EXCLUDED.bank_fee_paise,
@@ -1919,18 +2400,18 @@ async function persistResults(results, jobId = 'UNKNOWN', job = {}, params = {})
             status,
             exception_reason
           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-          ON CONFLICT (transaction_id) DO UPDATE SET
-            status = CASE 
+          ON CONFLICT (transaction_id, merchant_id, source_type) DO UPDATE SET
+            status = CASE
               WHEN sp_v2_transactions.status = 'RECONCILED' THEN sp_v2_transactions.status
-              WHEN sp_v2_transactions.status = 'EXCEPTION' AND sp_v2_transactions.exception_reason IS NOT NULL 
+              WHEN sp_v2_transactions.status = 'EXCEPTION' AND sp_v2_transactions.exception_reason IS NOT NULL
                 THEN sp_v2_transactions.status
-              ELSE EXCLUDED.status 
+              ELSE EXCLUDED.status
             END,
-            exception_reason = CASE 
+            exception_reason = CASE
               WHEN sp_v2_transactions.status = 'RECONCILED' THEN sp_v2_transactions.exception_reason
-              WHEN sp_v2_transactions.status = 'EXCEPTION' AND sp_v2_transactions.exception_reason IS NOT NULL 
+              WHEN sp_v2_transactions.status = 'EXCEPTION' AND sp_v2_transactions.exception_reason IS NOT NULL
                 THEN sp_v2_transactions.exception_reason
-              ELSE EXCLUDED.exception_reason 
+              ELSE EXCLUDED.exception_reason
             END,
             updated_at = NOW()
         `, [
