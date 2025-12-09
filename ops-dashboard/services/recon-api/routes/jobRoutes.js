@@ -294,7 +294,7 @@ router.get('/jobs/:jobId/results', async (req, res) => {
       
     } finally {
       client.release();
-      await pool.end();
+      // DON'T end pool - it's shared and needs to stay open for future requests
     }
   } catch (error) {
     console.error('Error fetching job results from database:', error);
