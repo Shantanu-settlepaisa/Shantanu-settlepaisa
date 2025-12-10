@@ -468,6 +468,34 @@ export function ManualUploadEnhanced() {
     }
   }, [jobId, breakdownCounts, reconResults.length])
 
+  // Helper function to poll upload status until completion
+  const pollUploadStatus = async (uploadId: string, maxAttempts = 120): Promise<any> => {
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      try {
+        const statusResponse = await uploadClient.get(`/api/upload/status/${uploadId}`);
+        const status = statusResponse.data;
+
+        console.log(`[Upload Poll] Attempt ${attempt + 1}/${maxAttempts} - Status: ${status.status}, Progress: ${status.filesProcessed || 0}/${status.filesTotal || '?'}`);
+
+        if (status.status === 'completed') {
+          console.log(`[Upload Poll] ✅ Upload ${uploadId} completed!`);
+          return status;
+        } else if (status.status === 'failed') {
+          throw new Error(status.error || 'Upload failed');
+        }
+
+        // Wait 2 seconds before polling again
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      } catch (error: any) {
+        console.error(`[Upload Poll] Error polling status:`, error);
+        if (attempt >= maxAttempts - 1) {
+          throw error;
+        }
+      }
+    }
+    throw new Error('Upload timed out after max polling attempts');
+  };
+
   // Handle PG file upload with V2 API
   const handlePGUpload = useCallback(async (files: File[]) => {
     console.log(`📁 [V2 Upload] Uploading ${files.length} PG files to V2 API...`);
@@ -490,8 +518,28 @@ export function ManualUploadEnhanced() {
       // Use authenticated upload client (Phase 1 Security)
       const response = await uploadClient.post('/api/upload/multiple', formData);
 
-      const data = response.data;
+      let data = response.data;
       console.log('V2 Upload response:', data);
+
+      // Handle async upload response - poll for completion
+      if (data.uploadId && data.status === 'processing') {
+        console.log(`📤 [Async Upload] Upload started in background. UploadId: ${data.uploadId}`);
+        toast.info('Upload started', {
+          description: `Processing ${files.length} file(s) in background...`,
+          duration: 5000
+        });
+
+        // Poll for status until completion
+        const finalStatus = await pollUploadStatus(data.uploadId);
+
+        // Transform the final status to match expected data format
+        data = {
+          success: true,
+          results: finalStatus.results || [],
+          message: finalStatus.message || 'Upload completed'
+        };
+        console.log('V2 Upload final result:', data);
+      }
 
       if (data.success) {
         console.log(`✅ [V2 Upload] Successfully uploaded ${data.results.length} files`);
@@ -765,12 +813,29 @@ export function ManualUploadEnhanced() {
           // Use authenticated upload client (Phase 1 Security)
           const response = await uploadClient.post('/api/upload/multiple', formData);
 
-          if (response.data.success) {
+          let fileData = response.data;
+
+          // Handle async upload response - poll for completion
+          if (fileData.uploadId && fileData.status === 'processing') {
+            console.log(`📤 [Async Bank Upload] File ${i + 1}/${files.length} started in background. UploadId: ${fileData.uploadId}`);
+
+            // Poll for status until completion
+            const finalStatus = await pollUploadStatus(fileData.uploadId);
+
+            // Transform the final status to match expected data format
+            fileData = {
+              success: true,
+              results: finalStatus.results || [],
+              message: finalStatus.message || 'Upload completed'
+            };
+          }
+
+          if (fileData.success) {
             console.log(`✅ [V2 Upload] File ${i + 1}/${files.length} uploaded successfully: ${file.name}`);
 
             // Log insertion results
-            if (response.data.results && response.data.results.length > 0) {
-              const result = response.data.results[0];
+            if (fileData.results && fileData.results.length > 0) {
+              const result = fileData.results[0];
               console.log(`   📊 Processing: Inserted=${result.processing?.inserted || 0}, Skipped=${result.processing?.skipped || 0}, Duplicates=${result.processing?.duplicates || 0}`);
 
               // Log insertion errors if any
@@ -783,10 +848,10 @@ export function ManualUploadEnhanced() {
               }
             }
 
-            allResults.push(...(response.data.results || []));
+            allResults.push(...(fileData.results || []));
             successCount++;
           } else {
-            console.error(`❌ [V2 Upload] File ${i + 1}/${files.length} failed: ${file.name}`, response.data.error);
+            console.error(`❌ [V2 Upload] File ${i + 1}/${files.length} failed: ${file.name}`, fileData.error);
             failCount++;
           }
         } catch (fileError: any) {

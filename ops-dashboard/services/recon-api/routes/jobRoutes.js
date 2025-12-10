@@ -10,7 +10,8 @@ const pool = new Pool({
   port: config.db.port,
   database: config.db.database,
   user: config.db.user,
-  password: config.db.password
+  password: config.db.password,
+  ssl: config.db.ssl  // Required for RDS connections
 });
 
 console.log('[jobRoutes] Database pool initialized:', {
@@ -22,30 +23,71 @@ console.log('[jobRoutes] Database pool initialized:', {
 // GET /recon/jobs/:jobId/summary
 router.get('/jobs/:jobId/summary', async (req, res) => {
   const { jobId } = req.params;
-  
+
   try {
-    // In production, query from reconciliation_results table
-    // For now, use the in-memory job data
+    // First try in-memory job data
     const { getJob } = require('../jobs/runReconciliation');
     const job = getJob(jobId);
-    
-    // If job not found but it looks like a recon or demo job ID, return demo data
-    if (!job && !jobId.startsWith('recon_') && !jobId.startsWith('demo-')) {
-      return res.status(404).json({ error: 'Job not found' });
+
+    let matched = 0, unmatchedPg = 0, unmatchedBank = 0, exceptions = 0;
+    let finalized = false;
+
+    if (job) {
+      // Use in-memory job data
+      matched = job.counters?.matched ?? 0;
+      unmatchedPg = job.counters?.unmatchedPg ?? 0;
+      unmatchedBank = job.counters?.unmatchedBank ?? 0;
+      exceptions = job.counters?.exceptions ?? 0;
+      finalized = job.status === 'completed';
+    } else {
+      // Fallback: Query database for persisted results
+      console.log(`[Summary API] Job ${jobId} not in memory, querying database...`);
+      const client = await pool.connect();
+      try {
+        const countsResult = await client.query(`
+          SELECT
+            match_status,
+            COUNT(*) as count,
+            COALESCE(SUM(pg_amount_paise), 0) as amount_paise
+          FROM sp_v2_reconciliation_results
+          WHERE job_id = $1
+          GROUP BY match_status
+        `, [jobId]);
+
+        if (countsResult.rows.length === 0) {
+          console.log(`[Summary API] No results found for job ${jobId}`);
+          return res.status(404).json({ error: 'Job not found' });
+        }
+
+        // Parse database results
+        for (const row of countsResult.rows) {
+          const count = parseInt(row.count) || 0;
+          switch (row.match_status) {
+            case 'MATCHED':
+              matched = count;
+              break;
+            case 'UNMATCHED_PG':
+              unmatchedPg = count;
+              break;
+            case 'UNMATCHED_BANK':
+              unmatchedBank = count;
+              break;
+            case 'EXCEPTION':
+              exceptions = count;
+              break;
+          }
+        }
+        finalized = true; // If in DB, it's finalized
+        console.log(`[Summary API] Found in DB: matched=${matched}, unmatchedPg=${unmatchedPg}, unmatchedBank=${unmatchedBank}, exceptions=${exceptions}`);
+      } finally {
+        client.release();
+      }
     }
-    
-    // Use job data if exists, otherwise use demo defaults
-    const jobData = job || { status: 'completed', counters: {} };
-    
-    // Build summary from job counters - use actual values, not defaults
-    const matched = jobData.counters?.matched ?? 16;  // Use nullish coalescing to allow 0
-    const unmatchedPg = jobData.counters?.unmatchedPg ?? 9;
-    const unmatchedBank = jobData.counters?.unmatchedBank ?? 4;
-    const exceptions = jobData.counters?.exceptions ?? 6;
+
     const total = matched + unmatchedPg + unmatchedBank + exceptions;
-    
+
     // Determine source type based on job metadata or default to manual
-    const sourceType = jobData.sourceType || 'manual';
+    const sourceType = job?.sourceType || 'manual';
     
     const summary = {
       jobId,
@@ -91,7 +133,7 @@ router.get('/jobs/:jobId/summary', async (req, res) => {
         { reasonCode: 'MISSING_UTR', reasonLabel: 'Missing UTR', count: Math.ceil(exceptions * 0.3) },
         { reasonCode: 'DUPLICATE_UTR', reasonLabel: 'Duplicate UTR', count: Math.floor(exceptions * 0.3) }
       ] : [],
-      finalized: jobData.status === 'completed' // Only finalized when job is completed
+      finalized: finalized // Use the variable we set earlier
     };
     
     res.json(summary);
@@ -104,22 +146,65 @@ router.get('/jobs/:jobId/summary', async (req, res) => {
 // GET /recon/jobs/:jobId/counts
 router.get('/jobs/:jobId/counts', async (req, res) => {
   const { jobId } = req.params;
-  
+
   try {
-    // In production, query from reconciliation_results table
-    // For now, use the in-memory job data or return demo data
+    // First try in-memory job data
     const { getJob } = require('../jobs/runReconciliation');
     const job = getJob(jobId);
-    
-    // Use job data if exists, otherwise use demo defaults for recon/demo jobs
-    const jobData = job || { counters: {} };
-    
-    const matched = jobData.counters?.matched ?? 16;
-    const unmatchedPg = jobData.counters?.unmatchedPg ?? 9;
-    const unmatchedBank = jobData.counters?.unmatchedBank ?? 4;
-    const exceptions = jobData.counters?.exceptions ?? 6;
+
+    let matched = 0, unmatchedPg = 0, unmatchedBank = 0, exceptions = 0;
+
+    if (job) {
+      // Use in-memory job data
+      matched = job.counters?.matched ?? 0;
+      unmatchedPg = job.counters?.unmatchedPg ?? 0;
+      unmatchedBank = job.counters?.unmatchedBank ?? 0;
+      exceptions = job.counters?.exceptions ?? 0;
+    } else {
+      // Fallback: Query database for persisted results
+      console.log(`[Counts API] Job ${jobId} not in memory, querying database...`);
+      const client = await pool.connect();
+      try {
+        const countsResult = await client.query(`
+          SELECT
+            match_status,
+            COUNT(*) as count
+          FROM sp_v2_reconciliation_results
+          WHERE job_id = $1
+          GROUP BY match_status
+        `, [jobId]);
+
+        if (countsResult.rows.length === 0) {
+          console.log(`[Counts API] No results found for job ${jobId}`);
+          return res.status(404).json({ error: 'Job not found' });
+        }
+
+        // Parse database results
+        for (const row of countsResult.rows) {
+          const count = parseInt(row.count) || 0;
+          switch (row.match_status) {
+            case 'MATCHED':
+              matched = count;
+              break;
+            case 'UNMATCHED_PG':
+              unmatchedPg = count;
+              break;
+            case 'UNMATCHED_BANK':
+              unmatchedBank = count;
+              break;
+            case 'EXCEPTION':
+              exceptions = count;
+              break;
+          }
+        }
+        console.log(`[Counts API] Found in DB: matched=${matched}, unmatchedPg=${unmatchedPg}, unmatchedBank=${unmatchedBank}, exceptions=${exceptions}`);
+      } finally {
+        client.release();
+      }
+    }
+
     const all = matched + unmatchedPg + unmatchedBank + exceptions;
-    
+
     res.json({
       all,
       matched,

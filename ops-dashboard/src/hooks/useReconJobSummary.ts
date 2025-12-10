@@ -42,15 +42,17 @@ export function useReconJobCounts(jobId?: string | null) {
     queryFn: async () => {
       if (!jobId) throw new Error('No job ID');
       try {
-        const response = await reconClient.get(`/api/recon/jobs/${jobId}/summary`);
-        return response.data; // { all, matched, unmatched, exceptions }
+        // Use /counts endpoint which returns flat numbers: { all, matched, unmatchedPg, unmatchedBank, exceptions }
+        const response = await reconClient.get(`/api/recon/jobs/${jobId}/counts`);
+        return response.data;
       } catch (error) {
         console.error('Failed to fetch job counts:', error);
         // Return default counts on error
         return {
           all: 0,
           matched: 0,
-          unmatched: 0,
+          unmatchedPg: 0,
+          unmatchedBank: 0,
           exceptions: 0
         };
       }

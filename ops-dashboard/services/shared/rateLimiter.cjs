@@ -77,12 +77,12 @@ const authLimiter = rateLimit({
 
 /**
  * Upload rate limiter
- * 10 uploads per hour per IP/user
+ * 100 uploads per hour per IP/user (increased for large file operations)
  * Protects file upload endpoints
  */
 const uploadLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
-  max: 10,
+  max: 100, // Increased from 10 to 100 for production file processing
   message: {
     success: false,
     error: 'Upload limit exceeded. Please try again after 1 hour.',

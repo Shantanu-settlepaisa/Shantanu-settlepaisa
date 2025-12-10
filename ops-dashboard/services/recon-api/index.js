@@ -93,12 +93,17 @@ let lastHealthCheck = null
 const HEALTH_CHECK_CACHE_MS = 5000
 
 // Shared reconciliation handler for both local and production routes
+// ASYNC MODE: Returns immediately with jobId, job runs in background
 const reconciliationHandler = async (req, res) => {
-  const { date, cycle_date, merchantId, merchant_id, acquirerId, dryRun, limit, test, pgTransactions, bankRecords, bankFilename } = req.body
+  const { date, cycle_date, merchantId, merchant_id, acquirerId, dryRun, limit, test, pgTransactions, bankRecords, bankFilename, async: asyncMode } = req.body
   // Support both naming conventions: date/cycle_date and merchantId/merchant_id
   const reconDate = date || cycle_date
   const reconMerchantId = merchantId || merchant_id
-  log('[Recon API] Starting reconciliation job:', { date: reconDate, merchantId: reconMerchantId, acquirerId, dryRun, test, bankFilename })
+
+  // Default to async mode for production to avoid timeout issues
+  const useAsyncMode = asyncMode !== false; // Default true unless explicitly set to false
+
+  log('[Recon API] Starting reconciliation job:', { date: reconDate, merchantId: reconMerchantId, acquirerId, dryRun, test, bankFilename, asyncMode: useAsyncMode })
 
   if (pgTransactions) {
     log('[Recon API] Using uploaded PG transactions:', pgTransactions.length);
@@ -107,6 +112,46 @@ const reconciliationHandler = async (req, res) => {
     log('[Recon API] Using uploaded bank records:', bankRecords.length);
   }
 
+  // Generate job ID upfront so we can return it immediately
+  const jobId = uuidv4();
+  const correlationId = uuidv4();
+
+  if (useAsyncMode) {
+    // ASYNC MODE: Return immediately, run job in background
+    console.log(`[Recon API] ASYNC MODE: Starting job ${jobId} in background`);
+
+    // Start the job in background (don't await)
+    runReconciliation(config, {
+      date: reconDate,
+      merchantId: reconMerchantId,
+      acquirerId,
+      dryRun,
+      limit,
+      test,
+      pgTransactions,
+      bankRecords,
+      bankFilename,
+      jobId,           // Pass pre-generated job ID
+      correlationId    // Pass pre-generated correlation ID
+    }).then(job => {
+      console.log(`[Recon API] ASYNC job ${jobId} completed:`, job.status, job.counters);
+    }).catch(error => {
+      console.error(`[Recon API] ASYNC job ${jobId} failed:`, error.message);
+    });
+
+    // Return immediately with job ID
+    return res.json({
+      success: true,
+      jobId: jobId,
+      correlationId: correlationId,
+      status: 'RUNNING',
+      stage: 'starting',
+      message: 'Reconciliation job started in background. Poll /api/recon/jobs/:jobId/status for updates.',
+      counters: { pgFetched: 0, bankFetched: 0, normalized: 0, matched: 0, unmatchedPg: 0, unmatchedBank: 0, exceptions: 0 }
+    });
+  }
+
+  // SYNC MODE: Wait for completion (legacy behavior, may timeout)
   try {
     const job = await runReconciliation(config, {
       date: reconDate,
@@ -115,9 +160,9 @@ const reconciliationHandler = async (req, res) => {
       dryRun,
       limit,
       test,
-      pgTransactions,  // Pass uploaded data
-      bankRecords,     // Pass uploaded data
-      bankFilename     // Pass filename for bank detection
+      pgTransactions,
+      bankRecords,
+      bankFilename
     })
 
     res.json({
