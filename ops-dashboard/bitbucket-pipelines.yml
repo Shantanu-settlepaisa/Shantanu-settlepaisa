@@ -1,0 +1,411 @@
+# SettlePaisa Ops Dashboard - Bitbucket Pipelines Configuration
+#
+# This pipeline handles deployment to both Staging and Production environments
+#
+# Required Repository Variables (Settings > Repository variables):
+#   - AWS_ACCESS_KEY_ID
+#   - AWS_SECRET_ACCESS_KEY
+#   - AWS_DEFAULT_REGION (ap-south-1)
+#   - PRODUCTION_SSH_KEY (Base64 encoded private key)
+#   - STAGING_SSH_KEY (Base64 encoded private key)
+#   - PRODUCTION_EC2_IP (15.207.207.203)
+#   - STAGING_EC2_IP (52.66.199.215)
+#   - CLOUDFRONT_DISTRIBUTION_ID (E2HM34NGEJZOL6)
+#   - S3_BUCKET_PRODUCTION (settlepaisa-ops-production)
+#   - S3_BUCKET_STAGING (settlepaisa-ops-staging-2)
+
+image: node:18
+
+definitions:
+  caches:
+    npm: ~/.npm
+
+  steps:
+    # Build step - shared between staging and production
+    - step: &build-frontend
+        name: Build Frontend
+        caches:
+          - npm
+          - node
+        script:
+          - npm ci
+          - echo "Building frontend..."
+        artifacts:
+          - dist-ops/**
+
+    # Deploy backend to EC2
+    - step: &deploy-backend
+        name: Deploy Backend
+        script:
+          - apt-get update && apt-get install -y openssh-client
+          - mkdir -p ~/.ssh
+          - echo $SSH_KEY | base64 -d > ~/.ssh/deploy_key
+          - chmod 600 ~/.ssh/deploy_key
+          - ssh-keyscan -H $EC2_IP >> ~/.ssh/known_hosts 2>/dev/null
+          - |
+            ssh -i ~/.ssh/deploy_key ec2-user@$EC2_IP << 'DEPLOY_SCRIPT'
+              set -e
+              echo "🚀 Starting backend deployment..."
+
+              cd /home/ec2-user/ops-dashboard/ops-dashboard
+
+              echo "📥 Pulling latest code..."
+              git fetch origin
+              git checkout $BITBUCKET_BRANCH
+              git pull origin $BITBUCKET_BRANCH
+
+              echo "📦 Installing dependencies..."
+              npm ci --production
+
+              echo "🔄 Restarting PM2 services..."
+              pm2 restart all
+              pm2 save
+
+              echo "✅ Backend deployment complete!"
+              pm2 list
+            DEPLOY_SCRIPT
+
+    # Deploy frontend to S3
+    - step: &deploy-frontend-s3
+        name: Deploy Frontend to S3
+        script:
+          - pipe: atlassian/aws-s3-deploy:1.1.0
+            variables:
+              AWS_ACCESS_KEY_ID: $AWS_ACCESS_KEY_ID
+              AWS_SECRET_ACCESS_KEY: $AWS_SECRET_ACCESS_KEY
+              AWS_DEFAULT_REGION: $AWS_DEFAULT_REGION
+              S3_BUCKET: $S3_BUCKET
+              LOCAL_PATH: 'dist-ops'
+              DELETE_FLAG: 'true'
+              ACL: 'public-read'
+
+    # Invalidate CloudFront cache
+    - step: &invalidate-cloudfront
+        name: Invalidate CloudFront Cache
+        script:
+          - pipe: atlassian/aws-cloudfront-invalidate:0.6.0
+            variables:
+              AWS_ACCESS_KEY_ID: $AWS_ACCESS_KEY_ID
+              AWS_SECRET_ACCESS_KEY: $AWS_SECRET_ACCESS_KEY
+              AWS_DEFAULT_REGION: $AWS_DEFAULT_REGION
+              DISTRIBUTION_ID: $CLOUDFRONT_DISTRIBUTION_ID
+              PATHS: '/*'
+
+    # Health check step
+    - step: &health-check
+        name: Health Check
+        script:
+          - apt-get update && apt-get install -y curl jq
+          - |
+            echo "🏥 Running health checks..."
+
+            # Check API health
+            HEALTH_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" "$API_URL/health" || echo "000")
+            if [ "$HEALTH_RESPONSE" = "200" ]; then
+              echo "✅ API Health Check: PASSED"
+            else
+              echo "❌ API Health Check: FAILED (HTTP $HEALTH_RESPONSE)"
+              exit 1
+            fi
+
+            # Check recon API
+            RECON_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" "$API_URL/api/recon/health" || echo "000")
+            if [ "$RECON_RESPONSE" = "200" ] || [ "$RECON_RESPONSE" = "404" ]; then
+              echo "✅ Recon API: REACHABLE"
+            else
+              echo "⚠️ Recon API: HTTP $RECON_RESPONSE"
+            fi
+
+            echo "🎉 All health checks passed!"
+
+pipelines:
+  # ============================================
+  # STAGING DEPLOYMENT
+  # Triggered on push to 'staging' branch
+  # ============================================
+  branches:
+    staging:
+      - step:
+          name: Build Frontend (Staging)
+          caches:
+            - npm
+            - node
+          script:
+            - npm ci
+            - npm run build:staging-ops
+          artifacts:
+            - dist-ops/**
+
+      - step:
+          name: Deploy Backend (Staging)
+          deployment: staging
+          script:
+            - apt-get update && apt-get install -y openssh-client
+            - mkdir -p ~/.ssh
+            - echo $STAGING_SSH_KEY | base64 -d > ~/.ssh/deploy_key
+            - chmod 600 ~/.ssh/deploy_key
+            - ssh-keyscan -H $STAGING_EC2_IP >> ~/.ssh/known_hosts 2>/dev/null
+            - |
+              ssh -i ~/.ssh/deploy_key ec2-user@$STAGING_EC2_IP << 'DEPLOY_SCRIPT'
+                set -e
+                echo "🚀 Starting STAGING backend deployment..."
+
+                cd /home/ec2-user/ops-dashboard/ops-dashboard
+
+                echo "📥 Pulling latest code..."
+                git fetch origin
+                git checkout staging
+                git pull origin staging
+
+                echo "📦 Installing dependencies..."
+                npm ci --production
+
+                echo "🔄 Restarting PM2 services..."
+                pm2 restart all
+                pm2 save
+
+                echo "✅ Staging backend deployment complete!"
+                pm2 list
+              DEPLOY_SCRIPT
+
+      - step:
+          name: Deploy Frontend to S3 (Staging)
+          deployment: staging
+          script:
+            - pipe: atlassian/aws-s3-deploy:1.1.0
+              variables:
+                AWS_ACCESS_KEY_ID: $AWS_ACCESS_KEY_ID
+                AWS_SECRET_ACCESS_KEY: $AWS_SECRET_ACCESS_KEY
+                AWS_DEFAULT_REGION: 'ap-south-1'
+                S3_BUCKET: $S3_BUCKET_STAGING
+                LOCAL_PATH: 'dist-ops'
+                DELETE_FLAG: 'true'
+
+      - step:
+          name: Health Check (Staging)
+          script:
+            - apt-get update && apt-get install -y curl
+            - |
+              echo "🏥 Checking staging health..."
+              sleep 10  # Wait for services to stabilize
+              curl -f "http://$STAGING_EC2_IP:5108/health" || exit 1
+              echo "✅ Staging deployment verified!"
+
+    # ============================================
+    # PRODUCTION DEPLOYMENT
+    # Triggered on push to 'production' branch
+    # ============================================
+    production:
+      - step:
+          name: Build Frontend (Production)
+          caches:
+            - npm
+            - node
+          script:
+            - npm ci
+            - npm run build:production-ops
+            - |
+              echo "🔍 Validating production build..."
+              # Ensure no localhost URLs in build
+              if grep -r "localhost" dist-ops/assets/*.js | grep -v "// localhost"; then
+                echo "❌ ERROR: Found localhost URLs in production build!"
+                exit 1
+              fi
+              echo "✅ Build validation passed"
+          artifacts:
+            - dist-ops/**
+
+      - step:
+          name: Deploy Backend (Production)
+          deployment: production
+          trigger: manual  # Require manual approval for production
+          script:
+            - apt-get update && apt-get install -y openssh-client
+            - mkdir -p ~/.ssh
+            - echo $PRODUCTION_SSH_KEY | base64 -d > ~/.ssh/deploy_key
+            - chmod 600 ~/.ssh/deploy_key
+            - ssh-keyscan -H $PRODUCTION_EC2_IP >> ~/.ssh/known_hosts 2>/dev/null
+            - |
+              ssh -i ~/.ssh/deploy_key ec2-user@$PRODUCTION_EC2_IP << 'DEPLOY_SCRIPT'
+                set -e
+                echo "🚀 Starting PRODUCTION backend deployment..."
+
+                cd /home/ec2-user/ops-dashboard/ops-dashboard
+
+                # Create backup
+                echo "💾 Creating backup..."
+                BACKUP_TAG="backup-$(date +%Y%m%d-%H%M%S)"
+                git tag $BACKUP_TAG
+
+                echo "📥 Pulling latest code..."
+                git fetch origin
+                git checkout production
+                git pull origin production
+
+                echo "📦 Installing dependencies..."
+                npm ci --production
+
+                echo "🔄 Restarting PM2 services (rolling restart)..."
+                pm2 restart all --update-env
+                pm2 save
+
+                echo "✅ Production backend deployment complete!"
+                pm2 list
+              DEPLOY_SCRIPT
+
+      - step:
+          name: Deploy Frontend to S3 (Production)
+          deployment: production
+          script:
+            - pipe: atlassian/aws-s3-deploy:1.1.0
+              variables:
+                AWS_ACCESS_KEY_ID: $AWS_ACCESS_KEY_ID
+                AWS_SECRET_ACCESS_KEY: $AWS_SECRET_ACCESS_KEY
+                AWS_DEFAULT_REGION: 'ap-south-1'
+                S3_BUCKET: $S3_BUCKET_PRODUCTION
+                LOCAL_PATH: 'dist-ops'
+                DELETE_FLAG: 'true'
+
+      - step:
+          name: Invalidate CloudFront Cache
+          script:
+            - pipe: atlassian/aws-cloudfront-invalidate:0.6.0
+              variables:
+                AWS_ACCESS_KEY_ID: $AWS_ACCESS_KEY_ID
+                AWS_SECRET_ACCESS_KEY: $AWS_SECRET_ACCESS_KEY
+                AWS_DEFAULT_REGION: 'ap-south-1'
+                DISTRIBUTION_ID: $CLOUDFRONT_DISTRIBUTION_ID
+                PATHS: '/*'
+
+      - step:
+          name: Health Check (Production)
+          script:
+            - apt-get update && apt-get install -y curl jq
+            - |
+              echo "🏥 Running production health checks..."
+              sleep 15  # Wait for CloudFront invalidation and services
+
+              # API Health
+              HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "https://settlepaisaopsapi.sabpaisa.in/health")
+              if [ "$HTTP_CODE" = "200" ]; then
+                echo "✅ API Health: OK"
+              else
+                echo "❌ API Health: FAILED ($HTTP_CODE)"
+                exit 1
+              fi
+
+              # Frontend Health
+              HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "https://settlepaisaops.sabpaisa.in/")
+              if [ "$HTTP_CODE" = "200" ]; then
+                echo "✅ Frontend: OK"
+              else
+                echo "❌ Frontend: FAILED ($HTTP_CODE)"
+                exit 1
+              fi
+
+              echo "🎉 Production deployment verified!"
+
+  # ============================================
+  # MANUAL DEPLOYMENTS
+  # ============================================
+  custom:
+    # Deploy only backend
+    deploy-backend-production:
+      - step:
+          name: Deploy Backend Only (Production)
+          deployment: production
+          trigger: manual
+          script:
+            - apt-get update && apt-get install -y openssh-client
+            - mkdir -p ~/.ssh
+            - echo $PRODUCTION_SSH_KEY | base64 -d > ~/.ssh/deploy_key
+            - chmod 600 ~/.ssh/deploy_key
+            - ssh-keyscan -H $PRODUCTION_EC2_IP >> ~/.ssh/known_hosts 2>/dev/null
+            - |
+              ssh -i ~/.ssh/deploy_key ec2-user@$PRODUCTION_EC2_IP << 'DEPLOY_SCRIPT'
+                set -e
+                cd /home/ec2-user/ops-dashboard/ops-dashboard
+                git pull origin production
+                npm ci --production
+                pm2 restart all
+                pm2 save
+                pm2 list
+              DEPLOY_SCRIPT
+
+    # Deploy only frontend
+    deploy-frontend-production:
+      - step:
+          name: Build & Deploy Frontend Only (Production)
+          deployment: production
+          trigger: manual
+          caches:
+            - npm
+            - node
+          script:
+            - npm ci
+            - npm run build:production-ops
+            - pipe: atlassian/aws-s3-deploy:1.1.0
+              variables:
+                AWS_ACCESS_KEY_ID: $AWS_ACCESS_KEY_ID
+                AWS_SECRET_ACCESS_KEY: $AWS_SECRET_ACCESS_KEY
+                AWS_DEFAULT_REGION: 'ap-south-1'
+                S3_BUCKET: $S3_BUCKET_PRODUCTION
+                LOCAL_PATH: 'dist-ops'
+                DELETE_FLAG: 'true'
+            - pipe: atlassian/aws-cloudfront-invalidate:0.6.0
+              variables:
+                AWS_ACCESS_KEY_ID: $AWS_ACCESS_KEY_ID
+                AWS_SECRET_ACCESS_KEY: $AWS_SECRET_ACCESS_KEY
+                AWS_DEFAULT_REGION: 'ap-south-1'
+                DISTRIBUTION_ID: $CLOUDFRONT_DISTRIBUTION_ID
+                PATHS: '/*'
+
+    # Rollback production
+    rollback-production:
+      - step:
+          name: Rollback Production
+          deployment: production
+          trigger: manual
+          script:
+            - apt-get update && apt-get install -y openssh-client
+            - mkdir -p ~/.ssh
+            - echo $PRODUCTION_SSH_KEY | base64 -d > ~/.ssh/deploy_key
+            - chmod 600 ~/.ssh/deploy_key
+            - ssh-keyscan -H $PRODUCTION_EC2_IP >> ~/.ssh/known_hosts 2>/dev/null
+            - |
+              ssh -i ~/.ssh/deploy_key ec2-user@$PRODUCTION_EC2_IP << 'DEPLOY_SCRIPT'
+                set -e
+                cd /home/ec2-user/ops-dashboard/ops-dashboard
+
+                echo "📋 Available rollback points:"
+                git tag -l "backup-*" | tail -5
+
+                echo "🔙 Rolling back to previous commit..."
+                git checkout HEAD~1
+
+                npm ci --production
+                pm2 restart all
+                pm2 save
+
+                echo "✅ Rollback complete!"
+                git log -1 --oneline
+              DEPLOY_SCRIPT
+
+    # Restart PM2 services only
+    restart-services-production:
+      - step:
+          name: Restart PM2 Services (Production)
+          deployment: production
+          trigger: manual
+          script:
+            - apt-get update && apt-get install -y openssh-client
+            - mkdir -p ~/.ssh
+            - echo $PRODUCTION_SSH_KEY | base64 -d > ~/.ssh/deploy_key
+            - chmod 600 ~/.ssh/deploy_key
+            - ssh-keyscan -H $PRODUCTION_EC2_IP >> ~/.ssh/known_hosts 2>/dev/null
+            - |
+              ssh -i ~/.ssh/deploy_key ec2-user@$PRODUCTION_EC2_IP << 'DEPLOY_SCRIPT'
+                pm2 restart all
+                pm2 save
+                pm2 list
+              DEPLOY_SCRIPT
