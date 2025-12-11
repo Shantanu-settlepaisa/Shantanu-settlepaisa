@@ -328,8 +328,9 @@ router.get('/jobs/:jobId/results', async (req, res) => {
       
       const offset = (parseInt(page) - 1) * parseInt(limit);
       // JOIN with source tables to get actual transaction dates
+      // Use DISTINCT ON to avoid duplicates when multiple PG records have same transaction_id
       const dataQuery = `
-        SELECT
+        SELECT DISTINCT ON (rr.id)
           rr.id,
           rr.job_id,
           rr.pg_transaction_id,
@@ -350,7 +351,7 @@ router.get('/jobs/:jobId/results', async (req, res) => {
         LEFT JOIN sp_v2_transactions pg ON pg.transaction_id = rr.pg_transaction_id
         LEFT JOIN sp_v2_bank_statements bank ON bank.id = rr.bank_statement_id
         ${whereClause.replace('job_id', 'rr.job_id').replace('match_status', 'rr.match_status').replace('exception_reason_code', 'rr.exception_reason_code')}
-        ORDER BY rr.created_at DESC
+        ORDER BY rr.id, rr.created_at DESC
         LIMIT $${queryParams.length + 1} OFFSET $${queryParams.length + 2}
       `;
 
