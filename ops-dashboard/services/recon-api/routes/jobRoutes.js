@@ -327,41 +327,47 @@ router.get('/jobs/:jobId/results', async (req, res) => {
       const total = parseInt(countResult.rows[0].total);
       
       const offset = (parseInt(page) - 1) * parseInt(limit);
+      // JOIN with source tables to get actual transaction dates
       const dataQuery = `
-        SELECT 
-          id,
-          job_id,
-          pg_transaction_id,
-          bank_statement_id,
-          match_status,
-          match_score,
-          exception_reason_code,
-          exception_severity,
-          exception_message,
-          pg_amount_paise,
-          bank_amount_paise,
-          variance_paise,
-          created_at
-        FROM sp_v2_reconciliation_results
-        ${whereClause}
-        ORDER BY created_at DESC
+        SELECT
+          rr.id,
+          rr.job_id,
+          rr.pg_transaction_id,
+          rr.bank_statement_id,
+          rr.match_status,
+          rr.match_score,
+          rr.exception_reason_code,
+          rr.exception_severity,
+          rr.exception_message,
+          rr.pg_amount_paise,
+          rr.bank_amount_paise,
+          rr.variance_paise,
+          rr.created_at,
+          pg.transaction_date as pg_txn_date,
+          pg.utr as pg_utr,
+          bank.transaction_date as bank_txn_date
+        FROM sp_v2_reconciliation_results rr
+        LEFT JOIN sp_v2_transactions pg ON pg.transaction_id = rr.pg_transaction_id
+        LEFT JOIN sp_v2_bank_statements bank ON bank.id = rr.bank_statement_id
+        ${whereClause.replace('job_id', 'rr.job_id').replace('match_status', 'rr.match_status').replace('exception_reason_code', 'rr.exception_reason_code')}
+        ORDER BY rr.created_at DESC
         LIMIT $${queryParams.length + 1} OFFSET $${queryParams.length + 2}
       `;
-      
+
       queryParams.push(parseInt(limit), offset);
-      
+
       const dataResult = await client.query(dataQuery, queryParams);
-      
+
       const results = dataResult.rows.map(row => ({
         id: row.id.toString(),
         txnId: row.pg_transaction_id || 'N/A',
-        utr: row.pg_transaction_id || row.bank_statement_id || 'N/A',
+        utr: row.pg_utr || row.pg_transaction_id || row.bank_statement_id || 'N/A',
         rrn: null,
         pgAmount: row.pg_amount_paise || 0,
         bankAmount: row.bank_amount_paise,
         delta: row.variance_paise,
-        pgDate: row.created_at ? new Date(row.created_at).toISOString().split('T')[0] : null,
-        bankDate: row.created_at ? new Date(row.created_at).toISOString().split('T')[0] : null,
+        pgDate: row.pg_txn_date ? new Date(row.pg_txn_date).toISOString().split('T')[0] : null,
+        bankDate: row.bank_txn_date ? new Date(row.bank_txn_date).toISOString().split('T')[0] : null,
         status: row.match_status,
         reasonCode: row.exception_reason_code,
         reasonLabel: row.exception_message

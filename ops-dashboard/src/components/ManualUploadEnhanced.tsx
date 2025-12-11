@@ -329,60 +329,68 @@ export function ManualUploadEnhanced() {
     }
   }, []); // Empty deps - run only on mount
   
-  // Clear results immediately when tab changes to prevent showing stale data
+  // Track previous tab to detect actual tab changes (not initial mount)
+  const [prevTab, setPrevTab] = useState<string | null>(null);
+
+  // Clear results when tab ACTUALLY changes (not on initial mount)
   useEffect(() => {
-    console.log(`[Tab Change] Switching to tab: ${activeTab}`);
-    // Mark that we're changing tabs
-    setIsTabChanging(true);
-    // Clear results immediately when switching tabs to avoid showing wrong data
-    setReconResults([]);
-    
-    // Force React Query to refetch by invalidating the query
-    if (jobId) {
-      // Invalidate all result queries to force fresh fetch
-      queryClient.invalidateQueries({ queryKey: ['recon-job-results'] });
-      console.log(`[Tab Change] Cleared results and invalidated queries, waiting for new data for tab: ${activeTab}`);
+    // Skip on initial mount - prevTab will be null
+    if (prevTab === null) {
+      setPrevTab(activeTab);
+      return;
     }
-    
-    // Reset the flag after a brief delay to allow new data to load
-    const timer = setTimeout(() => {
-      setIsTabChanging(false);
-    }, 100);
-    
-    return () => clearTimeout(timer);
-  }, [activeTab, jobId, queryClient]);
+
+    // Only clear if tab actually changed
+    if (prevTab !== activeTab) {
+      console.log(`[Tab Change] Switching from ${prevTab} to ${activeTab}`);
+      setPrevTab(activeTab);
+      setIsTabChanging(true);
+      // Don't clear results - let new data replace old data
+
+      // Force React Query to refetch by invalidating the query
+      if (jobId) {
+        queryClient.invalidateQueries({ queryKey: ['recon-job-results'] });
+        console.log(`[Tab Change] Invalidated queries, waiting for new data for tab: ${activeTab}`);
+      }
+
+      // Reset the flag after data should have loaded
+      const timer = setTimeout(() => {
+        setIsTabChanging(false);
+      }, 500); // Increased to 500ms for slower API responses
+
+      return () => clearTimeout(timer);
+    }
+  }, [activeTab, jobId, queryClient, prevTab]);
   
   // Update local state when job results change
   useEffect(() => {
-    // Don't update if we're in the middle of changing tabs
-    if (isTabChanging) {
-      console.log(`[ManualUploadEnhanced] Tab is changing, skipping update`);
-      return;
-    }
-    
-    console.log(`[ManualUploadEnhanced] jobResults update for tab: ${activeTab}, results:`, jobResults?.length);
-    
-    // Only update if we have valid results that match the current tab
+    console.log(`[ManualUploadEnhanced] jobResults update for tab: ${activeTab}, results:`, jobResults?.length, 'isTabChanging:', isTabChanging);
+
+    // Always update when we have valid results - don't skip even during tab change
     if (jobResults !== undefined) {
       if (Array.isArray(jobResults)) {
         const convertedRows = convertToReconRows(jobResults);
         console.log(`[ManualUploadEnhanced] Setting ${convertedRows.length} rows for tab: ${activeTab}`);
-        
+
         // Double-check that results match the expected tab filter
         if (activeTab !== 'all' && convertedRows.length > 0) {
           const firstRowStatus = convertedRows[0].status?.toLowerCase();
           console.log(`[ManualUploadEnhanced] First row status: ${firstRowStatus}, expected tab: ${activeTab}`);
         }
-        
+
         setReconResults(convertedRows);
+        // Also reset isTabChanging when we get data
+        if (isTabChanging) {
+          setIsTabChanging(false);
+        }
       } else {
-        // Clear results if no data
+        // Clear results if no data (empty array from API)
         console.log(`[ManualUploadEnhanced] No results for tab: ${activeTab}, clearing`);
         setReconResults([]);
       }
     }
     // If undefined, keep existing results (might be loading)
-  }, [jobResults, activeTab, isTabChanging]);
+  }, [jobResults, activeTab]);
   
   // Update stats from job summary and send to Overview API
   useEffect(() => {
