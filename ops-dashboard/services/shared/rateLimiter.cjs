@@ -26,6 +26,7 @@ const apiLimiter = rateLimit({
   },
   standardHeaders: true, // Return rate limit info in `RateLimit-*` headers
   legacyHeaders: false, // Disable `X-RateLimit-*` headers
+  validate: { xForwardedForHeader: false }, // Disable IPv6 validation
 
   // Custom key generator (use IP + user ID if authenticated)
   keyGenerator: (req) => {
@@ -63,6 +64,7 @@ const authLimiter = rateLimit({
   },
   standardHeaders: true,
   legacyHeaders: false,
+  validate: { xForwardedForHeader: false }, // Disable IPv6 validation
 
   handler: (req, res) => {
     console.warn(`[AUTH RATE LIMIT] IP ${req.ip} exceeded auth limit (${req.body?.email || 'unknown'})`);
@@ -90,6 +92,7 @@ const uploadLimiter = rateLimit({
   },
   standardHeaders: true,
   legacyHeaders: false,
+  validate: { xForwardedForHeader: false }, // Disable IPv6 validation
 
   keyGenerator: (req) => {
     return req.user ? `upload_${req.user.id}` : `upload_${req.ip}`;
@@ -121,6 +124,7 @@ const strictLimiter = rateLimit({
   },
   standardHeaders: true,
   legacyHeaders: false,
+  validate: { xForwardedForHeader: false }, // Disable IPv6 validation
 
   keyGenerator: (req) => {
     return req.user ? `critical_${req.user.id}` : `critical_${req.ip}`;

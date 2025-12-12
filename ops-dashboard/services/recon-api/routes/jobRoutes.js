@@ -359,20 +359,45 @@ router.get('/jobs/:jobId/results', async (req, res) => {
 
       const dataResult = await client.query(dataQuery, queryParams);
 
-      const results = dataResult.rows.map(row => ({
-        id: row.id.toString(),
-        txnId: row.pg_transaction_id || 'N/A',
-        utr: row.pg_utr || row.pg_transaction_id || row.bank_statement_id || 'N/A',
-        rrn: null,
-        pgAmount: row.pg_amount_paise || 0,
-        bankAmount: row.bank_amount_paise,
-        delta: row.variance_paise,
-        pgDate: row.pg_txn_date ? new Date(row.pg_txn_date).toISOString().split('T')[0] : null,
-        bankDate: row.bank_txn_date ? new Date(row.bank_txn_date).toISOString().split('T')[0] : null,
-        status: row.match_status,
-        reasonCode: row.exception_reason_code,
-        reasonLabel: row.exception_message
-      }));
+      const results = dataResult.rows.map(row => {
+        // Determine if UTR is valid (not null, not empty, and not same as transaction ID)
+        const txnId = row.pg_transaction_id || 'N/A';
+        const rawUtr = row.pg_utr;
+
+        // UTR is invalid if: null, empty, or equals transaction ID
+        const isValidUtr = rawUtr &&
+                          rawUtr !== '' &&
+                          rawUtr !== 'null' &&
+                          rawUtr !== txnId;
+
+        // For display: show actual UTR if valid, otherwise null (frontend will show "—")
+        const displayUtr = isValidUtr ? rawUtr : null;
+
+        // Improve exception reason label for UTR issues
+        let reasonLabel = row.exception_message;
+        if (row.exception_reason_code === 'UTR_MISSING_OR_INVALID') {
+          if (!rawUtr || rawUtr === '' || rawUtr === 'null') {
+            reasonLabel = 'UTR is missing from PG transaction';
+          } else if (rawUtr === txnId) {
+            reasonLabel = 'UTR equals Transaction ID (not a valid bank reference)';
+          }
+        }
+
+        return {
+          id: row.id.toString(),
+          txnId: txnId,
+          utr: displayUtr,
+          rrn: null,
+          pgAmount: row.pg_amount_paise || 0,
+          bankAmount: row.bank_amount_paise,
+          delta: row.variance_paise,
+          pgDate: row.pg_txn_date ? new Date(row.pg_txn_date).toISOString().split('T')[0] : null,
+          bankDate: row.bank_txn_date ? new Date(row.bank_txn_date).toISOString().split('T')[0] : null,
+          status: row.match_status,
+          reasonCode: row.exception_reason_code,
+          reasonLabel: reasonLabel
+        };
+      });
       
       console.log(`[Results API] Found ${results.length} results in database (total: ${total})`);
       

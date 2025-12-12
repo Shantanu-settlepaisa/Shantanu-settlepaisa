@@ -15,7 +15,7 @@ import {
 export interface ReconRow {
   id: string
   txnId: string
-  utr: string
+  utr: string | null
   rrn?: string
   pgAmount: number
   bankAmount: number | null
@@ -92,7 +92,7 @@ export function ReconResultsTable({
     const query = searchQuery.toLowerCase()
     return (
       row.txnId.toLowerCase().includes(query) ||
-      row.utr.toLowerCase().includes(query) ||
+      (row.utr && row.utr.toLowerCase().includes(query)) ||
       (row.rrn && row.rrn.toLowerCase().includes(query))
     )
   })
@@ -392,7 +392,9 @@ export function ReconResultsTable({
                     </td>
                     <td className="p-3 text-gray-600">
                       <div>
-                        <div>{row.utr}</div>
+                        <div className={!row.utr ? 'text-gray-400 italic' : ''}>
+                          {row.utr || '—'}
+                        </div>
                         {row.rrn && (
                           <div className="text-xs text-gray-400">{row.rrn}</div>
                         )}

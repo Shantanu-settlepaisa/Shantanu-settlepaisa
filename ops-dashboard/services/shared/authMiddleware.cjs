@@ -251,6 +251,7 @@ const opsStaffOnly = authorize(['ADMIN', 'OPS_MANAGER', 'OPS_VIEWER', 'FINANCE']
 const opsManagerOnly = authorize(['ADMIN', 'OPS_MANAGER']);
 const adminOnly = authorize(['ADMIN']);
 const financeOnly = authorize(['ADMIN', 'FINANCE']);
+const canApprove = authorize(['ADMIN', 'OPS_MANAGER', 'FINANCE']);
 
 module.exports = {
   authenticate,
@@ -259,5 +260,6 @@ module.exports = {
   opsStaffOnly,
   opsManagerOnly,
   adminOnly,
-  financeOnly
+  financeOnly,
+  canApprove
 };
